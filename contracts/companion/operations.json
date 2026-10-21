@@ -1,0 +1,773 @@
+{
+  "operations" : [
+    {
+      "authority" : "runtime.status",
+      "capability" : "runtime.status",
+      "isDestructive" : false,
+      "operation" : "getSystemStatus",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "system_status"
+    },
+    {
+      "authority" : "device.app.open",
+      "capability" : "device.app.open",
+      "isDestructive" : false,
+      "operation" : "openApplication",
+      "payloadKind" : "application",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "application_state"
+    },
+    {
+      "authority" : "device.app.open_by_name",
+      "capability" : "device.app.open_by_name",
+      "isDestructive" : false,
+      "operation" : "openApplicationByName",
+      "payloadKind" : "applicationQuery",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "application_state"
+    },
+    {
+      "authority" : "device.app.control",
+      "capability" : "device.app.control",
+      "isDestructive" : false,
+      "operation" : "controlApplication",
+      "payloadKind" : "applicationControl",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "application_state"
+    },
+    {
+      "authority" : "device.url.open",
+      "capability" : "device.url.open",
+      "isDestructive" : false,
+      "operation" : "openURL",
+      "payloadKind" : "url",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.system.power",
+      "capability" : "device.system.power",
+      "isDestructive" : true,
+      "operation" : "lockMac",
+      "payloadKind" : "none",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.system.power",
+      "capability" : "device.system.power",
+      "isDestructive" : true,
+      "operation" : "sleepMac",
+      "payloadKind" : "none",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.system.power",
+      "capability" : "device.system.power",
+      "isDestructive" : true,
+      "operation" : "displaySleep",
+      "payloadKind" : "none",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.display",
+      "capability" : "device.display",
+      "isDestructive" : false,
+      "operation" : "setBrightness",
+      "payloadKind" : "brightness",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "system_state"
+    },
+    {
+      "authority" : "device.audio",
+      "capability" : "device.audio",
+      "isDestructive" : false,
+      "operation" : "setVolume",
+      "payloadKind" : "volume",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "system_state"
+    },
+    {
+      "authority" : "device.audio",
+      "capability" : "device.audio",
+      "isDestructive" : false,
+      "operation" : "toggleMute",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "system_state"
+    },
+    {
+      "authority" : "device.media",
+      "capability" : "device.media",
+      "isDestructive" : false,
+      "operation" : "mediaControl",
+      "payloadKind" : "media",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "system_state"
+    },
+    {
+      "authority" : "device.clipboard",
+      "capability" : "device.clipboard",
+      "isDestructive" : false,
+      "operation" : "setClipboardText",
+      "payloadKind" : "clipboardText",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "clipboard_readback"
+    },
+    {
+      "authority" : "device.app.quit",
+      "capability" : "device.app.quit",
+      "isDestructive" : false,
+      "operation" : "quitApplication",
+      "payloadKind" : "application",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "application_state"
+    },
+    {
+      "authority" : "device.files.write",
+      "capability" : "device.files.write",
+      "isDestructive" : false,
+      "operation" : "saveTextFile",
+      "payloadKind" : "textFile",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "runtime.status",
+      "capability" : "runtime.status",
+      "isDestructive" : false,
+      "operation" : "ping",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "system_status"
+    },
+    {
+      "authority" : "device.messaging.send",
+      "capability" : "device.messaging.send",
+      "isDestructive" : true,
+      "operation" : "sendMessage",
+      "payloadKind" : "message",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "calendar.read",
+      "capability" : "calendar.read",
+      "isDestructive" : false,
+      "operation" : "listCalendarEvents",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "calendar.write",
+      "capability" : "calendar.write",
+      "isDestructive" : true,
+      "operation" : "createCalendarEvent",
+      "payloadKind" : "calendarEvent",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "reminders.read",
+      "capability" : "reminders.read",
+      "isDestructive" : false,
+      "operation" : "listReminders",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "reminders.write",
+      "capability" : "reminders.write",
+      "isDestructive" : true,
+      "operation" : "createReminder",
+      "payloadKind" : "reminder",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "reminders.write",
+      "capability" : "reminders.write",
+      "isDestructive" : true,
+      "operation" : "completeReminder",
+      "payloadKind" : "completeReminder",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.clipboard",
+      "capability" : "device.clipboard",
+      "isDestructive" : false,
+      "operation" : "getClipboardText",
+      "payloadKind" : "none",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "clipboard_snapshot"
+    },
+    {
+      "authority" : "device.clipboard",
+      "capability" : "device.clipboard",
+      "isDestructive" : false,
+      "operation" : "getClipboardHistory",
+      "payloadKind" : "none",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "clipboard_snapshot"
+    },
+    {
+      "authority" : "notes.write",
+      "capability" : "notes.write",
+      "isDestructive" : true,
+      "operation" : "createNote",
+      "payloadKind" : "note",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "mail.send",
+      "capability" : "mail.send",
+      "isDestructive" : true,
+      "operation" : "sendEmail",
+      "payloadKind" : "email",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.files.list",
+      "capability" : "device.files.list",
+      "isDestructive" : false,
+      "operation" : "listDesktopFiles",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_snapshot"
+    },
+    {
+      "authority" : "device.files.read",
+      "capability" : "device.files.read",
+      "isDestructive" : false,
+      "operation" : "readDesktopFile",
+      "payloadKind" : "fileName",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_snapshot"
+    },
+    {
+      "authority" : "device.files.move",
+      "capability" : "device.files.move",
+      "isDestructive" : true,
+      "operation" : "moveDesktopFile",
+      "payloadKind" : "fileMove",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.files.move",
+      "capability" : "device.files.move",
+      "isDestructive" : true,
+      "operation" : "renameDesktopFile",
+      "payloadKind" : "fileMove",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "artifact.save",
+      "capability" : "artifact.save",
+      "isDestructive" : true,
+      "operation" : "saveArtifact",
+      "payloadKind" : "artifactFile",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "document.read",
+      "capability" : "document.read",
+      "isDestructive" : false,
+      "operation" : "readDocument",
+      "payloadKind" : "fileName",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "filesystem_snapshot"
+    },
+    {
+      "authority" : "document.edit",
+      "capability" : "document.edit",
+      "isDestructive" : true,
+      "operation" : "editDocument",
+      "payloadKind" : "document",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "document_content"
+    },
+    {
+      "authority" : "device.files.list",
+      "capability" : "device.files.list",
+      "isDestructive" : false,
+      "operation" : "listFiles",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_snapshot"
+    },
+    {
+      "authority" : "device.files.list",
+      "capability" : "device.files.list",
+      "isDestructive" : false,
+      "operation" : "searchFiles",
+      "payloadKind" : "fileSearch",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "filesystem_snapshot"
+    },
+    {
+      "authority" : "device.files.read",
+      "capability" : "device.files.read",
+      "isDestructive" : false,
+      "operation" : "readFile",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_snapshot"
+    },
+    {
+      "authority" : "device.files.read",
+      "capability" : "device.files.read",
+      "isDestructive" : false,
+      "operation" : "sendFileToPhone",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "artifact_delivery"
+    },
+    {
+      "authority" : "device.files.write",
+      "capability" : "device.files.write",
+      "isDestructive" : true,
+      "operation" : "writeFile",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.files.move",
+      "capability" : "device.files.move",
+      "isDestructive" : true,
+      "operation" : "moveFile",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.files.copy",
+      "capability" : "device.files.copy",
+      "isDestructive" : true,
+      "operation" : "copyFile",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.files.copy",
+      "capability" : "device.files.copy",
+      "isDestructive" : true,
+      "operation" : "convertFile",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.files.list",
+      "capability" : "device.files.list",
+      "isDestructive" : true,
+      "operation" : "runFilePlan",
+      "payloadKind" : "filePlan",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.files.list",
+      "capability" : "device.files.list",
+      "isDestructive" : true,
+      "operation" : "grantAgentAccess",
+      "payloadKind" : "agentGrant",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "agent_grant"
+    },
+    {
+      "authority" : "device.files.delete",
+      "capability" : "device.files.delete",
+      "isDestructive" : true,
+      "operation" : "deleteFile",
+      "payloadKind" : "fileOperation",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.code.execute",
+      "capability" : "device.code.execute",
+      "isDestructive" : true,
+      "operation" : "executeCode",
+      "payloadKind" : "codeExecution",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "process_exit"
+    },
+    {
+      "authority" : "device.screen.capture",
+      "capability" : "device.screen.capture",
+      "isDestructive" : false,
+      "operation" : "captureScreen",
+      "payloadKind" : "screenCapture",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "screen_capture"
+    },
+    {
+      "authority" : "device.shortcut.run",
+      "capability" : "device.shortcut.run",
+      "isDestructive" : true,
+      "operation" : "runShortcut",
+      "payloadKind" : "shortcut",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "provider_acknowledgement"
+    },
+    {
+      "authority" : "device.ui.control",
+      "capability" : "device.ui.control",
+      "isDestructive" : false,
+      "operation" : "controlUIElement",
+      "payloadKind" : "uiElement",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "ui_observation"
+    },
+    {
+      "authority" : "device.screen.click",
+      "capability" : "device.screen.click",
+      "isDestructive" : true,
+      "operation" : "clickScreen",
+      "payloadKind" : "screenClick",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "ui_observation"
+    },
+    {
+      "authority" : "device.app.list",
+      "capability" : "device.app.list",
+      "isDestructive" : false,
+      "operation" : "listRunningApplications",
+      "payloadKind" : "none",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "short",
+      "verificationRule" : "application_state"
+    },
+    {
+      "authority" : "device.desktop.control",
+      "capability" : "device.desktop.control",
+      "isDestructive" : false,
+      "operation" : "computerDesktop",
+      "payloadKind" : "computerDesktop",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "ui_observation"
+    },
+    {
+      "authority" : "device.browser.control",
+      "capability" : "device.browser.control",
+      "isDestructive" : false,
+      "operation" : "computerBrowser",
+      "payloadKind" : "computerBrowser",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "browser_state"
+    },
+    {
+      "authority" : "device.browser.control",
+      "capability" : "device.browser.control",
+      "isDestructive" : false,
+      "operation" : "endBrowserTask",
+      "payloadKind" : "browserTask",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "medium",
+      "verificationRule" : "browser_state"
+    },
+    {
+      "authority" : "local.analysis",
+      "capability" : "local.analysis",
+      "isDestructive" : false,
+      "operation" : "localAnalyze",
+      "payloadKind" : "localAnalysis",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "structured_local_result"
+    },
+    {
+      "authority" : "device.files.utility",
+      "capability" : "device.files.utility",
+      "isDestructive" : false,
+      "operation" : "fileUtility",
+      "payloadKind" : "fileUtility",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "filesystem_state"
+    },
+    {
+      "authority" : "device.system.utility",
+      "capability" : "device.system.utility",
+      "isDestructive" : false,
+      "operation" : "systemUtility",
+      "payloadKind" : "systemUtility",
+      "requiresUserPresence" : false,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "system_state"
+    }
+  ],
+  "version" : 3
+}

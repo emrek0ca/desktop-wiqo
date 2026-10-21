@@ -1,0 +1,69 @@
+{
+  "about": "The file rules every desktop applies the same way (Rust desktop; the Swift/C# companions carry the same lists until they are retired). Names are matched case-insensitively.",
+  "ownFolders": [
+    "desktop",
+    "documents",
+    "downloads"
+  ],
+  "sensitiveNames": [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".kube",
+    ".docker",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "keychain",
+    "keychains",
+    "wallet",
+    "1password",
+    "bitwarden",
+    "lastpass"
+  ],
+  "sensitiveExtensions": [
+    "pem",
+    "key",
+    "p12",
+    "p8",
+    "pfx",
+    "kdbx",
+    "keystore",
+    "jks",
+    "ovpn",
+    "gpg",
+    "asc",
+    "ppk"
+  ],
+  "sensitiveWords": [
+    "password",
+    "parola",
+    "sifre",
+    "şifre",
+    "passwd",
+    "credential",
+    "secret",
+    "recovery code",
+    "backup code",
+    "seed phrase",
+    "private key"
+  ],
+  "folderAliases": {
+    "masaustu": "Desktop",
+    "belgeler": "Documents",
+    "dokumanlar": "Documents",
+    "dokumanlarim": "Documents",
+    "indirilenler": "Downloads",
+    "indirmeler": "Downloads",
+    "resimler": "Pictures",
+    "fotograflar": "Pictures",
+    "muzik": "Music",
+    "filmler": "Movies",
+    "videolar": "Movies"
+  }
+}

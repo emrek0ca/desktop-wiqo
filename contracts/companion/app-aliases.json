@@ -1,0 +1,362 @@
+{
+  "about": "Other names people (and the model) use for common applications. A Turkish Mac shows 'Notlar' while the model says 'Notes'. macBundle is the macOS bundle identifier; matching on other platforms uses the names.",
+  "groups": [
+    {
+      "macBundle": "com.apple.Safari",
+      "names": [
+        "Safari",
+        "Safari tarayıcı"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Notes",
+      "names": [
+        "Notes",
+        "Notlar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.iCal",
+      "names": [
+        "Calendar",
+        "Takvim"
+      ]
+    },
+    {
+      "macBundle": "com.apple.MobileSMS",
+      "names": [
+        "Messages",
+        "Mesajlar",
+        "iMessage"
+      ]
+    },
+    {
+      "macBundle": "com.apple.mail",
+      "names": [
+        "Mail",
+        "Posta",
+        "Apple Mail"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Music",
+      "names": [
+        "Music",
+        "Müzik",
+        "Apple Music"
+      ]
+    },
+    {
+      "macBundle": "com.apple.systempreferences",
+      "names": [
+        "System Settings",
+        "Sistem Ayarları",
+        "System Preferences",
+        "Ayarlar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.reminders",
+      "names": [
+        "Reminders",
+        "Anımsatıcılar",
+        "Hatırlatıcılar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.AddressBook",
+      "names": [
+        "Contacts",
+        "Kişiler",
+        "Rehber"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Photos",
+      "names": [
+        "Photos",
+        "Fotoğraflar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Maps",
+      "names": [
+        "Maps",
+        "Harita",
+        "Haritalar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.finder",
+      "names": [
+        "Finder"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Terminal",
+      "names": [
+        "Terminal",
+        "Terminal uygulaması"
+      ]
+    },
+    {
+      "macBundle": "com.apple.ActivityMonitor",
+      "names": [
+        "Activity Monitor",
+        "Etkinlik Monitörü",
+        "Görev Yöneticisi"
+      ]
+    },
+    {
+      "macBundle": "com.apple.calculator",
+      "names": [
+        "Calculator",
+        "Hesap Makinesi"
+      ]
+    },
+    {
+      "macBundle": "com.apple.TextEdit",
+      "names": [
+        "TextEdit",
+        "Metin Düzenleyici"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Preview",
+      "names": [
+        "Preview",
+        "Önizleme"
+      ]
+    },
+    {
+      "macBundle": "com.apple.FaceTime",
+      "names": [
+        "FaceTime"
+      ]
+    },
+    {
+      "macBundle": "com.apple.AppStore",
+      "names": [
+        "App Store"
+      ]
+    },
+    {
+      "macBundle": "com.apple.podcasts",
+      "names": [
+        "Podcasts",
+        "Podcast'ler"
+      ]
+    },
+    {
+      "macBundle": "com.apple.TV",
+      "names": [
+        "TV",
+        "Apple TV"
+      ]
+    },
+    {
+      "macBundle": "com.apple.weather",
+      "names": [
+        "Weather",
+        "Hava Durumu"
+      ]
+    },
+    {
+      "macBundle": "com.apple.clock",
+      "names": [
+        "Clock",
+        "Saat"
+      ]
+    },
+    {
+      "macBundle": "com.apple.shortcuts",
+      "names": [
+        "Shortcuts",
+        "Kestirmeler"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Home",
+      "names": [
+        "Home",
+        "Ev"
+      ]
+    },
+    {
+      "macBundle": "com.apple.VoiceMemos",
+      "names": [
+        "Voice Memos",
+        "Sesli Notlar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.iBooksX",
+      "names": [
+        "Books",
+        "Kitaplar"
+      ]
+    },
+    {
+      "macBundle": "com.apple.Passwords",
+      "names": [
+        "Passwords",
+        "Parolalar",
+        "Şifreler"
+      ]
+    },
+    {
+      "macBundle": "com.apple.freeform",
+      "names": [
+        "Freeform"
+      ]
+    },
+    {
+      "macBundle": "com.apple.iWork.Pages",
+      "names": [
+        "Pages"
+      ]
+    },
+    {
+      "macBundle": "com.apple.iWork.Numbers",
+      "names": [
+        "Numbers"
+      ]
+    },
+    {
+      "macBundle": "com.apple.iWork.Keynote",
+      "names": [
+        "Keynote"
+      ]
+    },
+    {
+      "macBundle": "com.apple.dt.Xcode",
+      "names": [
+        "Xcode"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.VSCode",
+      "names": [
+        "Visual Studio Code",
+        "VS Code",
+        "VSCode"
+      ]
+    },
+    {
+      "macBundle": "com.google.Chrome",
+      "names": [
+        "Google Chrome",
+        "Chrome"
+      ]
+    },
+    {
+      "macBundle": "org.mozilla.firefox",
+      "names": [
+        "Firefox",
+        "Mozilla Firefox"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.edgemac",
+      "names": [
+        "Microsoft Edge",
+        "Edge"
+      ]
+    },
+    {
+      "macBundle": "company.thebrowser.Browser",
+      "names": [
+        "Arc"
+      ]
+    },
+    {
+      "macBundle": "com.spotify.client",
+      "names": [
+        "Spotify"
+      ]
+    },
+    {
+      "macBundle": "com.tinyspeck.slackmacgap",
+      "names": [
+        "Slack"
+      ]
+    },
+    {
+      "macBundle": "com.hnc.Discord",
+      "names": [
+        "Discord"
+      ]
+    },
+    {
+      "macBundle": "net.whatsapp.WhatsApp",
+      "names": [
+        "WhatsApp"
+      ]
+    },
+    {
+      "macBundle": "ru.keepcoder.Telegram",
+      "names": [
+        "Telegram"
+      ]
+    },
+    {
+      "macBundle": "us.zoom.xos",
+      "names": [
+        "Zoom"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.teams2",
+      "names": [
+        "Microsoft Teams",
+        "Teams"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.Word",
+      "names": [
+        "Microsoft Word",
+        "Word"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.Excel",
+      "names": [
+        "Microsoft Excel",
+        "Excel"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.Powerpoint",
+      "names": [
+        "Microsoft PowerPoint",
+        "PowerPoint"
+      ]
+    },
+    {
+      "macBundle": "com.microsoft.Outlook",
+      "names": [
+        "Microsoft Outlook",
+        "Outlook"
+      ]
+    },
+    {
+      "macBundle": "notion.id",
+      "names": [
+        "Notion"
+      ]
+    },
+    {
+      "macBundle": "com.figma.Desktop",
+      "names": [
+        "Figma"
+      ]
+    },
+    {
+      "macBundle": "com.openai.chat",
+      "names": [
+        "ChatGPT"
+      ]
+    }
+  ]
+}

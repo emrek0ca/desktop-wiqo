@@ -1,0 +1,1366 @@
+{
+  "version": 1,
+  "about": "One classification for every failure code the Mac and Windows companions, the browser and document workers and the backend report. The backend reads it (generated into src/tools/deviceErrorCodes.generated.ts) to decide, from the code rather than from the wording, whether to observe again, retry once or stop, and whether the step may have changed anything. contracts/companion/error-codes.mjs fails when a companion reports a code that is not listed here.",
+  "fields": {
+    "recovery": "observe = look at the screen or page again first; retry_once = a transient error, one more try is safe; stop = no automatic repeat; null = the model may choose another route or ask.",
+    "effect": "none = nothing was changed; partial = the action failed but may have changed something; uncertain = the result is unknown, never repeat the same action.",
+    "blocked": "true = needs the person or a permission, or a safety rule refused it: do not retry and do not try a side route."
+  },
+  "codes": {
+    "ACCESSIBILITY_PERMISSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "ACCESS_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "AGENT_SCOPE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "APPLICATION_ACTION_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "APPLICATION_ACTIVATE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "APPLICATION_ACTIVATION_UNVERIFIED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "APPLICATION_AMBIGUOUS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "APPLICATION_CATALOG_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "APPLICATION_FORCE_QUIT_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "APPLICATION_NEW_TAB_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "APPLICATION_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "APPLICATION_OPEN_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "APPLICATION_QUIT_REQUIRES_FORCE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "APPLICATION_SELF_PROTECTED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "APPLICATION_SYSTEM_PROTECTED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "APPLICATION_TARGET_MISMATCH": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "APPLICATION_VERIFICATION_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "ARTIFACT_DOWNLOAD_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "ARTIFACT_INTEGRITY_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "ARTIFACT_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "AUDIO_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "AUTHORITY_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "AUTH_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "AUTOMATION_PERMISSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "AUTOMATION_PROBE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "AUTOMATION_STEP_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "AUTOMATION_TARGET_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BACKEND_AUTH_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BACKUP_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "BRIGHTNESS_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "BRIGHTNESS_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BROWSER_ACTION_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BROWSER_BROWSER_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_CANCELLED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_DOWNLOAD_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "BROWSER_DOWNLOAD_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BROWSER_DOWNLOAD_TYPE_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "BROWSER_FIELD_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_FORM_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_HANDOFF_PAGE_MISMATCH": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BROWSER_HUMAN_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_INSTALLER_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_INSTALL_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "stop"
+    },
+    "BROWSER_NETWORK_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_NO_HISTORY": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BROWSER_NO_PAGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_PERMISSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_RUNTIME_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_RUNTIME_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_SETUP_TIMEOUT": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "stop"
+    },
+    "BROWSER_SUBMIT_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_TARGET_AMBIGUOUS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "BROWSER_TARGET_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "BROWSER_TARGET_STALE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "BROWSER_TARGET_UNSAFE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_TASK_LIMIT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "BROWSER_TIMEOUT": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "BROWSER_URL_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "BROWSER_WORKER_EXITED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "CALENDAR_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CALENDAR_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "CALENDAR_SAVE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CAPABILITY_DISABLED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "CLIPBOARD_BUSY": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "CLIPBOARD_EMPTY": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CLIPBOARD_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CLIPBOARD_NOT_VERIFIED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "CODE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CODE_SANDBOX_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CODE_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "COMMAND_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "CONVERT_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CREATE_FOLDER_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DELIVERY_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "DENIED_ON_PC": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DEPENDENCY_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_ACTION_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_ACTION_UNSUPPORTED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_ADAPTER_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_APP_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_CANCELLED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_HOTKEY_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_INPUT_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "retry_once"
+    },
+    "DESKTOP_LIST_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DESKTOP_OBSERVATION_REQUIRED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "DESKTOP_SECURE_FIELD_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_SELF_OBSERVATION_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_SENSITIVE_ACTION_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_SESSION_EXPIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_STALE_OBSERVATION": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "DESKTOP_STEPS_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_TARGET_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "DESKTOP_TASK_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_TYPE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DESKTOP_TYPE_INTERRUPTED": {
+      "blocked": true,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "DESKTOP_TYPE_UNVERIFIED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "DESKTOP_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DESKTOP_USER_INTERRUPTED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DEVICE_BUSY": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "DEVICE_OFFLINE": {
+      "recovery": "stop",
+      "effect": "none",
+      "blocked": true
+    },
+    "DEVICE_STEP_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DISPLAY_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DISPLAY_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DISPLAY_SLEEP_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DISPLAY_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_DEPENDENCY_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DOCUMENT_EMPTY": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_MODELS_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DOCUMENT_NETWORK_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DOCUMENT_PARSE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "DOCUMENT_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_UNSAFE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DOCUMENT_UNSUPPORTED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DUPLICATE_LOCAL_DEVICE_ATTEMPT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DUPLICATE_TOOL_ATTEMPT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "EMAIL_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "EMAIL_SEND_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "EMAIL_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "EXECUTION_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "EXPIRED_REQUEST": {
+      "recovery": null,
+      "effect": "none",
+      "blocked": false
+    },
+    "FILE_COPY_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_DELETE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_DELETE_UNVERIFIED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "FILE_EXISTS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_LIST_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_MOVE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_NOT_REGULAR": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_READ_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_REPLACE_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "FILE_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_UNDO_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_UNDO_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_UNDO_RECORD_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FILE_UNDO_STALE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_UNDO_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "FILE_VERIFICATION_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "FILE_WRITE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "FULL_ACCESS_DISABLED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "FULL_DISK_ACCESS_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "INVALID_APPLICATION_NAME": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_ARTIFACT_URL": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_COMMAND_ID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_CURSOR": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_DEVICE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_FILE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_FILENAME": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_FILE_PATH": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_PAYLOAD": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_SIGNATURE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "INVALID_STEP": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_TOKEN": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "INVALID_TOOL_ARGUMENTS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_URL": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_WORKING_DIRECTORY": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "LEDGER_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "LOCAL_ANALYSIS_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "LOCAL_ANALYSIS_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "LOCAL_ANALYSIS_RUNTIME_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "LOCAL_ANALYSIS_TIMEOUT": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "LOCAL_PATH_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "LOCK_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "LOCK_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "LOCK_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "MEDIA_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "MEDIA_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "MEDIA_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "MESSAGE_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "MESSAGE_SEND_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "MESSAGE_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "MUTE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "MUTE_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NESTED_FOLDER_MOVE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NOTE_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "NOTE_SAVE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "NOTE_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NOT_A_DIRECTORY": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NOT_PAIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "NO_COLOR": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NO_MATCHING_FILES": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "NO_MEDIA_PLAYER": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "OUTCOME_UNKNOWN": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "OVERWRITE_REQUIRED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "PARTIAL_MOVE": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "PERMISSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "PLAN_STEP_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "POSTCONDITION_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "PROTECTED_PATH": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "QUIT_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "QUOTA_EXCEEDED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "RECURSIVE_REQUIRED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "REMINDERS_LIST_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "REMINDERS_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "REMINDER_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "REMINDER_SAVE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "RESTORE_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "RUNTIME_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "SCREENSHOT_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "SCREEN_CAPTURE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "SCREEN_CLICK_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "SCREEN_RECORDING_PERMISSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "SCREEN_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "SEARCH_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "SENSITIVE_FILE_BLOCKED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "SHORTCUT_PERMISSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "SHORTCUT_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "SHORTCUT_VERIFICATION_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "SIDE_EFFECT_UNCERTAIN": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "SIGNATURE_VERSION_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "SLEEP_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "SLEEP_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "STALE_SCREEN_OBSERVATION": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "STEP_ID_CONFLICT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "SYMLINK_REJECTED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_ACTION_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_CANCELLED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_COMMAND_FORBIDDEN": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_COMMAND_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_DIRECTORY_CREATE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_DISABLED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_EDIT_AMBIGUOUS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_EDIT_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_EDIT_INVALID_JSON": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_EDIT_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_FILE_NOT_TEXT": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_FILE_READ_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_FILE_SCOPE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_FILE_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_FILE_WRITE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_GRANT_INVALID": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_GRANT_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_INPUT_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_INPUT_UNCERTAIN": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "TERMINAL_JOB_ID_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_JOB_UNKNOWN": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "TERMINAL_OUTSIDE_GRANT": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_PATCH_REJECTED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_PATCH_SCOPE": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_PATCH_WRITE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_PLAN_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_PREPARE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_READ_ONLY": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "TERMINAL_SEARCH_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_SEARCH_TIMEOUT": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "TERMINAL_UNDO_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TERMINAL_UNDO_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_UNDO_STALE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TRANSFER_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TRANSFER_LIMIT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TRANSFER_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TRANSFER_UNVERIFIED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "TRASH_UNREADABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "UI_ACTION_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "UI_ELEMENT_AMBIGUOUS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "UI_ELEMENT_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "UI_SEARCH_TIMEOUT": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": "retry_once"
+    },
+    "UI_TARGET_NOT_RUNNING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "UI_VERIFICATION_FAILED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "UI_WINDOW_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "observe"
+    },
+    "UNSUPPORTED_FORMAT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "UNSUPPORTED_LANGUAGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "UNSUPPORTED_MESSAGE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "UNSUPPORTED_OPERATION": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "UNSUPPORTED_SHELL": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "URL_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "URL_OPEN_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "VOLUME_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "VOLUME_NOT_APPLIED": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "VOLUME_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    }
+  }
+}

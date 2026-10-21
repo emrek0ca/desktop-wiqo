@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wiqo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Stage 1: the person's Wiqo account. Signing in makes this computer one of the account's devices. -->
+  <main id="signin" class="auth" hidden>
+    <section class="auth-hero">
+      <div class="auth-brand"><span class="mark"></span><span>Wiqo</span></div>
+      <div class="auth-pitch">
+        <div class="mascots" aria-hidden="true">
+          <img src="img/hero-research.png" alt=""><img src="img/hero-general.png" alt="">
+          <img src="img/hero-developer.png" alt=""><img src="img/hero-execution.png" alt="">
+        </div>
+        <h1>Telefonundan söyle,<br>bilgisayarın yapsın.</h1>
+      </div>
+      <span></span>
+    </section>
+
+    <section class="auth-panel">
+      <!-- Sign in / register -->
+      <div id="auth-main" class="auth-card">
+        <h2 id="auth-title">Giriş yap</h2>
+        <button id="google" class="secondary wide google" type="button">
+          <svg class="g-logo" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.7 13.2l7.9 6.2C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.8c4.3-4 6.9-9.9 6.9-17.2z"/><path fill="#FBBC05" d="M10.6 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C1 16.6 0 20.2 0 24s1 7.4 2.7 10.8l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.8c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.2C6.6 42.6 14.6 48 24 48z"/></svg>
+          <span>Google ile devam et</span>
+        </button>
+        <div class="divider"><span>veya</span></div>
+        <form id="signin-form" novalidate>
+          <input id="email" type="email" autocomplete="username" placeholder="E-posta" aria-label="E-posta" required>
+          <span class="password"><input id="password" type="password" autocomplete="current-password" placeholder="Şifre" aria-label="Şifre" required><button id="password-toggle" class="icon-button" type="button" title="Şifreyi göster"><span data-symbol="eye" data-size="14" data-weight="0"></span></button></span>
+          <input id="invite" type="text" autocomplete="off" placeholder="Davet kodu (varsa)" aria-label="Davet kodu" hidden>
+          <button id="forgot-open" class="link small forgot" type="button">Şifremi unuttum</button>
+          <p id="signin-error" class="form-error" hidden></p>
+          <button id="signin-submit" class="primary wide big" type="submit">Giriş yap</button>
+        </form>
+        <p class="switch-mode muted small"><span id="mode-question">Hesabın yok mu?</span> <button id="mode-switch" class="link small" type="button">Hesap oluştur</button></p>
+      </div>
+
+      <!-- Waiting for Google in the browser -->
+      <div id="auth-google" class="auth-card waiting" hidden>
+        <div class="spinner"></div>
+        <h2>Tarayıcıda devam et</h2>
+        <p class="muted small">Hesabını seçince buraya dönersin.</p>
+        <button id="google-cancel" class="secondary" type="button">Vazgeç</button>
+      </div>
+
+      <!-- Forgot password: e-mail, then the code and a new password -->
+      <div id="auth-forgot" class="auth-card" hidden>
+        <button id="forgot-back" class="link small back" type="button"><span data-symbol="chevron.left" data-size="11" data-weight="0"></span>Geri</button>
+        <h2>Şifreni sıfırla</h2>
+        <p id="forgot-lead" class="muted small">E-postana 6 haneli kod göndereceğiz.</p>
+        <form id="forgot-form" novalidate>
+          <input id="forgot-email" type="email" autocomplete="username" placeholder="E-posta" aria-label="E-posta" required>
+          <div id="reset-fields" class="stack" hidden>
+            <input id="reset-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 haneli kod" aria-label="Kod">
+            <input id="reset-password" type="password" autocomplete="new-password" placeholder="Yeni şifre" aria-label="Yeni şifre" minlength="8">
+          </div>
+          <p id="forgot-error" class="form-error" hidden></p>
+          <button id="forgot-submit" class="primary wide big" type="submit">Kod gönder</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- Stage 2: the system permissions, one click each; can be skipped. -->
+  <main id="setup" class="stage" hidden>
+    <ol class="steps-bar"><li class="done">Giriş</li><li class="on">İzinler</li></ol>
+    <span class="mark stage-logo"></span>
+    <h1>İzinleri ver</h1>
+    <p class="lead">Her satırda <b>İzin ver</b>'e bas; macOS kısa bir onay sorar. Bir kez yapılır, sonra görevler takılmaz.</p>
+    <div class="card stage-list"><ul id="setup-permissions" class="list perms"></ul></div>
+    <div class="stage-actions">
+      <button id="setup-skip" class="link">Şimdilik geç</button>
+      <button id="setup-restart" class="secondary" hidden>Wiqo'yu yeniden başlat</button>
+      <button id="setup-done" class="primary">Devam</button>
+    </div>
+    <p class="muted small">İstediğin zaman Ayarlar › İzinler'den değiştirebilirsin.</p>
+  </main>
+
+  <!-- Stage 3: the app. Three columns; the left and right ones fold away. -->
+  <div id="shell" class="shell" hidden>
+    <aside id="left" class="left">
+      <div class="left-top">
+        <div class="brand"><span class="mark"></span><span>Wiqo</span></div>
+        <button class="icon-button" data-toggle="left" title="Kenar çubuğunu kapat (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
+      </div>
+      <button id="new-chat" class="new-chat"><span data-symbol="square.and.pencil" data-size="15" data-weight="0"></span>Yeni sohbet</button>
+      <label class="search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="search" type="text" placeholder="Ara"></label>
+      <div id="conversation-list" class="conv-list"></div>
+      <nav class="left-nav">
+        <button class="nav" data-section="status"><span data-symbol="laptopcomputer" data-size="15" data-weight="0"></span>Durum</button>
+        <button class="nav" data-section="activity"><span data-symbol="clock.arrow.circlepath" data-size="15" data-weight="0"></span>Etkinlik</button>
+        <button class="nav" data-section="phones"><span data-symbol="iphone" data-size="15" data-weight="0"></span>Telefonlar</button>
+        <button class="nav" data-section="permissions"><span data-symbol="gearshape" data-size="15" data-weight="0"></span>Ayarlar</button>
+      </nav>
+      <div class="me">
+        <span id="me-avatar" class="avatar">W</span>
+        <div class="me-text"><div id="account-email" class="small"></div><div id="version" class="muted small"></div></div>
+        <button id="me-menu" class="icon-button" title="Hesap"><span data-symbol="ellipsis" data-size="15" data-weight="0"></span></button>
+        <div id="me-popover" class="popover" hidden>
+          <button id="report-problem" class="pop-item"><span data-symbol="exclamationmark.bubble" data-size="14" data-weight="0"></span>Sorun bildir</button>
+          <button id="sign-out" class="pop-item danger-text"><span data-symbol="rectangle.portrait.and.arrow.right" data-size="14" data-weight="0"></span>Çıkış yap</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="center">
+      <div class="topbar">
+        <button class="icon-button" data-toggle="left" id="open-left" title="Kenar çubuğunu aç (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
+        <div id="top-title" class="top-title">Yeni sohbet</div>
+        <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
+        <button class="icon-button" data-toggle="right" title="Sağ paneli aç/kapat (⌘I)"><span data-symbol="sidebar.right" data-size="16" data-weight="0"></span></button>
+      </div>
+      <div id="update-banner" class="banner" hidden>
+        <span id="update-text">Yeni sürüm hazır.</span>
+        <button id="update-restart" class="primary small">Yeniden başlat</button>
+      </div>
+
+      <div class="panel chat-panel" data-panel="chat">
+        <div id="chat-scroll" class="chat-scroll">
+          <div id="chat-messages" class="chat-messages"></div>
+          <div id="chat-empty" class="chat-empty">
+            <span class="mark empty-logo"></span>
+            <h2>Ne yapalım?</h2>
+            <div class="ideas">
+              <button class="idea">Masaüstündeki PDF'leri bir klasörde topla</button>
+              <button class="idea">İndirilenler'de en büyük 10 dosyayı göster</button>
+              <button class="idea">Ekran görüntüsü al ve masaüstüne kaydet</button>
+              <button class="idea">Pil sağlığını ve en çok kaynak kullanan uygulamaları göster</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <form id="chat-form" class="composer">
+            <div id="chat-attachments" class="attachments" hidden></div>
+            <textarea id="chat-input" rows="1" placeholder="Wiqo'ya yaz…"></textarea>
+            <div class="composer-bar">
+              <label class="icon-button attach" title="Görsel ekle"><input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><span data-symbol="plus" data-size="16" data-weight="0"></span></label>
+              <span class="spacer"></span>
+              <button id="chat-stop" class="stop" type="button" title="Durdur (Esc)" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span></button>
+              <button id="chat-send" class="send" type="submit" title="Gönder (Enter)"><span data-symbol="arrow.up" data-size="14" data-weight="0.3"></span></button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="panel page" data-panel="status" hidden>
+        <div class="card hero">
+          <div>
+            <div id="state-title" class="hero-title">—</div>
+            <div id="state-detail" class="muted small"></div>
+          </div>
+          <div class="hero-actions">
+            <button id="stop-work" class="secondary small" title="Esc">İşi durdur</button>
+            <button id="toggle-connection" class="secondary small">Bağlantıyı kes</button>
+          </div>
+        </div>
+        <div id="phone-tip" class="card tip" hidden>
+          <div><h3>Telefonunu bağla</h3><p class="muted small">Telefondan görev vermek için bir kez QR okut.</p></div>
+          <button id="phone-tip-go" class="primary small">Bağla</button>
+        </div>
+        <div class="grid">
+          <div class="card stat"><div class="overline">Bilgisayar</div><div id="device-name" class="stat-value">—</div><div id="device-platform" class="muted small"></div></div>
+          <div class="card stat"><div class="overline">Telefon</div><div id="phone-count" class="stat-value">0</div></div>
+          <div class="card stat"><div class="overline">Tam yetki</div><div id="full-access-state" class="stat-value">Kapalı</div></div>
+        </div>
+        <div class="card">
+          <div class="row-head"><h3>Son işlemler</h3><button class="link small" data-goto="activity">Tümü</button></div>
+          <ul id="recent" class="activity"></ul>
+        </div>
+      </div>
+
+      <div class="panel page" data-panel="activity" hidden>
+        <div class="card"><ul id="activity" class="activity"></ul></div>
+      </div>
+
+      <div class="panel page" data-panel="phones" hidden>
+        <div class="card"><ul id="phones" class="list"></ul></div>
+        <button id="add-phone" class="primary">Telefon bağla</button>
+        <div id="add-phone-box" class="card qr-inline" hidden>
+          <div id="qr-inline" class="qr"></div>
+          <div>
+            <h3>QR kodu okut</h3>
+            <p class="muted small">Telefondaki Wiqo'da <b>PC'ye bağlan</b>'ı aç. Kod 10 dakika geçerli.</p>
+            <p id="pair-error" class="error small" hidden></p>
+            <button id="add-phone-cancel" class="link small">Vazgeç</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel page" data-panel="permissions" hidden>
+        <div class="card account-card">
+          <span id="account-avatar" class="avatar big"></span>
+          <div class="account-text">
+            <div id="account-name" class="w-title"></div>
+            <div id="account-mail" class="muted small"></div>
+          </div>
+          <span id="account-provider" class="pill-status neutral"></span>
+          <button id="account-signout" class="secondary small"><span data-symbol="rectangle.portrait.and.arrow.right" data-size="13" data-weight="0"></span>Çıkış yap</button>
+        </div>
+        <div class="card">
+          <label class="toggle-row strong">
+            <div><div>Bilgisayarla birlikte başlat</div><div class="muted small">Açılışta tepside sessizce çalışır.</div></div>
+            <input id="autostart" type="checkbox" class="switch">
+          </label>
+          <label class="toggle-row strong divided">
+            <div><div>Tam yetki</div><div class="muted small">Ajan, adımları telefonda onaylatmadan çalışabilir.</div></div>
+            <input id="full-access" type="checkbox" class="switch">
+          </label>
+          <label class="toggle-row strong divided">
+            <div><div>Okuma adımlarını telefonsuz çalıştır</div><div class="muted small">Masaüstü, Belgeler ve İndirilenler'de bakma ve okuma, telefona dönmeden burada yapılır. Değiştiren adımlar yine onay ister.</div></div>
+            <input id="reads-without-phone" type="checkbox" class="switch">
+          </label>
+          <label class="toggle-row strong divided">
+            <div><div>Değiştiren adımları PC'de onayla</div><div class="muted small">Değiştirme, silme ve gönderme köşedeki kartta onayını bekler.</div></div>
+            <input id="approve-on-pc" type="checkbox" class="switch">
+          </label>
+        </div>
+        <div id="system-permissions-card" class="card" hidden>
+          <div class="row-head"><h3>Sistem izinleri</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
+          <ul id="system-permissions" class="list perms"></ul>
+        </div>
+        <div class="card">
+          <div class="row-head"><h3>Yetenekler</h3></div>
+          <ul id="capabilities" class="list"></ul>
+        </div>
+      </div>
+    </main>
+
+    <aside id="right" class="right">
+      <div class="right-top">
+        <span class="overline">Bu bilgisayar</span>
+        <button class="icon-button" data-toggle="right" title="Kapat (⌘I)"><span data-symbol="sidebar.right" data-size="16" data-weight="0"></span></button>
+      </div>
+      <div class="side-card">
+        <div class="side-row"><span id="right-device" class="side-title">—</span><span id="right-state" class="pill"><span class="dot"></span><span class="label">—</span></span></div>
+        <button id="right-stop" class="secondary small stop-button" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span>İşi durdur</button>
+      </div>
+      <div class="side-section">
+        <div class="overline">Şu an</div>
+        <div id="right-work" class="side-list"><div class="muted small">Boşta</div></div>
+      </div>
+      <div class="side-section">
+        <div class="overline">Bu sohbetin adımları</div>
+        <div id="right-steps" class="side-list"><div class="muted small">Henüz yok</div></div>
+      </div>
+      <div class="side-section">
+        <div class="overline">Dosyalar</div>
+        <div id="right-files" class="side-list"><div class="muted small">Henüz yok</div></div>
+      </div>
+      <div class="side-section">
+        <div class="row-head"><span class="overline">Son işlemler</span><button class="link small" data-goto="activity">Tümü</button></div>
+        <ul id="right-activity" class="activity compact"></ul>
+      </div>
+    </aside>
+  </div>
+
+  <!-- "Sorun bildir" -->
+  <div id="report" class="modal" hidden>
+    <form id="report-form" class="modal-card">
+      <h2>Sorun bildir</h2>
+      <p class="muted small">Ne oldu? Seç ve istersen kısaca anlat; Wiqo ekibine gider.</p>
+      <div id="report-categories" class="chips"></div>
+      <textarea id="report-note" rows="4" maxlength="4000" placeholder="Ne yapmaya çalışıyordun, ne oldu? (isteğe bağlı)"></textarea>
+      <label class="check"><input id="report-logs" type="checkbox" checked> Tanılama bilgilerini ekle <span class="muted small">(kayıtlar ve durum; şifre veya anahtar içermez)</span></label>
+      <label class="check"><input id="report-contact" type="checkbox"> Gerekirse benimle e-postayla iletişime geçilebilir</label>
+      <div class="modal-actions">
+        <button id="report-save" type="button" class="link small">Sadece masaüstüne kaydet</button>
+        <span class="spacer"></span>
+        <button id="report-cancel" type="button" class="secondary">Vazgeç</button>
+        <button id="report-send" type="submit" class="primary">Gönder</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="dialog.js"></script>
+  <script src="icons.js"></script>
+  <script src="labels.js"></script>
+  <script src="render.js"></script>
+  <script src="app.js"></script>
+  <script src="chat.js"></script>
+</body>
+</html>

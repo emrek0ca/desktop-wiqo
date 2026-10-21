@@ -1,0 +1,58 @@
+[package]
+name = "wiqo-ops"
+description = "The operations a desktop can run (contracts/companion/operations.json), one module per area, platform differences inside."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wiqo-core = { path = "../wiqo-core" }
+wiqo-contract = { path = "../wiqo-contract" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+dirs.workspace = true
+trash.workspace = true
+mime_guess.workspace = true
+encoding_rs.workspace = true
+dunce.workspace = true
+walkdir.workspace = true
+pdf-extract.workspace = true
+lopdf.workspace = true
+regex.workspace = true
+zip.workspace = true
+quick-xml.workspace = true
+calamine.workspace = true
+plist.workspace = true
+image.workspace = true
+reqwest.workspace = true
+arboard.workspace = true
+url.workspace = true
+open.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+sysinfo.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+libloading.workspace = true
+objc2-app-kit = { version = "0.3" }
+objc2-foundation = { version = "0.3" }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+xcap.workspace = true

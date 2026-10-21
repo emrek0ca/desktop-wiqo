@@ -1,0 +1,94 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wiqo",
+  "version": "0.1.2",
+  "identifier": "com.wiqo.desktop",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Wiqo",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 520,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-src 'self' about: data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Wiqo masaüstü",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "Developer ID Application: Osman Emre Koca (7SRKKF75MC)",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist",
+      "files": {
+        "Library/LaunchAgents/com.wiqo.desktop.login.plist": "launch-agent.plist"
+      }
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Turkish",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "Wiqo",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    },
+    "createUpdaterArtifacts": true,
+    "longDescription": "Wiqo, telefonundan verdiğin görevleri bu bilgisayarda yapan asistan.",
+    "publisher": "Wiqo",
+    "copyright": "© 2026 Wiqo"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1MTk0MTkzRTA5QkEyNTYKUldSV29wdmdrMEVaUmZEZm9kVXFIa1FUZld0d0xqL1RtVmR0Q0xWVW5oaFV3anZvN0sxUHBVUTgK",
+      "endpoints": [
+        "https://api.wiqoai.com/desktop-updates/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "wiqo"
+        ]
+      }
+    }
+  },
+  "mainBinaryName": "Wiqo"
+}

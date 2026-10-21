@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Wiqo, telefondan verdiğin görevler için Mesajlar, Mail, Notlar, Takvim ve Anımsatıcılar gibi uygulamaları senin adına kullanır.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Wiqo, telefondan istediğin dosyaları Masaüstü'nde bulmak, okumak ve düzenlemek için bu izni ister.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Wiqo, telefondan istediğin dosyaları Belgeler'de bulmak, okumak ve düzenlemek için bu izni ister.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Wiqo, telefondan istediğin dosyaları İndirilenler'de bulmak, okumak ve düzenlemek için bu izni ister.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Wiqo, istediğin dosyalar harici diskteyse onlara erişmek için bu izni ister.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Wiqo, istediğin dosyalar ağ diskindeyse onlara erişmek için bu izni ister.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Wiqo, hava durumu gibi yere bağlı sorularda bulunduğun şehri bulmak için konumunu bir kez okur; sunucuya yalnızca şehir adı gider.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Wiqo, hava durumu gibi yere bağlı sorularda bulunduğun şehri bulmak için konumunu bir kez okur; sunucuya yalnızca şehir adı gider.</string>
+</dict>
+</plist>

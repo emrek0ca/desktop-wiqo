@@ -1,0 +1,6 @@
+target/
+node_modules/
+.DS_Store
+*.key
+*.p12
+*.pem

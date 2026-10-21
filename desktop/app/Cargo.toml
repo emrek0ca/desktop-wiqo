@@ -1,0 +1,34 @@
+[package]
+name = "wiqo-desktop"
+description = "Wiqo for the desktop: the window and the tray around the Wiqo desktop runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+wiqo-agent = { path = "../crates/wiqo-agent" }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-deep-link = "2"
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSData", "NSDictionary"] }
+objc2-service-management = { version = "0.3", features = ["SMAppService"] }
+
+# tauri-plugin-deep-link 2.6 builds rust-ini's ParseOption by its fields; rust-ini 0.21.2 added fields in a patch release, which breaks the
+# Linux build. Held at 0.21.1 until the plugin follows.
+[target.'cfg(target_os = "linux")'.dependencies]
+rust-ini = "=0.21.1"

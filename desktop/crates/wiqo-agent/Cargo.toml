@@ -1,0 +1,44 @@
+[package]
+name = "wiqo-agent"
+description = "The headless Wiqo desktop process: pairs with a phone, connects to the relay and runs the operations it is asked for."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "wiqo-agent"
+path = "src/main.rs"
+
+[dependencies]
+wiqo-core = { path = "../wiqo-core" }
+wiqo-ops = { path = "../wiqo-ops" }
+wiqo-contract = { path = "../wiqo-contract" }
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+qrcode.workspace = true
+base64.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+chrono.workspace = true
+sysinfo.workspace = true
+dirs.workspace = true
+zip.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSError", "NSDate", "NSRunLoop"] }
+objc2-core-location = { version = "0.3", features = ["CLLocationManager", "CLLocation", "CLGeocoder", "CLPlacemark", "block2"] }
+block2 = "0.6"

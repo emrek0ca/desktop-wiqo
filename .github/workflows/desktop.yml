@@ -1,0 +1,120 @@
+name: Wiqo Desktop
+
+on:
+  push:
+    paths:
+      - "desktop/**"
+      - "contracts/**"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "contracts/**"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: An existing release to receive the Windows installers (empty = desktop-v<version>)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# The same checks on the three systems the desktop runs on: the platform-specific code (power, volume, applications, screen) is only compiled and tested on its own system.
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Linux libraries (screen capture, clipboard, the Tauri window)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev libgbm-dev libclang-dev libxdo-dev libwayland-dev libegl1-mesa-dev libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+
+  # Wiqo for Windows: the NSIS installer (per-user, no admin) and its signed updater archive. Updates are verified with the key in
+  # tauri.conf.json, so the repository secret TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD) must hold ~/.tauri/wiqo-updater.key.
+  # Independent of `check`, so a Linux-only failure never holds back the Windows installer.
+  windows-package:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    defaults:
+      run:
+        working-directory: desktop/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build the installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: cargo tauri build --target ${{ matrix.target }} --bundles nsis
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p ../../dist
+          cp ../target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe ../../dist/
+          cp ../target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe.sig ../../dist/ 2>/dev/null || echo "no updater signature (secret missing)"
+          ls -la ../../dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wiqo-windows-${{ matrix.target }}
+          path: dist/*
+          retention-days: 14
+
+  # A new version (desktop/app/tauri.conf.json "version") pushed to the repository is published by itself as `desktop-v<version>`; the
+  # website's download button reads the GitHub releases and picks the newest one with a Windows installer, so nothing else is needed.
+  # An existing release (or a tag given by hand) only gets its Windows files replaced.
+  windows-release:
+    if: github.event_name != 'pull_request'
+    needs: windows-package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wiqo-windows-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIVEN_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./desktop/app/tauri.conf.json').version")
+          TAG="${GIVEN_TAG:-desktop-v$VERSION}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            # A pre-release, so GitHub's "latest" (the Mac download) stays as it is.
+            gh release create "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Wiqo Desktop $VERSION (Windows)" \
+              --notes "Wiqo masaüstü $VERSION — Windows kurulumu (yönetici izni gerekmez). x64: Wiqo_${VERSION}_x64-setup.exe · ARM64: Wiqo_${VERSION}_arm64-setup.exe"
+          fi
