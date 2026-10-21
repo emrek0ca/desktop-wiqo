@@ -55,10 +55,14 @@ fn parse_desktop(text: &str) -> Option<Entry> {
     })
 }
 
+/// The program an `Exec=` line starts: the first word that is neither `env` nor a `NAME=value` setting before it.
 fn program_of(exec: &str) -> String {
     let first = exec
         .split_whitespace()
-        .find(|part| !part.contains('=') || part.starts_with('/'))
+        .find(|part| {
+            (!part.contains('=') || part.starts_with('/'))
+                && Path::new(part).file_name().and_then(|name| name.to_str()) != Some("env")
+        })
         .unwrap_or("");
     Path::new(first.trim_matches('"'))
         .file_name()

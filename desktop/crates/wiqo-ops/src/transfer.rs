@@ -489,6 +489,8 @@ mod tests {
     fn an_artifact_lands_in_its_folder_never_over_a_file_unless_asked_and_with_a_backup() {
         let ctx = Context::for_tests();
         let desktop = fsx::desktop_dir().unwrap();
+        // A fresh CI machine has no Desktop folder yet.
+        fs::create_dir_all(&desktop).unwrap();
         let folder = format!("wiqo-artifact-test-{}", uuid::Uuid::new_v4());
         let directory = Some(folder.clone());
         let done = commit_artifact(&ctx, b"bir", "rapor.txt", false, &directory).unwrap();
