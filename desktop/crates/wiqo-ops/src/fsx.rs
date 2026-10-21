@@ -23,12 +23,57 @@ pub fn desktop_dir() -> Option<PathBuf> {
     dirs::desktop_dir().or_else(|| Some(home().join("Desktop")))
 }
 
+/// Where the system really keeps a well-known folder named by its English name under home. On Windows these move: with OneDrive backup (the default
+/// on Windows 11) Desktop and Documents live in `C:/Users/<name>/OneDrive/...`, so `~/Desktop` must not be taken literally.
+fn known_folder(name: &str) -> Option<PathBuf> {
+    match name.to_lowercase().as_str() {
+        "desktop" => dirs::desktop_dir(),
+        "documents" => dirs::document_dir(),
+        "downloads" => dirs::download_dir(),
+        "pictures" => dirs::picture_dir(),
+        "music" => dirs::audio_dir(),
+        "movies" | "videos" => dirs::video_dir(),
+        _ => None,
+    }
+    .filter(|folder| is_dir(folder))
+}
+
+/// The well-known folders whose real place differs from `home/<name>` (OneDrive, a redirected profile): (English name, real place).
+fn moved_known_folders() -> Vec<(&'static str, PathBuf)> {
+    let home = home();
+    [
+        "Desktop",
+        "Documents",
+        "Downloads",
+        "Pictures",
+        "Music",
+        "Movies",
+        "Videos",
+    ]
+    .into_iter()
+    .filter_map(|name| {
+        let real = known_folder(name)?;
+        (dunce::simplified(&real) != dunce::simplified(&home.join(name))).then_some((name, real))
+    })
+    .collect()
+}
+
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// `~/Desktop` for a path under the home folder, the path itself otherwise.
+/// `~/Desktop` for a path under the home folder, the path itself otherwise. A moved well-known folder is shown by its usual name
+/// (`~/Desktop/a.txt`, not `~/OneDrive/Desktop/a.txt`), which `canonical_user_path` maps back to the real place.
 pub fn abbreviate(path: &Path) -> String {
+    for (name, real) in moved_known_folders() {
+        if let Ok(rest) = path.strip_prefix(&real) {
+            return if rest.as_os_str().is_empty() {
+                format!("~/{name}")
+            } else {
+                format!("~/{name}/{}", display_path(rest))
+            };
+        }
+    }
     match path.strip_prefix(home()) {
         Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
         Ok(rest) => format!("~/{}", display_path(rest)),
@@ -92,6 +137,15 @@ pub fn canonical_user_path(raw: &str) -> String {
             parts[0] = english.to_string();
         }
     }
+    // ~/Desktop on a computer whose Desktop is elsewhere (OneDrive): the real folder.
+    if let Some(real) = known_folder(&parts[0]) {
+        if dunce::simplified(&real) != dunce::simplified(&home_path.join(&parts[0])) {
+            return std::iter::once(display_path(&real))
+                .chain(parts.into_iter().skip(1))
+                .collect::<Vec<_>>()
+                .join("/");
+        }
+    }
     std::iter::once(home_text)
         .chain(parts)
         .collect::<Vec<_>>()
@@ -114,6 +168,53 @@ pub fn is_regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|meta| meta.is_file())
         .unwrap_or(false)
+}
+
+/// Creates the missing folders above `raw` (a file or folder about to be written there), so "~/Desktop/Raporlar/not.txt" works without a separate
+/// createFolder step. Only inside the home folder, never through a link, never into a sensitive place, and at most four new levels; `false` when it
+/// would not or could not.
+pub fn ensure_parent(raw: &str) -> bool {
+    if !is_valid_local_path(raw) {
+        return false;
+    }
+    let expanded = PathBuf::from(canonical_user_path(raw));
+    // "~/Desktop/Arşiv/" (a trailing slash) names the folder itself: it is created too.
+    let folder_itself = raw.trim_end().ends_with('/') || raw.trim_end().ends_with('\\');
+    let Some(parent) = (if folder_itself {
+        Some(expanded.as_path())
+    } else {
+        expanded.parent()
+    }) else {
+        return false;
+    };
+    if is_dir(parent) {
+        return true;
+    }
+    if !expanded.is_absolute() || FilePolicy::get().is_sensitive(&expanded.to_string_lossy()) {
+        return false;
+    }
+    let mut existing = parent.to_path_buf();
+    let mut missing = 0;
+    while fs::symlink_metadata(&existing).is_err() {
+        missing += 1;
+        if missing > 4 || !existing.pop() {
+            return false;
+        }
+    }
+    let Ok(base) = dunce::canonicalize(&existing) else {
+        return false;
+    };
+    let home = dunce::canonicalize(home()).unwrap_or_else(|_| home());
+    if is_symlink(&existing) || !is_dir(&base) || !base.starts_with(&home) {
+        return false;
+    }
+    if parent
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    fs::create_dir_all(parent).is_ok() && is_dir(parent)
 }
 
 /// The real, absolute place a path names. An existing entry must not itself be a symlink (a model-produced path never silently operates on a link's target);

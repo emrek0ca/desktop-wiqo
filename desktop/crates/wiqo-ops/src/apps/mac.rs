@@ -71,6 +71,11 @@ fn read_bundle(path: &Path) -> Option<Installed> {
 }
 
 /// Applications on disk, remembered for 20 seconds (scanning every bundle on each command would be slow and is never needed that often).
+/// The same list without waiting (nothing here is slow to read).
+pub(super) fn installed_now() -> Vec<Installed> {
+    installed()
+}
+
 pub(super) fn installed() -> Vec<Installed> {
     static CACHE: Mutex<Option<(Instant, Vec<Installed>)>> = Mutex::new(None);
     let mut cache = CACHE.lock().expect("installed cache");

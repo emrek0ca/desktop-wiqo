@@ -1,8 +1,15 @@
-//! Windows: Start Menu shortcuts are the installed applications, the visible top-level windows show which run, `start` launches, `taskkill` closes.
+//! Windows: the installed applications are what the Start menu shows (`Get-StartApps`: desktop programs and Store apps alike, with the
+//! programs' .exe from their Start-menu shortcuts), the visible top-level windows show which run, a desktop program starts from its .exe and a Store
+//! app from `shell:AppsFolder`, `taskkill` closes. Each application carries its program's file name ("chrome", "spotify") as its identity, so the
+//! running process and the installed entry are the same application.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use wiqo_core::wire::WireError;
 
 use super::{Installed, Running, Target};
@@ -18,6 +25,32 @@ fn start_menu_folders() -> Vec<PathBuf> {
     folders
 }
 
+fn skipped(name: &str) -> bool {
+    let lowered = name.to_lowercase();
+    name.is_empty() || lowered.contains("uninstall") || lowered.contains("kaldır")
+}
+
+/// The identity of a program: its .exe name without the extension, lower case ("chrome").
+fn identity_of(exe: &str) -> Option<String> {
+    let path = Path::new(exe.trim().trim_matches('"'));
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+        .then(|| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().to_lowercase())
+        })
+        .flatten()
+}
+
+/// A Store app has no .exe to name it; its name without spaces stands in ("WhatsApp" -> "whatsapp"), which is also how its process is usually called.
+fn identity_of_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// The Start-menu shortcuts alone: available at once, used until the full list is read.
 fn scan(folder: &Path, depth: usize, out: &mut Vec<Installed>) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
@@ -34,14 +67,11 @@ fn scan(folder: &Path, depth: usize, out: &mut Vec<Installed>) {
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_default();
-            if !name.is_empty()
-                && !name.to_lowercase().contains("uninstall")
-                && !name.to_lowercase().contains("kaldır")
-            {
+            if !skipped(&name) {
                 out.push(Installed {
                     name: name.clone(),
-                    file_name: name,
-                    bundle: None,
+                    file_name: name.clone(),
+                    bundle: Some(identity_of_name(&name)),
                     path: path.to_string_lossy().to_string(),
                     category: None,
                 });
@@ -50,12 +80,176 @@ fn scan(folder: &Path, depth: usize, out: &mut Vec<Installed>) {
     }
 }
 
-pub(super) fn installed() -> Vec<Installed> {
+fn shortcuts() -> Vec<Installed> {
     let mut found = Vec::new();
     for folder in start_menu_folders() {
         scan(&folder, 3, &mut found);
     }
     found
+}
+
+#[derive(Deserialize)]
+struct StartApp {
+    /// Name as the Start menu shows it.
+    n: String,
+    /// AppUserModelID or the program path (`Get-StartApps`).
+    id: String,
+    /// The .exe its Start-menu shortcut points at, when there is one.
+    #[serde(default)]
+    t: Option<String>,
+}
+
+const LIST_SCRIPT: &str = r#"[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$shell = New-Object -ComObject WScript.Shell
+$links = @{}
+foreach ($root in @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs")) {
+  Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+    try { $target = $shell.CreateShortcut($_.FullName).TargetPath; if ($target) { $links[$_.BaseName] = $target } } catch {}
+  }
+}
+@(Get-StartApps | ForEach-Object { [pscustomobject]@{ n = $_.Name; id = $_.AppID; t = $links[$_.Name] } }) | ConvertTo-Json -Compress"#;
+
+fn read_start_apps() -> Option<Vec<Installed>> {
+    let mut command = crate::process::command("powershell");
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        LIST_SCRIPT,
+    ]);
+    let output = crate::process::run_with_timeout(command, Duration::from_secs(25))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let text = text.trim().trim_start_matches('\u{feff}');
+    let apps: Vec<StartApp> = match serde_json::from_str::<serde_json::Value>(text).ok()? {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| serde_json::from_value(item).ok())
+            .collect(),
+        single => vec![serde_json::from_value(single).ok()?],
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut found = Vec::new();
+    for app in apps {
+        if skipped(&app.n) || !seen.insert(app.n.to_lowercase()) {
+            continue;
+        }
+        // A desktop program starts from its .exe; a Store app (or one without a usable shortcut) through the shell's application folder.
+        let exe = app
+            .t
+            .as_deref()
+            .filter(|target| identity_of(target).is_some() && Path::new(target).exists())
+            .map(str::to_string)
+            .or_else(|| {
+                Some(app.id.clone())
+                    .filter(|id| identity_of(id).is_some() && Path::new(id).exists())
+            });
+        let bundle = exe
+            .as_deref()
+            .and_then(identity_of)
+            .or_else(|| identity_of(&app.id))
+            .unwrap_or_else(|| identity_of_name(&app.n));
+        let file_name = exe
+            .as_deref()
+            .and_then(|exe| {
+                Path::new(exe)
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| app.n.clone());
+        found.push(Installed {
+            name: app.n.clone(),
+            file_name,
+            bundle: Some(bundle),
+            path: exe.unwrap_or_else(|| format!("shell:AppsFolder\\{}", app.id)),
+            category: None,
+        });
+    }
+    (!found.is_empty()).then_some(found)
+}
+
+struct Cache {
+    apps: Option<Vec<Installed>>,
+    read_at: Option<Instant>,
+    reading: bool,
+}
+
+fn cache() -> &'static (Mutex<Cache>, Condvar) {
+    static CACHE: OnceLock<(Mutex<Cache>, Condvar)> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        (
+            Mutex::new(Cache {
+                apps: None,
+                read_at: None,
+                reading: false,
+            }),
+            Condvar::new(),
+        )
+    })
+}
+
+/// Reads the full list in the background (a few seconds of PowerShell), at most every ten minutes.
+pub(crate) fn warm() {
+    let (lock, ready) = cache();
+    {
+        let mut state = lock.lock().expect("apps cache");
+        let fresh = state
+            .read_at
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(600));
+        if state.reading || fresh {
+            return;
+        }
+        state.reading = true;
+    }
+    std::thread::spawn(move || {
+        let apps = read_start_apps();
+        let mut state = lock.lock().expect("apps cache");
+        if apps.is_some() {
+            state.apps = apps;
+        }
+        state.read_at = Some(Instant::now());
+        state.reading = false;
+        ready.notify_all();
+    });
+}
+
+/// What is installed, without waiting: the full list once read, the Start-menu shortcuts before that.
+pub(super) fn installed_now() -> Vec<Installed> {
+    warm();
+    cache()
+        .0
+        .lock()
+        .expect("apps cache")
+        .apps
+        .clone()
+        .unwrap_or_else(shortcuts)
+}
+
+/// What is installed for opening or closing one by name: waits (at most ten seconds) for the full list the first time, so a Store app is found.
+pub(super) fn installed() -> Vec<Installed> {
+    warm();
+    let (lock, ready) = cache();
+    let state = lock.lock().expect("apps cache");
+    let (state, _) = ready
+        .wait_timeout_while(state, Duration::from_secs(10), |state| {
+            state.apps.is_none() && state.reading
+        })
+        .expect("apps cache");
+    state.apps.clone().unwrap_or_else(shortcuts)
+}
+
+/// Program identity -> the name the Start menu shows ("chrome" -> "Google Chrome"), for naming running processes.
+fn display_names() -> HashMap<String, String> {
+    cache()
+        .0
+        .lock()
+        .expect("apps cache")
+        .apps
+        .iter()
+        .flatten()
+        .filter_map(|app| Some((app.bundle.clone()?, app.name.clone())))
+        .collect()
 }
 
 /// Processes with a visible, titled top-level window, read straight from the window list (EnumWindows): milliseconds. `tasklist /v` asked every
@@ -117,6 +311,7 @@ pub(super) fn running() -> Vec<Running> {
         EnumWindows(Some(visit), &mut pids as *mut Vec<u32> as LPARAM);
     }
     let own = std::process::id();
+    let names = display_names();
     let mut groups: Vec<Running> = Vec::new();
     for pid in pids.into_iter().filter(|pid| *pid != own) {
         let Some(name) = image_name(pid) else {
@@ -137,14 +332,16 @@ pub(super) fn running() -> Vec<Running> {
         {
             continue;
         }
+        let identity = name.to_lowercase();
         match groups
             .iter_mut()
-            .find(|group| group.name.eq_ignore_ascii_case(&name))
+            .find(|group| group.bundle.as_deref() == Some(identity.as_str()))
         {
             Some(group) => group.pids.push(pid),
             None => groups.push(Running {
-                name,
-                bundle: None,
+                // "Google Chrome", not "chrome", when the Start menu knows it.
+                name: names.get(&identity).cloned().unwrap_or(name),
+                bundle: Some(identity),
                 is_active: false,
                 pids: vec![pid],
             }),
@@ -158,6 +355,14 @@ pub(super) fn launch(target: &Target) -> Result<(), String> {
         .path
         .as_ref()
         .ok_or_else(|| format!("{} açılamadı.", target.name))?;
+    // A Store app opens through the shell's application folder; explorer.exe reports 1 even when it worked, so only a failure to start counts.
+    if path.starts_with("shell:AppsFolder") {
+        return crate::process::command("explorer.exe")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| format!("{} açılamadı.", target.name));
+    }
     match crate::process::command("cmd")
         .args(["/C", "start", "", path])
         .status()

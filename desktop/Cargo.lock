@@ -7338,7 +7338,7 @@ dependencies = [
 
 [[package]]
 name = "wiqo-agent"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7370,7 +7370,7 @@ dependencies = [
 
 [[package]]
 name = "wiqo-contract"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "hex",
  "hmac",
@@ -7383,7 +7383,7 @@ dependencies = [
 
 [[package]]
 name = "wiqo-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7407,7 +7407,7 @@ dependencies = [
 
 [[package]]
 name = "wiqo-desktop"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.22.1",
  "objc2",
@@ -7430,7 +7430,7 @@ dependencies = [
 
 [[package]]
 name = "wiqo-ops"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "arboard",
  "async-trait",

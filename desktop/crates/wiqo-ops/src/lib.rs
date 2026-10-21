@@ -60,6 +60,9 @@ pub fn register_all(engine: &mut Engine) -> Result<(), String> {
     if engine.platform() == wiqo_contract::Platform::MacOs {
         personal::start_clipboard_history();
     }
+    // The full application list (Store apps too) is read once in the background, so the first "open Spotify" finds it.
+    #[cfg(windows)]
+    apps::warm();
     // Some operations are listed for macOS only in operations.json (the server never sends them elsewhere yet), so they are left out on other systems.
     let platform = engine.platform();
     all_operations()

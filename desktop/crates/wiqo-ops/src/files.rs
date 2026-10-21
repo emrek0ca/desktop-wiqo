@@ -356,6 +356,7 @@ fn write_file(ctx: &Context, value: &Value) -> Result<Done> {
         )
     };
     let content = request.content.as_deref().ok_or_else(invalid)?;
+    fsx::ensure_parent(&request.path);
     let destination = fsx::resolve(&request.path, true).ok_or_else(invalid)?;
     let parent = destination.parent().ok_or_else(invalid)?;
     if !is_dir(parent) {
@@ -420,6 +421,10 @@ fn transfer(ctx: &Context, request: &FileOperation, copy: bool) -> Result<PathBu
     let source = fsx::resolve(&request.path, false)
         .filter(|path| path.exists())
         .ok_or_else(invalid)?;
+    // "Move it into ~/Desktop/Arşiv/2026/" works when that folder does not exist yet.
+    if let Some(raw) = request.destination.as_deref() {
+        fsx::ensure_parent(raw);
+    }
     let destination = requested_target(request).ok_or_else(invalid)?;
     let parent = destination
         .parent()

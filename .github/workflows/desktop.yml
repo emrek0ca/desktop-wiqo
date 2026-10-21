@@ -88,6 +88,35 @@ jobs:
           path: dist/*
           retention-days: 14
 
+  # The everyday tools for real on a fresh Windows and Mac (wiqo-agent selftest): files must pass; the steps that need a desktop session (apps,
+  # clipboard, screen) run too and are reported, since CI machines do not always have one.
+  selftest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - run: cargo build -p wiqo-agent
+      - name: Files, search, system (must pass)
+        env:
+          WIQO_DATA_DIR: ${{ runner.temp }}/wiqo-selftest
+        run: target/debug/wiqo-agent selftest --headless
+      - name: Apps, clipboard, screen (reported)
+        continue-on-error: true
+        env:
+          WIQO_DATA_DIR: ${{ runner.temp }}/wiqo-selftest-full
+        run: target/debug/wiqo-agent selftest
+
   # A new version (desktop/app/tauri.conf.json "version") pushed to the repository is published by itself as `desktop-v<version>`; the
   # website's download button reads the GitHub releases and picks the newest one with a Windows installer, so nothing else is needed.
   # An existing release (or a tag given by hand) only gets its Windows files replaced.

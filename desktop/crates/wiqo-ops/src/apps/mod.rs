@@ -20,6 +20,8 @@ use windows as sys;
 
 #[cfg(target_os = "macos")]
 pub(crate) use mac::open_url_in_frontmost_browser;
+#[cfg(target_os = "windows")]
+pub(crate) use windows::warm;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -139,6 +141,20 @@ fn resolve(target: &str, bundle: Option<&str>) -> Resolution {
             .as_deref()
             .map(str::to_lowercase)
             .unwrap_or_else(|| format!("running:{}", normalize(&group.name)));
+        // The same application seen twice (a running "chrome" next to the installed "Google Chrome", whose names include "chrome"): one candidate.
+        let key = if candidates
+            .iter()
+            .any(|(existing_key, _)| *existing_key == key)
+        {
+            key
+        } else {
+            let wanted = normalize(&group.name);
+            candidates
+                .iter()
+                .find(|(_, candidate)| candidate.names.iter().any(|name| normalize(name) == wanted))
+                .map(|(existing_key, _)| existing_key.clone())
+                .unwrap_or(key)
+        };
         let existing = candidates
             .iter()
             .find(|(existing_key, _)| *existing_key == key)
@@ -852,7 +868,8 @@ const BROWSERS: [&str; 11] = [
 /// names of installed ones (an alias row has no bundle id so it survives the server's per-bundle dedupe; this desktop maps it back when it is used).
 pub(crate) fn targets() -> Vec<Value> {
     let running = sys::running();
-    let installed = sys::installed();
+    // Never waits: this runs while the registration and every chat turn are being built.
+    let installed = sys::installed_now();
     let running_bundles: std::collections::HashSet<String> = running
         .iter()
         .filter_map(|app| app.bundle.as_deref().map(str::to_lowercase))

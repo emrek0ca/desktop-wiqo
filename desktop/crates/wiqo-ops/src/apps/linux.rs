@@ -70,6 +70,11 @@ fn program_of(exec: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The same list without waiting (nothing here is slow to read).
+pub(super) fn installed_now() -> Vec<Installed> {
+    installed()
+}
+
 pub(super) fn installed() -> Vec<Installed> {
     let mut found: Vec<Installed> = Vec::new();
     for folder in desktop_folders() {

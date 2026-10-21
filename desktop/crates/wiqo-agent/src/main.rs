@@ -4,6 +4,7 @@
 //!   wiqo-agent run                    connect to the server and run the commands that arrive
 //!   wiqo-agent status                 what this desktop is, who it is paired with, what it can do
 //!   wiqo-agent full-access on|off     let the server's PC agent run commands here without asking the phone each time
+//!   wiqo-agent selftest [--app NAME]  run every everyday tool for real on this computer (a scratch folder on the Desktop) and report each one
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -28,7 +29,18 @@ enum Command {
     Pair,
     Run,
     Status,
-    FullAccess { state: String },
+    FullAccess {
+        state: String,
+    },
+    /// Runs the everyday tools for real (files, search, apps, clipboard, screen, system) and prints one JSON line per step; exits 1 on a failure.
+    Selftest {
+        /// An application to open, find among the running ones and quit (default: Notepad on Windows, TextEdit on macOS).
+        #[arg(long)]
+        app: Option<String>,
+        /// Leave out the steps that need a desktop session (screen capture, apps, clipboard), for a machine without one.
+        #[arg(long)]
+        headless: bool,
+    },
 }
 
 #[tokio::main]
@@ -97,6 +109,13 @@ async fn main() -> Result<()> {
                 phone.name, phone.platform
             );
         }
+        Command::Selftest { app, headless } => {
+            let failures = selftest(&desktop, app.clone(), *headless).await;
+            if failures > 0 {
+                bail!("{failures} step(s) failed");
+            }
+            println!("all steps passed");
+        }
         Command::Run => {
             if !desktop.is_paired() {
                 bail!("this desktop is not paired yet: run `wiqo-agent pair` first");
@@ -116,4 +135,113 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// One tool step, as the server or the window's chat sends it (Origin::Local: the person at this computer asked).
+async fn step(
+    desktop: &Desktop,
+    kind: &str,
+    payload: serde_json::Value,
+) -> wiqo_core::wire::CommandResult {
+    let request = wiqo_core::wire::Request {
+        id: uuid::Uuid::new_v4(),
+        kind: kind.to_string(),
+        payload,
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        signature_version: None,
+        created_at_epoch_ms: None,
+        signature: None,
+        nonce: None,
+    };
+    desktop
+        .runtime
+        .engine
+        .execute(&request, &wiqo_core::engine::Origin::Local)
+        .await
+}
+
+async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool) -> usize {
+    use serde_json::json;
+    let folder = format!("~/Desktop/wiqo-selftest-{}", std::process::id());
+    let file = format!("{folder}/not.txt");
+    let copy = format!("{folder}/kopya.txt");
+    let moved = format!("{folder}/alt/tasindi.txt");
+    let app = app.unwrap_or_else(|| {
+        if cfg!(windows) {
+            "Notepad".into()
+        } else {
+            "TextEdit".into()
+        }
+    });
+    let op = |path: &str| json!({ "kind": "fileOperation", "value": { "path": path } });
+    let mut steps: Vec<(&str, serde_json::Value)> = vec![
+        ("ping", json!({ "kind": "none" })),
+        ("getSystemStatus", json!({ "kind": "none" })),
+        ("listFiles", op("~/Desktop")),
+        ("listFiles", op("~/Masaüstü")),
+        ("listFiles", op("~/Documents")),
+        ("listFiles", op("~/Downloads")),
+        (
+            "writeFile",
+            json!({ "kind": "fileOperation", "value": { "path": file, "content": "Wiqo self test: çalışıyor." } }),
+        ),
+        ("readFile", op(&file)),
+        (
+            "copyFile",
+            json!({ "kind": "fileOperation", "value": { "path": file, "destination": copy } }),
+        ),
+        (
+            "moveFile",
+            json!({ "kind": "fileOperation", "value": { "path": copy, "destination": moved } }),
+        ),
+        ("listFiles", op(&folder)),
+        (
+            "searchFiles",
+            json!({ "kind": "fileSearch", "value": { "query": "tasindi" } }),
+        ),
+        (
+            "fileUtility",
+            json!({ "kind": "fileUtility", "value": { "action": "inspect", "path": file } }),
+        ),
+        (
+            "systemUtility",
+            json!({ "kind": "systemUtility", "value": { "action": "battery" } }),
+        ),
+    ];
+    if !headless {
+        steps.extend([
+            ("setClipboardText", json!({ "kind": "clipboardText", "value": "wiqo-selftest" })),
+            ("getClipboardText", json!({ "kind": "none" })),
+            ("captureScreen", json!({ "kind": "screenCapture", "value": { "maxWidth": 800 } })),
+            ("listRunningApplications", json!({ "kind": "none" })),
+            ("openApplicationByName", json!({ "kind": "applicationQuery", "value": app })),
+            ("controlApplication", json!({ "kind": "applicationControl", "value": { "action": "quit", "target": app, "force": true } })),
+        ]);
+    }
+    steps.push((
+        "deleteFile",
+        json!({ "kind": "fileOperation", "value": { "path": folder, "recursive": true } }),
+    ));
+    let mut failures = 0;
+    for (kind, payload) in steps {
+        let started = std::time::Instant::now();
+        let result = step(desktop, kind, payload).await;
+        let ok =
+            result.status == wiqo_core::wire::CommandStatus::Completed && result.error.is_none();
+        if !ok {
+            failures += 1;
+        }
+        println!(
+            "{}",
+            json!({
+                "step": kind,
+                "ok": ok,
+                "ms": started.elapsed().as_millis() as u64,
+                "status": result.status,
+                "code": result.error.as_ref().map(|error| error.code.clone()),
+                "message": result.message.chars().take(300).collect::<String>(),
+            })
+        );
+    }
+    failures
 }
