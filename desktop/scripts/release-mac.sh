@@ -12,16 +12,17 @@ cd "$(dirname "$0")/.."
 KEY="${WIQO_UPDATER_KEY:-$HOME/.tauri/wiqo-updater.key}"
 PROFILE="${WIQO_NOTARY_PROFILE:-wiqo-notary}"
 VERSION=$(python3 -c 'import json; print(json.load(open("app/tauri.conf.json"))["version"])')
-ARCH=$(uname -m | sed 's/arm64/aarch64/')
+# One app for Apple Silicon and Intel Macs.
+ARCH=universal
 OUT="release/$VERSION"
-APP="target/release/bundle/macos/Wiqo.app"
+APP="target/universal-apple-darwin/release/bundle/macos/Wiqo.app"
 NOTES="${1:-}"
 
 [ -f "$KEY" ] || { echo "updater key missing: $KEY"; exit 1; }
 xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || { echo "notary profile '$PROFILE' missing (see the setup lines at the top)"; exit 1; }
 
 echo "== build $VERSION ($ARCH)"
-(cd app && cargo tauri build --bundles app)
+(cd app && cargo tauri build --target universal-apple-darwin --bundles app)
 
 echo "== notarize the app"
 mkdir -p "$OUT"
@@ -33,7 +34,7 @@ rm "$OUT/notarize.zip"
 echo "== update archive"
 ARCHIVE="Wiqo_${VERSION}_${ARCH}.app.tar.gz"
 tar -czf "$OUT/$ARCHIVE" -C "$(dirname "$APP")" Wiqo.app
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" cargo tauri signer sign -f "$KEY" -p "" "$OUT/$ARCHIVE" >/dev/null
+env -u TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" cargo tauri signer sign -f "$KEY" -p "" "$OUT/$ARCHIVE" >/dev/null
 SIGNATURE=$(cat "$OUT/$ARCHIVE.sig")
 
 echo "== installer disk image"
@@ -48,7 +49,8 @@ import json, sys, datetime, os
 out, version, arch, archive, signature, notes = sys.argv[1:]
 path = os.path.join(out, "latest.json")
 release = {"version": version, "notes": notes, "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "platforms": {f"darwin-{arch}": {"signature": signature, "url": f"https://api.wiqoai.com/desktop-updates/files/{archive}"}}}
+           "platforms": {f"darwin-{target}": {"signature": signature, "url": f"https://api.wiqoai.com/desktop-updates/files/{archive}"}
+                         for target in (["aarch64", "x86_64"] if arch == "universal" else [arch])}}
 json.dump(release, open(path, "w"), indent=2)
 PY
 
