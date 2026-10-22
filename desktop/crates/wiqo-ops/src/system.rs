@@ -47,25 +47,118 @@ impl Operation for GetSystemStatus {
     }
 
     async fn run(&self, _ctx: &Context, _payload: &Value) -> Outcome {
-        // `macOSVersion` is the wire name from the first (Mac) companion; it carries the operating system version on every platform.
-        let mut status = json!({
-            "hostname": System::host_name().unwrap_or_else(|| "Bilgisayar".into()),
-            "macOSVersion": System::long_os_version().unwrap_or_else(|| System::name().unwrap_or_default()),
-            "uptimeSeconds": System::uptime() as f64,
-            "runtimeStatus": "running",
-        });
-        if let Some((percentage, charging)) = battery() {
-            status["batteryPercentage"] = json!(percentage);
-            status["isCharging"] = json!(charging);
+        let status = tokio::task::spawn_blocking(system_status)
+            .await
+            .unwrap_or_else(|_| json!({ "runtimeStatus": "running" }));
+        let mut message = format!(
+            "{} · {}",
+            status["computerName"].as_str().unwrap_or("Bilgisayar"),
+            status["osName"].as_str().unwrap_or("")
+        );
+        if let Some(battery) = status["batteryPercentage"].as_u64() {
+            message.push_str(&format!(" · pil %{battery}"));
         }
-        if let Some(volume) = crate::device::current_volume() {
-            status["volumePercentage"] = json!(volume);
+        if let (Some(free), Some(total)) = (
+            status["disk"]["freeBytes"].as_u64(),
+            status["disk"]["totalBytes"].as_u64(),
+        ) {
+            message.push_str(&format!(
+                " · disk {} boş / {}",
+                crate::utility::human(free),
+                crate::utility::human(total)
+            ));
         }
-        Outcome::ok(
-            "Sistem durumu alındı.",
-            json!({ "kind": "systemStatus", "value": status }),
-        )
+        Outcome::ok(message, json!({ "kind": "systemStatus", "value": status }))
     }
+}
+
+/// The name the person gave this computer ("Emre'nin MacBook Air", "DESKTOP-8S2D0E3"), not a network address.
+fn computer_name() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(output) = crate::process::run_with_timeout(
+        {
+            let mut command = crate::process::command("/usr/sbin/scutil");
+            command.args(["--get", "ComputerName"]);
+            command
+        },
+        std::time::Duration::from_secs(3),
+    ) {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    #[cfg(windows)]
+    if let Ok(name) = std::env::var("COMPUTERNAME") {
+        if !name.trim().is_empty() {
+            return name.trim().to_string();
+        }
+    }
+    System::host_name().unwrap_or_else(|| "Bilgisayar".into())
+}
+
+/// What the computer is and how it is doing: system, processor, memory, the system disk, battery, volume.
+fn system_status() -> Value {
+    let mut system = System::new();
+    system.refresh_memory();
+    system.refresh_cpu_usage();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    system.refresh_cpu_usage();
+    let cpus = system.cpus();
+    let os_name = if cfg!(windows) {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Linux"
+    };
+    let os_version =
+        System::long_os_version().unwrap_or_else(|| System::name().unwrap_or_default());
+    // `macOSVersion` is the wire name from the first (Mac) companion; it carries the operating system version on every platform.
+    let mut status = json!({
+        "hostname": computer_name(),
+        "computerName": computer_name(),
+        "osName": os_name,
+        "osVersion": os_version,
+        "macOSVersion": os_version,
+        "uptimeSeconds": System::uptime() as f64,
+        "runtimeStatus": "running",
+        "cpu": {
+            "brand": cpus.first().map(|cpu| cpu.brand().trim().to_string()).unwrap_or_default(),
+            "cores": cpus.len(),
+            "usagePercent": (f64::from(system.global_cpu_usage()) * 10.0).round() / 10.0,
+        },
+        "memory": {
+            "totalBytes": system.total_memory(),
+            "usedBytes": system.used_memory(),
+        },
+    });
+    // The disk the system runs from (the largest when none says so).
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let system_disk = disks
+        .list()
+        .iter()
+        .find(|disk| {
+            let mount = disk.mount_point().to_string_lossy().to_lowercase();
+            mount == "/" || mount.starts_with("c:")
+        })
+        .or_else(|| disks.list().iter().max_by_key(|disk| disk.total_space()));
+    if let Some(disk) = system_disk {
+        status["disk"] = json!({
+            "name": disk.name().to_string_lossy(),
+            "mount": disk.mount_point().to_string_lossy(),
+            "totalBytes": disk.total_space(),
+            "freeBytes": disk.available_space(),
+        });
+    }
+    if let Some((percentage, charging)) = battery() {
+        status["batteryPercentage"] = json!(percentage);
+        status["isCharging"] = json!(charging);
+    }
+    if let Some(volume) = crate::device::current_volume() {
+        status["volumePercentage"] = json!(volume);
+    }
+    status
 }
 
 /// Battery level and whether it is charging; `None` on a computer without a battery or when the platform does not say.
@@ -105,7 +198,16 @@ fn battery() -> Option<(u8, bool)> {
     }
     #[cfg(target_os = "windows")]
     {
-        None
+        use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        let mut power: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+        if unsafe { GetSystemPowerStatus(&mut power) } == 0 {
+            return None;
+        }
+        // 128: no battery; 255: unknown.
+        if power.BatteryFlag & 128 != 0 || power.BatteryLifePercent > 100 {
+            return None;
+        }
+        Some((power.BatteryLifePercent, power.ACLineStatus == 1))
     }
 }
 

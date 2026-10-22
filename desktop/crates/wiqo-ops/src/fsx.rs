@@ -297,8 +297,46 @@ pub struct Entry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<String>,
     pub is_directory: bool,
+    /// A folder: how many visible items it holds (counted up to 10,000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub undo_id: Option<String>,
+}
+
+/// What a file manager hides: dot files, and on Windows the hidden/system ones (desktop.ini, Thumbs.db).
+pub fn is_hidden(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if name.starts_with('.') || name == "desktop.ini" || name == "thumbs.db" {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const HIDDEN: u32 = 0x2;
+        const SYSTEM: u32 = 0x4;
+        if fs::symlink_metadata(path)
+            .is_ok_and(|meta| meta.file_attributes() & (HIDDEN | SYSTEM) != 0)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Visible items in a folder, stopping at 10,000.
+pub fn visible_count(folder: &Path) -> Option<usize> {
+    let entries = fs::read_dir(folder).ok()?;
+    Some(
+        entries
+            .flatten()
+            .take(10_000)
+            .filter(|item| !is_hidden(&item.path()))
+            .count(),
+    )
 }
 
 pub fn entry(path: &Path) -> Option<Entry> {

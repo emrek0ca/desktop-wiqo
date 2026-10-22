@@ -21,7 +21,7 @@ const PAGE_SIZE: usize = 12;
 const CANDIDATE_LIMIT: usize = 400;
 const SURVEY_LIMIT: usize = 1_000;
 const MAX_ALTERNATIVES: usize = 6;
-const WALK_ENTRIES: usize = 20_000;
+const WALK_ENTRIES: usize = 60_000;
 const WALK_SECONDS: u64 = 8;
 
 /// Places that hold other programs' files, not the person's: they would drown a search for "rapor" in build output and package checkouts.
@@ -145,10 +145,11 @@ fn tokens(query: &str) -> Vec<String> {
         .collect()
 }
 
+/// Desktop, Documents and Downloads where the system really keeps them (OneDrive moves them on Windows).
 fn own_folders() -> Vec<PathBuf> {
-    ["Desktop", "Documents", "Downloads"]
+    ["~/Desktop", "~/Documents", "~/Downloads"]
         .iter()
-        .map(|name| fsx::home().join(name))
+        .map(|name| PathBuf::from(fsx::canonical_user_path(name)))
         .filter(|path| path.exists())
         .collect()
 }
@@ -295,7 +296,8 @@ fn newer_than(entry: &Entry, since: SystemTime) -> bool {
         .is_none_or(|stamp| stamp >= fsx::iso(since).as_str())
 }
 
-/// A bounded walk: at most 20,000 entries or 8 seconds, names and kinds only.
+/// A bounded walk, level by level (what people look for is rarely buried deep in a project checkout, so the shallow places are seen first):
+/// at most 60,000 entries or 8 seconds, names and kinds only. Hidden folders, package folders and app bundles are never entered.
 fn walk(spec: &Spec) -> Vec<Entry> {
     let deadline = Instant::now() + Duration::from_secs(WALK_SECONDS);
     let folded: Vec<Vec<String>> = spec
@@ -305,53 +307,65 @@ fn walk(spec: &Spec) -> Vec<Entry> {
         .collect();
     let wanted = spec.kind.as_deref().and_then(extensions);
     let (mut visited, mut found) = (0usize, Vec::new());
-    for root in &spec.roots {
-        let mut iterator = walkdir::WalkDir::new(root).follow_links(false).into_iter();
-        while let Some(next) = iterator.next() {
-            let Ok(item) = next else { continue };
+    let mut queue: std::collections::VecDeque<(PathBuf, usize)> =
+        spec.roots.iter().map(|root| (root.clone(), 0)).collect();
+    while let Some((folder, depth)) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        let mut entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for item in entries {
             visited += 1;
             if visited > WALK_ENTRIES || Instant::now() >= deadline || found.len() >= spec.limit {
                 return found;
             }
             let name = item.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') && item.depth() > 0 {
-                if item.file_type().is_dir() {
-                    iterator.skip_current_dir();
-                }
-                continue;
-            }
-            if NOISY_COMPONENTS.contains(&name.to_lowercase().as_str()) {
-                if item.file_type().is_dir() {
-                    iterator.skip_current_dir();
-                }
-                continue;
-            }
-            let Some(candidate) = found_entry(item.path()) else {
+            let lowered = name.to_lowercase();
+            let Ok(file_type) = item.file_type() else {
                 continue;
             };
-            if candidate.is_directory != (spec.kind.as_deref() == Some("folder")) {
+            if file_type.is_symlink()
+                || name.starts_with('.')
+                || NOISY_COMPONENTS.contains(&lowered.as_str())
+            {
+                continue;
+            }
+            let is_dir = file_type.is_dir();
+            if is_dir
+                && depth < 12
+                && !NOISY_SUFFIXES
+                    .iter()
+                    .any(|suffix| lowered.ends_with(suffix))
+            {
+                queue.push_back((item.path(), depth + 1));
+            }
+            if is_dir != (spec.kind.as_deref() == Some("folder")) {
                 continue;
             }
             if let Some(extensions) = wanted {
-                if !candidate
-                    .file_type
-                    .as_deref()
-                    .is_some_and(|ext| extensions.contains(&ext))
-                {
+                let extension = Path::new(&name)
+                    .extension()
+                    .map(|ext| ext.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                if !extensions.contains(&extension.as_str()) {
                     continue;
                 }
-            }
-            if spec
-                .since
-                .is_some_and(|since| !newer_than(&candidate, since))
-            {
-                continue;
             }
             let folded_name = fold(&name);
             if !folded.is_empty()
                 && !folded
                     .iter()
                     .any(|group| group.iter().all(|word| folded_name.contains(word.as_str())))
+            {
+                continue;
+            }
+            let Some(candidate) = found_entry(&item.path()) else {
+                continue;
+            };
+            if spec
+                .since
+                .is_some_and(|since| !newer_than(&candidate, since))
             {
                 continue;
             }

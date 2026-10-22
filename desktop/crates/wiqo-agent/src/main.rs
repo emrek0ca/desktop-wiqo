@@ -40,6 +40,9 @@ enum Command {
         /// Leave out the steps that need a desktop session (screen capture, apps, clipboard), for a machine without one.
         #[arg(long)]
         headless: bool,
+        /// Print what each tool returned (its data), shortened.
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -109,8 +112,12 @@ async fn main() -> Result<()> {
                 phone.name, phone.platform
             );
         }
-        Command::Selftest { app, headless } => {
-            let failures = selftest(&desktop, app.clone(), *headless).await;
+        Command::Selftest {
+            app,
+            headless,
+            verbose,
+        } => {
+            let failures = selftest(&desktop, app.clone(), *headless, *verbose).await;
             if failures > 0 {
                 bail!("{failures} step(s) failed");
             }
@@ -160,7 +167,7 @@ async fn step(
         .await
 }
 
-async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool) -> usize {
+async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool, verbose: bool) -> usize {
     use serde_json::json;
     let folder = format!("~/Desktop/wiqo-selftest-{}", std::process::id());
     let file = format!("{folder}/not.txt");
@@ -242,6 +249,10 @@ async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool) -> usi
                 "message": result.message.chars().take(300).collect::<String>(),
             })
         );
+        if verbose {
+            let data = serde_json::to_string(&result.data).unwrap_or_default();
+            println!("    data: {}", data.chars().take(1_200).collect::<String>());
+        }
     }
     failures
 }

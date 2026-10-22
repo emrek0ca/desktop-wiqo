@@ -184,7 +184,18 @@ fn top_processes(limit: usize) -> Result<Done> {
     ))
 }
 
+/// A computer without a battery (a desktop PC, a virtual machine) is an answer, not a failure: the person learns there is none.
 fn battery() -> Result<Done> {
+    match battery_details() {
+        Err(error) if error.code == "BATTERY_UNAVAILABLE" => Ok(Done::new(
+            "Bu bilgisayarda pil yok (masaüstü bilgisayar ya da pil bilgisi verilmiyor).",
+            None,
+        )),
+        other => other,
+    }
+}
+
+fn battery_details() -> Result<Done> {
     let unavailable = || {
         tool_failure(
             "BATTERY_UNAVAILABLE",

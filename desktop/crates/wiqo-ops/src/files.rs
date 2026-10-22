@@ -262,8 +262,7 @@ pub(crate) fn list_files(_ctx: &Context, value: &Value) -> Result<Done> {
         .map(|item| item.path())
         .filter(|path| {
             path.file_name().is_some_and(|name| {
-                !name.to_string_lossy().starts_with('.')
-                    && !FilePolicy::get().is_sensitive(&name.to_string_lossy())
+                !fsx::is_hidden(path) && !FilePolicy::get().is_sensitive(&name.to_string_lossy())
             })
         })
         .collect();
@@ -279,12 +278,42 @@ pub(crate) fn list_files(_ctx: &Context, value: &Value) -> Result<Done> {
         .iter()
         .skip(start)
         .take(size)
-        .filter_map(|path| entry(path))
+        .filter_map(|path| {
+            let mut item = entry(path)?;
+            if item.is_directory {
+                item.item_count = fsx::visible_count(path);
+            }
+            Some(item)
+        })
         .collect();
-    Ok(Done::new(
-        format!("{} dosya bulundu.", page.len()),
-        Some(data("files", page)),
-    ))
+    // "24 öğe: 7 klasör, 17 dosya (12 MB)", and which part of the folder this page is.
+    let folders = page.iter().filter(|item| item.is_directory).count();
+    let files = page.len() - folders;
+    let bytes: i64 = page.iter().map(|item| item.byte_count).sum();
+    let mut message = if page.is_empty() {
+        "Klasör boş.".to_string()
+    } else {
+        let mut parts = Vec::new();
+        if folders > 0 {
+            parts.push(format!("{folders} klasör"));
+        }
+        if files > 0 {
+            parts.push(format!(
+                "{files} dosya ({})",
+                crate::utility::human(bytes.max(0) as u64)
+            ));
+        }
+        format!("{} öğe: {}", page.len(), parts.join(", "))
+    };
+    if names.len() > page.len() {
+        message.push_str(&format!(
+            "; toplam {} öğeden {}–{} gösteriliyor",
+            names.len(),
+            start + 1,
+            start + page.len()
+        ));
+    }
+    Ok(Done::new(message + ".", Some(data("files", page))))
 }
 
 pub(crate) fn read_file(_ctx: &Context, value: &Value) -> Result<Done> {
