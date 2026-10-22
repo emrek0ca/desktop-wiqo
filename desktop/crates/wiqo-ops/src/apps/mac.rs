@@ -110,7 +110,10 @@ fn visible_applications() -> Vec<objc2::rc::Retained<NSRunningApplication>> {
         .runningApplications()
         .iter()
         .filter(|app| {
-            !app.isTerminated()
+            // The list refreshes on the main run loop; a process that is already gone can still be in it for a moment, so ask the kernel too.
+            let alive = unsafe { libc::kill(app.processIdentifier(), 0) } == 0;
+            alive
+                && !app.isTerminated()
                 && (app.activationPolicy() == NSApplicationActivationPolicy::Regular
                     || app
                         .bundleIdentifier()

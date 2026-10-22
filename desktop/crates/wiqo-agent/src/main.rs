@@ -117,7 +117,11 @@ async fn main() -> Result<()> {
             headless,
             verbose,
         } => {
-            let failures = selftest(&desktop, app.clone(), *headless, *verbose).await;
+            let (tested, app, headless, verbose) =
+                (desktop.clone(), app.clone(), *headless, *verbose);
+            let failures =
+                run_with_main_loop(async move { selftest(&tested, app, headless, verbose).await })
+                    .await;
             if failures > 0 {
                 bail!("{failures} step(s) failed");
             }
@@ -255,4 +259,20 @@ async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool, verbos
         }
     }
     failures
+}
+
+/// macOS refreshes its list of running applications on the main thread's run loop, which a command-line tool does not turn by itself (the window
+/// app does). The tools run on a worker while this thread turns that loop, so they see what a person would.
+async fn run_with_main_loop<T: Send + 'static>(
+    work: impl std::future::Future<Output = T> + Send + 'static,
+) -> T {
+    let handle = tokio::spawn(work);
+    #[cfg(target_os = "macos")]
+    tokio::task::block_in_place(|| {
+        use objc2_foundation::{NSDate, NSRunLoop};
+        while !handle.is_finished() {
+            NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.05));
+        }
+    });
+    handle.await.expect("selftest task")
 }
