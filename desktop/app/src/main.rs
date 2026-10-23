@@ -430,6 +430,25 @@ async fn chat_conversations(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.conversations().await.map_err(text)
 }
 
+/// The Ajanlar list: reminders, routines, watches, jobs, to-dos, goals and helpers.
+#[tauri::command]
+async fn agents_overview(app: State<'_, App>) -> Reply<serde_json::Value> {
+    app.desktop.chat.agents().await.map_err(text)
+}
+
+#[tauri::command]
+async fn agent_action(
+    app: State<'_, App>,
+    reference: String,
+    action: String,
+) -> Reply<serde_json::Value> {
+    app.desktop
+        .chat
+        .agent_action(&reference, &action)
+        .await
+        .map_err(text)
+}
+
 #[tauri::command]
 async fn chat_messages(app: State<'_, App>, conversation: String) -> Reply<serde_json::Value> {
     app.desktop.chat.messages(&conversation).await.map_err(text)
@@ -704,6 +723,8 @@ fn main() {
             chat_send,
             chat_cancel,
             chat_conversations,
+            agents_overview,
+            agent_action,
             chat_messages,
             chat_confirm,
             current_city,

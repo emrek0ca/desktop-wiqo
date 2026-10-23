@@ -141,7 +141,7 @@ async function refresh() {
   render();
 }
 
-const SECTION_TITLES = { status: "Durum", activity: "Etkinlik", phones: "Telefonlar", permissions: "Ayarlar" };
+const SECTION_TITLES = { status: "Durum", agents: "Ajanlar", activity: "Etkinlik", phones: "Telefonlar", permissions: "Ayarlar" };
 
 function showSection(name) {
   for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === name);

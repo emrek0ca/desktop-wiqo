@@ -94,6 +94,7 @@
       <div id="conversation-list" class="conv-list"></div>
       <nav class="left-nav">
         <button class="nav" data-section="status"><span data-symbol="laptopcomputer" data-size="15" data-weight="0"></span>Durum</button>
+        <button class="nav" data-section="agents"><span data-symbol="sparkle" data-size="15" data-weight="0"></span>Ajanlar</button>
         <button class="nav" data-section="activity"><span data-symbol="clock.arrow.circlepath" data-size="15" data-weight="0"></span>Etkinlik</button>
         <button class="nav" data-section="phones"><span data-symbol="iphone" data-size="15" data-weight="0"></span>Telefonlar</button>
         <button class="nav" data-section="permissions"><span data-symbol="gearshape" data-size="15" data-weight="0"></span>Ayarlar</button>
@@ -173,6 +174,12 @@
           <div class="row-head"><h3>Son işlemler</h3><button class="link small" data-goto="activity">Tümü</button></div>
           <ul id="recent" class="activity"></ul>
         </div>
+      </div>
+
+      <div class="panel page" data-panel="agents" hidden>
+        <div id="agents-empty" class="card muted" hidden>Henüz bir şey yok. Wiqo'ya “yarın 11'de toplantıyı hatırlat” de; burada görünür.</div>
+        <div id="agents-groups"></div>
+        <p id="agents-error" class="error small" hidden></p>
       </div>
 
       <div class="panel page" data-panel="activity" hidden>
@@ -285,5 +292,6 @@
   <script src="render.js"></script>
   <script src="app.js"></script>
   <script src="chat.js"></script>
+  <script src="agents.js"></script>
 </body>
 </html>

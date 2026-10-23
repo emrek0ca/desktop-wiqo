@@ -66,6 +66,7 @@
   const STATUS_LABELS = {
     completed: "Tamamlandı", running: "Çalışıyor", pending: "Bekliyor", failed: "Başarısız", denied: "Reddedildi", skipped: "Atlandı",
     cancelled: "Durduruldu", waiting: "Bekliyor", active: "Aktif", paused: "Duraklatıldı", unknown: "Belirsiz",
+    verified: "Tamamlandı", waiting_device: "PC bekleniyor", awaiting_confirmation: "Onay bekliyor",
   };
 
   function statusLabel(status) {
@@ -551,17 +552,20 @@
     return list;
   }
 
+  // The plan card counts its own steps (the server sends the steps, not a total): verified ones are done, the bar follows them.
   function taskPlan(widget) {
-    const progress = widget.totalSteps ? `${widget.completedSteps || 0}/${widget.totalSteps}` : "";
-    const box = card(widget.title || "Plan", [statusLabel(widget.taskStatus), progress].filter(Boolean).join(" · "));
-    if (widget.totalSteps) {
+    const steps = widget.planSteps || [];
+    const done = steps.filter((step) => step.status === "verified").length;
+    const failed = steps.some((step) => step.status === "failed");
+    const box = card(widget.title || "Görev adımları", [failed ? "Bakman gereken adım var" : done === steps.length && steps.length ? "Tamamlandı" : "Çalışıyor", steps.length ? `${done}/${steps.length}` : ""].filter(Boolean).join(" · "));
+    if (steps.length) {
       const bar = el("div", "progress");
       const fill = el("div", "progress-fill");
-      fill.style.width = `${Math.round(((widget.completedSteps || 0) / widget.totalSteps) * 100)}%`;
+      fill.style.width = `${Math.round((done / steps.length) * 100)}%`;
       bar.append(fill);
       box.append(bar);
     }
-    box.append(stepList(widget.planSteps || []));
+    box.append(stepList(steps));
     return box;
   }
 
@@ -899,6 +903,14 @@
       case "terminal_undo": return undoCard(item, "terminal", ctx);
       case "file_undo": return undoCard(item, "file", ctx);
       case "act_handoff": return card(item.title || item.projectName || "Act projesi", item.summary || "Bu iş telefondaki Wiqo'nun Act bölümünde devam eder.", "hammer");
+      // A quiet action seen instead of read ("Görev eklendi · Süt al"): the icon says what kind, the check says it is done.
+      case "receipt": {
+        const icons = { task: "checklist", goal: "sparkle", memory: "doc.text", undo: "arrow.uturn.backward", automation: "clock.badge.checkmark" };
+        const box = card(item.title || "Tamamlandı", item.detail, icons[item.family] || "checkmark");
+        box.classList.add("w-receipt");
+        box.append(pill("Tamam", "success"));
+        return box;
+      }
       case "created_resource": {
         const box = card(item.title || (item.resourceType === "agent" ? "Ajan" : "Otomasyon"), item.scheduleLabel || item.detail, item.resourceType === "agent" ? "sparkle" : "clock.badge.checkmark");
         const meta = el("div", "w-actions");

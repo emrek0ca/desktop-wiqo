@@ -507,3 +507,14 @@ button.primary.danger-fill { background: var(--bad); color: #fff; }
 .account-card .avatar.big { width: 34px; height: 34px; font-size: 14px; }
 /* The knob of a switch that is on contrasts with the track in both themes. */
 .switch:checked::after { background: var(--ink-on); }
+
+/* Ajanlar */
+#agents-groups { display: grid; gap: 14px; }
+.list.agents li { justify-content: flex-start; gap: 12px; padding: 10px 0; }
+.agent-icon { width: 30px; height: 30px; border-radius: 9px; background: var(--fill); color: var(--text2); display: inline-grid; place-items: center; flex: none; }
+.agent-copy { flex: 1; min-width: 0; }
+.agent-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-track { height: 4px; border-radius: 2px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.agent-track > div { height: 100%; background: var(--ink); }
+.agent-actions { display: flex; gap: 6px; flex: none; }
+.agent-actions button { padding: 4px 10px; font-size: 12px; }

@@ -18,7 +18,7 @@ use wiqo_core::wire::{CommandStatus, Request};
 
 use crate::Event;
 
-const CLIENT_FEATURES: [&str; 2] = ["artifact-directory-v1", "relay-execution-v1"];
+const CLIENT_FEATURES: [&str; 3] = ["artifact-directory-v1", "relay-execution-v1", "receipt-card-v1"];
 const MAX_ROUNDS: usize = 8;
 
 pub struct Chat {
@@ -347,6 +347,32 @@ impl Chat {
         let token = self.token()?;
         self.call(reqwest::Method::GET, "conversations", None, Some(&token))
             .await
+    }
+
+    /// Everything Wiqo does for this person (reminders, routines, watches, jobs, to-dos, goals, helpers) in the one shape the phones draw too.
+    pub async fn agents(&self) -> Result<Value> {
+        let token = self.token()?;
+        self.call(reqwest::Method::GET, "agents/overview", None, Some(&token))
+            .await
+    }
+
+    /// One action ("pause", "resume", "run", "stop", "delete", "complete") on one item by its ref ("automation:12").
+    pub async fn agent_action(&self, reference: &str, action: &str) -> Result<Value> {
+        let valid = reference
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == ':')
+            && action.chars().all(|c| c.is_ascii_lowercase());
+        if !valid {
+            bail!("Bu işlem yapılamıyor.");
+        }
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::POST,
+            &format!("agents/items/{reference}/{action}"),
+            Some(serde_json::json!({})),
+            Some(&token),
+        )
+        .await
     }
 
     pub async fn messages(&self, conversation: &str) -> Result<Value> {
