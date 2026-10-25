@@ -36,8 +36,11 @@ fn folder(ctx: &Context) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-fn sha(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+/// The file's SHA-256, read in pieces: a video must not be loaded whole just to be recorded (a move of a large file used to be refused for that).
+fn sha_file(path: &std::path::Path) -> Option<String> {
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut fs::File::open(path).ok()?, &mut hasher).ok()?;
+    Some(hex::encode(hasher.finalize()))
 }
 
 /// Records how to undo a change to the regular file at `path`. `before` is its earlier content; `restore_path` is where a moved or trashed file came from.
@@ -52,10 +55,11 @@ pub fn register(
     if !fsx::is_regular_file(&resolved) {
         return None;
     }
-    let after = fs::read(&resolved).ok()?;
-    if after.len() > MAX_BYTES || before.is_some_and(|bytes| bytes.len() > MAX_BYTES) {
+    // Only a record that stores content ("before") is bounded; a move or a copy is recorded by where the file is and its hash, whatever its size.
+    if before.is_some_and(|bytes| bytes.len() > MAX_BYTES) {
         return None;
     }
+    let after_sha256 = sha_file(&resolved)?;
     if let Some(restore) = restore_path {
         if fsx::resolve(restore, true).is_none() || fs::symlink_metadata(restore).is_ok() {
             return None;
@@ -67,7 +71,7 @@ pub fn register(
         path: fsx::abbreviate(&resolved).replacen('~', &fsx::home().to_string_lossy(), 1),
         created_at: Utc::now(),
         before: before.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)),
-        after_sha256: sha(&after),
+        after_sha256,
         restore_path: restore_path.map(str::to_string),
     };
     let dir = folder(ctx).ok()?;
@@ -122,9 +126,9 @@ pub fn undo_file(ctx: &Context, undo_id: &str) -> Result<String> {
     }
     let current_path = fsx::resolve(&record.path, false)
         .ok_or_else(|| stale("Dosya işlemden sonra değişmiş; yeni içerik korundu."))?;
-    let current = fs::read(&current_path)
-        .map_err(|_| stale("Dosya işlemden sonra değişmiş; yeni içerik korundu."))?;
-    if sha(&current) != record.after_sha256 {
+    let current = sha_file(&current_path)
+        .ok_or_else(|| stale("Dosya işlemden sonra değişmiş; yeni içerik korundu."))?;
+    if current != record.after_sha256 {
         return Err(stale("Dosya işlemden sonra değişmiş; yeni içerik korundu."));
     }
     let failed = || {

@@ -267,12 +267,26 @@ pub struct WorkItem {
 
 const APPROVAL_SECONDS: u64 = 90;
 
+/// A "PC'de onayla" question that is still open: what the corner card fetches when it opens, because the card's window may not exist
+/// yet when the question is raised (the first question of a session used to be lost, and the step was refused for no answer).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingApproval {
+    pub id: String,
+    pub kind: String,
+    pub detail: String,
+    pub seconds: u64,
+}
+
 struct Shared {
     events: broadcast::Sender<Event>,
     connection: Mutex<ConnectionState>,
     activity: Mutex<VecDeque<Activity>>,
     working: Mutex<Vec<WorkItem>>,
     approvals: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    open_questions: Mutex<Vec<(PendingApproval, std::time::Instant)>>,
+    /// Kinds the person just allowed: the same kind is not asked again for two minutes, so a task of thirty moves is one question, not thirty.
+    allowed_kinds: Mutex<std::collections::HashMap<String, std::time::Instant>>,
     permissions: Arc<permissions::Permissions>,
     /// When each permission was last asked for after a failed step: one ask per two minutes, never a dialog storm.
     asked_at: Mutex<std::collections::HashMap<&'static str, std::time::Instant>>,
@@ -291,6 +305,15 @@ struct Desk(Arc<Shared>);
 #[async_trait::async_trait]
 impl wiqo_core::engine::Approver for Desk {
     async fn approve(&self, kind: &str, detail: &str) -> bool {
+        // Changes that can be taken back (a move, a copy, a write) share one answer for a short while; a delete or a send is asked every time.
+        let batched = matches!(kind, "moveFile" | "copyFile" | "writeFile" | "saveTextFile" | "renameFile" | "moveDesktopFile" | "renameDesktopFile");
+        if batched {
+            let mut allowed = self.0.allowed_kinds.lock().expect("allowed lock");
+            allowed.retain(|_, at| at.elapsed() < Duration::from_secs(120));
+            if allowed.contains_key(kind) {
+                return true;
+            }
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let (answer, answered) = tokio::sync::oneshot::channel();
         self.0
@@ -298,6 +321,15 @@ impl wiqo_core::engine::Approver for Desk {
             .lock()
             .expect("approvals lock")
             .insert(id.clone(), answer);
+        self.0.open_questions.lock().expect("questions lock").push((
+            PendingApproval {
+                id: id.clone(),
+                kind: kind.to_string(),
+                detail: detail.to_string(),
+                seconds: APPROVAL_SECONDS,
+            },
+            std::time::Instant::now(),
+        ));
         let _ = self.0.events.send(Event::Approval {
             id: id.clone(),
             kind: kind.to_string(),
@@ -308,7 +340,19 @@ impl wiqo_core::engine::Approver for Desk {
             tokio::time::timeout(Duration::from_secs(APPROVAL_SECONDS), answered).await,
             Ok(Ok(true))
         );
+        if allowed && batched {
+            self.0
+                .allowed_kinds
+                .lock()
+                .expect("allowed lock")
+                .insert(kind.to_string(), std::time::Instant::now());
+        }
         self.0.approvals.lock().expect("approvals lock").remove(&id);
+        self.0
+            .open_questions
+            .lock()
+            .expect("questions lock")
+            .retain(|(question, _)| question.id != id);
         let _ = self.0.events.send(Event::ApprovalClosed { id });
         allowed
     }
@@ -429,6 +473,8 @@ impl Desktop {
             activity: Mutex::new(VecDeque::new()),
             working: Mutex::new(Vec::new()),
             approvals: Mutex::new(std::collections::HashMap::new()),
+            open_questions: Mutex::new(Vec::new()),
+            allowed_kinds: Mutex::new(std::collections::HashMap::new()),
             permissions: permissions.clone(),
             asked_at: Mutex::new(std::collections::HashMap::new()),
         });
@@ -816,6 +862,20 @@ impl Desktop {
             .update(|data| data.reads_without_phone = on)?;
         self.reannounce();
         Ok(())
+    }
+
+    /// The questions waiting for a click right now, with the seconds each has left.
+    pub fn pending_approvals(&self) -> Vec<PendingApproval> {
+        self.shared
+            .open_questions
+            .lock()
+            .expect("questions lock")
+            .iter()
+            .map(|(question, raised)| PendingApproval {
+                seconds: APPROVAL_SECONDS.saturating_sub(raised.elapsed().as_secs()),
+                ..question.clone()
+            })
+            .collect()
     }
 
     /// What runs right now.

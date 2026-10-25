@@ -573,7 +573,7 @@ async fn control(request: Control) -> std::result::Result<Value, (Option<Value>,
                     ))
                 }
             }
-            let running = wait_for(&name, bundle_ref, true, false, 6).await;
+            let running = wait_for(&name, bundle_ref, true, false, 15).await;
             let active = if activate_only {
                 wait_for(&name, bundle_ref, true, true, 2).await
             } else {

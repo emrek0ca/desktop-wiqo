@@ -1,18 +1,4 @@
-html, body.panel-body { background: var(--canvas); height: 100%; }
-.panel-body { margin: 0; overflow: hidden; }
-.panel-card { height: 100%; padding: 12px 14px; display: flex; flex-direction: column; }
-.panel-card section { display: flex; flex-direction: column; gap: 6px; height: 100%; }
-.panel-head { display: flex; align-items: center; gap: 8px; }
-.panel-head img { width: 26px; height: 26px; object-fit: contain; }
-.panel-head img.working { animation: bob 1.2s ease-in-out infinite; }
-@keyframes bob { 50% { transform: translateY(-2px); } }
-.panel-head .muted, .panel-head .spinner { margin-left: auto; }
-.small-spinner { width: 14px; height: 14px; border-width: 2px; }
-.panel-title { font-weight: 600; }
-.panel-detail, .panel-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.panel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; flex: 1; overflow: hidden; }
-.panel-list li { display: flex; gap: 8px; font-size: 13px; }
-.panel-list li b { flex: none; font-weight: 600; }
-.panel-list li span { color: var(--muted); }
-.panel-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-
+html, body.panel-body { background: transparent; margin: 0; height: 100%; overflow: hidden; }
+#mascot { width: 72px; height: 72px; object-fit: contain; display: block; cursor: pointer; animation: bob 1.2s ease-in-out infinite; filter: drop-shadow(0 4px 8px rgba(0,0,0,.25)); }
+body.waiting #mascot { animation-duration: .6s; }
+@keyframes bob { 50% { transform: translateY(-4px); } }

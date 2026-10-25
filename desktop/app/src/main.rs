@@ -513,6 +513,16 @@ fn working(app: State<'_, App>) -> Vec<wiqo_agent::WorkItem> {
 }
 
 #[tauri::command]
+fn show_main_window(handle: AppHandle) {
+    show_window(&handle);
+}
+
+#[tauri::command]
+fn pending_approvals(app: State<'_, App>) -> Vec<wiqo_agent::PendingApproval> {
+    app.desktop.pending_approvals()
+}
+
+#[tauri::command]
 fn hide_panel(handle: AppHandle) {
     if let Some(panel) = handle.get_webview_window(PANEL) {
         let _ = panel.hide();
@@ -521,12 +531,12 @@ fn hide_panel(handle: AppHandle) {
 
 const PANEL: &str = "panel";
 
-/// The small always-on-top card in the screen's corner: what Wiqo is doing right now, "Durdur", and the "PC'de onayla" buttons.
+/// The corner mascot: a small transparent always-on-top window shown while Wiqo works or waits for a "yes". The permission card itself is in the main window.
 fn show_panel(handle: &AppHandle, focus: bool) {
     let panel = match handle.get_webview_window(PANEL) {
         Some(panel) => panel,
         None => {
-            let (width, height) = (380.0, 168.0);
+            let (width, height) = (80.0, 80.0);
             let built = tauri::WebviewWindowBuilder::new(
                 handle,
                 PANEL,
@@ -536,6 +546,8 @@ fn show_panel(handle: &AppHandle, focus: bool) {
             .inner_size(width, height)
             .resizable(false)
             .decorations(false)
+            .transparent(true)
+            .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
@@ -547,7 +559,7 @@ fn show_panel(handle: &AppHandle, focus: bool) {
                 let size = monitor.size().to_logical::<f64>(scale);
                 let _ = panel.set_position(tauri::LogicalPosition::new(
                     size.width - width - 20.0,
-                    size.height - height - 70.0,
+                    size.height - height - 90.0,
                 ));
             }
             panel
@@ -738,6 +750,8 @@ fn main() {
             set_reads_without_phone,
             working,
             hide_panel,
+            pending_approvals,
+            show_main_window,
             report_problem,
             unseen_crashes,
             permissions,
@@ -778,7 +792,10 @@ fn main() {
                                 Event::Working { items } if !items.is_empty() => {
                                     show_panel(&handle, false)
                                 }
-                                Event::Approval { .. } => show_panel(&handle, true),
+                                Event::Approval { .. } => {
+                                    show_panel(&handle, false);
+                                    show_window(&handle);
+                                }
                                 _ => {}
                             }
                             let _ = handle.emit("wiqo", event);

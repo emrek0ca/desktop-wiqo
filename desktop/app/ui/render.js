@@ -569,24 +569,29 @@
     return box;
   }
 
+  // The question itself is in the permission card above the composer (ask.js); this line shows where it stands and the outcome.
+  const outcomes = new Map();
   function approval(widget, ctx) {
     const box = card(widget.title || "Onay gerekiyor", widget.detail || widget.summary, "lock.shield");
     box.classList.add("approval");
-    if (widget.expiresAt) box.append(el("div", "w-sub small", `Son: ${date(widget.expiresAt)}`));
-    const actions = el("div", "w-actions");
-    const answer = async (approved) => {
-      actions.replaceChildren(el("span", "w-sub", approved ? "Onaylanıyor…" : "Reddediliyor…"));
-      try {
-        const result = await invoke("chat_confirm", { confirmation: { id: widget.confirmationId, details: widget.details || {} }, approved });
-        actions.replaceChildren(pill(approved ? "Onaylandı" : "Reddedildi", approved ? "success" : "neutral"));
-        if (result?.result?.text) box.append(el("div", "w-sub", result.result.text));
-        for (const artifact of result?.result?.artifacts || []) box.append(artifactCard(artifact, ctx));
-      } catch (error) {
-        actions.replaceChildren(el("span", "error small", String(error)));
-      }
+    const status = el("div", "w-actions");
+    status.append(el("span", "w-sub", "Onayını aşağıdaki kartta bekliyor."));
+    box.append(status);
+    const onAnswer = (event) => {
+      if (event.detail.id !== widget.confirmationId) return;
+      window.removeEventListener("wiqo-confirmed", onAnswer);
+      outcomes.set(event.detail.id, event);
+      if (event.detail.error) { status.replaceChildren(el("span", "error small", event.detail.error)); return; }
+      const approved = event.detail.approved;
+      status.replaceChildren(pill(approved ? "Onaylandı" : "Reddedildi", approved ? "success" : "neutral"));
+      const result = event.detail.result;
+      if (result?.result?.text) box.append(el("div", "w-sub", result.result.text));
+      for (const artifact of result?.result?.artifacts || []) box.append(artifactCard(artifact, ctx));
     };
-    actions.append(button("Reddet", "secondary", () => answer(false)), button("Onayla", "primary", () => answer(true)));
-    box.append(actions);
+    // The message may be drawn again after the answer: it shows the outcome it already has.
+    const known = outcomes.get(widget.confirmationId);
+    if (known) onAnswer(known);
+    else window.addEventListener("wiqo-confirmed", onAnswer);
     return box;
   }
 

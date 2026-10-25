@@ -274,17 +274,21 @@ impl Engine {
         self.approver = Some(approver);
     }
 
-    /// Asks the person at this computer, whatever the setting (a chat step that changes or deletes); `false` when nobody can be asked.
+    /// Asks the person at this computer (a chat step that changes or deletes), unless "Tam yetki" is on; `false` when nobody can be asked.
     pub async fn ask_on_pc(&self, kind: &str, detail: &str) -> bool {
+        if self.settings.full_access() {
+            return true;
+        }
         match &self.approver {
             Some(approver) => approver.approve(kind, detail).await,
             None => false,
         }
     }
 
-    /// Whether the person allows this step of the server's agent here: always when "PC'de onayla" is off or nobody can be asked.
+    /// Whether the person allows this step of the server's agent here: always when "PC'de onayla" is off, "Tam yetki" is on, or nobody can be asked.
     pub async fn approved_on_pc(&self, kind: &str, detail: &str) -> bool {
-        match (&self.approver, self.settings.approve_on_pc()) {
+        // "Tam yetki" is the person's standing yes: with it on, nothing is asked again here.
+        match (&self.approver, self.settings.approve_on_pc() && !self.settings.full_access()) {
             (Some(approver), true) => approver.approve(kind, detail).await,
             _ => true,
         }

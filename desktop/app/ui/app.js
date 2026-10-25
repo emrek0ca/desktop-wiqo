@@ -1,3 +1,4 @@
+if (/Mac/.test(navigator.platform)) document.documentElement.classList.add("mac");
 // The window only shows what the runtime reports and sends the person's choices back; all logic lives in Rust (wiqo-agent).
 // Three stages, in order: sign in (the account) → permissions (can be skipped) → the app.
 const { invoke } = window.__TAURI__.core;
@@ -124,8 +125,8 @@ function render() {
   $("phone-count").textContent = String(snapshot.phones.length);
   $("phone-tip").hidden = snapshot.phones.length > 0;
   $("full-access-state").textContent = snapshot.fullAccess ? "Açık" : "Kapalı";
-  $("version").textContent = `Wiqo ${snapshot.version}`;
-  $("full-access").checked = snapshot.fullAccess;
+  $("full-access-chip").classList.toggle("on", snapshot.fullAccess);
+  $("full-access-chip").setAttribute("aria-pressed", String(snapshot.fullAccess));
   $("approve-on-pc").checked = snapshot.approveOnPc;
   $("reads-without-phone").checked = snapshot.readsWithoutPhone;
 
@@ -615,14 +616,23 @@ $("autostart").onchange = async (event) => {
 };
 invoke("autostart").then((on) => ($("autostart").checked = on)).catch(() => {});
 
-$("full-access").onchange = async (event) => {
-  const on = event.target.checked;
-  if (on && !(await WiqoDialog.confirm({ title: "Tam yetki açılsın mı?", message: "Wiqo'nun ajanı, adımları telefonda tek tek onaylatmadan bu bilgisayarda çalışabilecek.", confirm: "Aç" }))) {
-    event.target.checked = false;
-    return;
+// Full access, one tap next to "+": turning it on shows what it means first; turning it off needs no question.
+$("full-access-chip").onclick = async () => {
+  const on = !snapshot.fullAccess;
+  if (on && !(await WiqoDialog.confirm({
+    title: "Tam yetki açılsın mı?",
+    message: "Wiqo, bu bilgisayarda dosyaları taşıyıp kopyalayabilir, uygulamaları açıp kapatabilir ve silme dahil adımları sana sormadan yapar. İstediğin an bu düğmeyle kapatabilirsin.",
+    confirm: "Tam yetkiyi aç",
+    cancel: "Vazgeç",
+    danger: true
+  }))) return;
+  try {
+    snapshot = await invoke("set_full_access", { on });
+    render();
+    toast(on ? "Tam yetki açık." : "Tam yetki kapandı.");
+  } catch (error) {
+    toast(`Ayarlanamadı: ${error}`, "bad");
   }
-  snapshot = await invoke("set_full_access", { on });
-  render();
 };
 
 $("reads-without-phone").onchange = async (event) => {

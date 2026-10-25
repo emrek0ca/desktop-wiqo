@@ -85,8 +85,7 @@
   <!-- Stage 3: the app. Three columns; the left and right ones fold away. -->
   <div id="shell" class="shell" hidden>
     <aside id="left" class="left">
-      <div class="left-top">
-        <div class="brand"><span class="mark"></span><span>Wiqo</span></div>
+      <div class="left-top" data-tauri-drag-region>
         <button class="icon-button" data-toggle="left" title="Kenar çubuğunu kapat (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
       </div>
       <button id="new-chat" class="new-chat"><span data-symbol="square.and.pencil" data-size="15" data-weight="0"></span>Yeni sohbet</button>
@@ -101,7 +100,7 @@
       </nav>
       <div class="me">
         <span id="me-avatar" class="avatar">W</span>
-        <div class="me-text"><div id="account-email" class="small"></div><div id="version" class="muted small"></div></div>
+        <div class="me-text"><div id="account-email" class="small"></div></div>
         <button id="me-menu" class="icon-button" title="Hesap"><span data-symbol="ellipsis" data-size="15" data-weight="0"></span></button>
         <div id="me-popover" class="popover" hidden>
           <button id="report-problem" class="pop-item"><span data-symbol="exclamationmark.bubble" data-size="14" data-weight="0"></span>Sorun bildir</button>
@@ -111,9 +110,9 @@
     </aside>
 
     <main class="center">
-      <div class="topbar">
+      <div class="topbar" data-tauri-drag-region>
         <button class="icon-button" data-toggle="left" id="open-left" title="Kenar çubuğunu aç (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
-        <div id="top-title" class="top-title">Yeni sohbet</div>
+        <div id="top-title" class="top-title" data-tauri-drag-region>Yeni sohbet</div>
         <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
         <button class="icon-button" data-toggle="right" title="Sağ paneli aç/kapat (⌘I)"><span data-symbol="sidebar.right" data-size="16" data-weight="0"></span></button>
       </div>
@@ -142,6 +141,7 @@
             <textarea id="chat-input" rows="1" placeholder="Wiqo'ya yaz…"></textarea>
             <div class="composer-bar">
               <label class="icon-button attach" title="Görsel ekle"><input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><span data-symbol="plus" data-size="16" data-weight="0"></span></label>
+              <button id="full-access-chip" class="chip-toggle" type="button" title="Tam yetki: Wiqo adımları sormadan yapar"><span data-symbol="bolt" data-size="13" data-weight="0"></span><span class="chip-label">Tam yetki</span></button>
               <span class="spacer"></span>
               <button id="chat-stop" class="stop" type="button" title="Durdur (Esc)" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span></button>
               <button id="chat-send" class="send" type="submit" title="Gönder (Enter)"><span data-symbol="arrow.up" data-size="14" data-weight="0.3"></span></button>
@@ -215,27 +215,24 @@
             <div><div>Bilgisayarla birlikte başlat</div><div class="muted small">Açılışta tepside sessizce çalışır.</div></div>
             <input id="autostart" type="checkbox" class="switch">
           </label>
-          <label class="toggle-row strong divided">
-            <div><div>Tam yetki</div><div class="muted small">Ajan, adımları telefonda onaylatmadan çalışabilir.</div></div>
-            <input id="full-access" type="checkbox" class="switch">
-          </label>
-          <label class="toggle-row strong divided">
-            <div><div>Okuma adımlarını telefonsuz çalıştır</div><div class="muted small">Masaüstü, Belgeler ve İndirilenler'de bakma ve okuma, telefona dönmeden burada yapılır. Değiştiren adımlar yine onay ister.</div></div>
-            <input id="reads-without-phone" type="checkbox" class="switch">
-          </label>
-          <label class="toggle-row strong divided">
-            <div><div>Değiştiren adımları PC'de onayla</div><div class="muted small">Değiştirme, silme ve gönderme köşedeki kartta onayını bekler.</div></div>
-            <input id="approve-on-pc" type="checkbox" class="switch">
-          </label>
         </div>
         <div id="system-permissions-card" class="card" hidden>
           <div class="row-head"><h3>Sistem izinleri</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
           <ul id="system-permissions" class="list perms"></ul>
         </div>
-        <div class="card">
+        <details class="card advanced">
+          <summary>Gelişmiş</summary>
+          <label class="toggle-row strong">
+            <div><div>Okuma adımlarını telefonsuz çalıştır</div><div class="muted small">Masaüstü, Belgeler ve İndirilenler'de bakma ve okuma, telefona dönmeden burada yapılır. Değiştiren adımlar yine onay ister.</div></div>
+            <input id="reads-without-phone" type="checkbox" class="switch">
+          </label>
+          <label class="toggle-row strong">
+            <div><div>Değiştiren adımları PC'de onayla</div><div class="muted small">Değiştirme, silme ve gönderme köşedeki kartta onayını bekler.</div></div>
+            <input id="approve-on-pc" type="checkbox" class="switch">
+          </label>
           <div class="row-head"><h3>Yetenekler</h3></div>
           <ul id="capabilities" class="list"></ul>
-        </div>
+        </details>
       </div>
     </main>
 
@@ -292,6 +289,7 @@
   <script src="render.js"></script>
   <script src="app.js"></script>
   <script src="chat.js"></script>
+  <script src="ask.js"></script>
   <script src="agents.js"></script>
 </body>
 </html>

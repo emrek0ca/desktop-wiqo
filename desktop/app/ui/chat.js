@@ -284,6 +284,13 @@
     return row;
   }
 
+  // The server's held steps are asked in the one permission card (ask.js), not in the message.
+  function askFor(confirmations) {
+    for (const confirmation of confirmations) {
+      window.WiqoAsk?.confirm({ id: confirmation.id, title: confirmation.title || confirmation.summary, detail: confirmation.message || confirmation.detail, expiresAt: confirmation.expiresAt, details: confirmation.details });
+    }
+  }
+
   // ----- "where are you" (the weather) -----
   // First this computer's own location (macOS asks for the permission the first time), turned into a city here; only the city is sent.
   // When there is none (refused, off, Windows) the card asks for it.
@@ -473,12 +480,13 @@
         break;
       case "confirmation_needed":
         reply.confirmations = data.backendConfirmations || [];
+        askFor(reply.confirmations);
         break;
       case "done":
         if (data.reply) reply.text = data.reply;
         if (data.widgets) reply.widgets = data.widgets;
         if (data.artifacts) reply.artifacts = data.artifacts;
-        if (data.backendConfirmations) reply.confirmations = data.backendConfirmations;
+        if (data.backendConfirmations) { reply.confirmations = data.backendConfirmations; askFor(reply.confirmations); }
         reply.tasks = ["agentTask", "projectTask", "deferredTask", "actTask"]
           .filter((key) => data[key] && typeof data[key] === "object")
           .map((key) => ({ ...data[key], type: { agentTask: "agent_task", projectTask: "project_task", deferredTask: "deferred_task", actTask: "act_task" }[key] }));

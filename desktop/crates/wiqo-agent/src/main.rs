@@ -218,6 +218,19 @@ async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool, verbos
             "systemUtility",
             json!({ "kind": "systemUtility", "value": { "action": "battery" } }),
         ),
+        // The reads of the state of the computer, in one place each (also what runs on Windows in CI): a platform that cannot do one fails here, not in front of a person.
+        (
+            "systemUtility",
+            json!({ "kind": "systemUtility", "value": { "action": "systemInfo" } }),
+        ),
+        (
+            "systemUtility",
+            json!({ "kind": "systemUtility", "value": { "action": "overview" } }),
+        ),
+        (
+            "systemUtility",
+            json!({ "kind": "systemUtility", "value": { "action": "disks" } }),
+        ),
     ];
     if !headless {
         steps.extend([
@@ -225,6 +238,7 @@ async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool, verbos
             ("getClipboardText", json!({ "kind": "none" })),
             ("captureScreen", json!({ "kind": "screenCapture", "value": { "maxWidth": 800 } })),
             ("listRunningApplications", json!({ "kind": "none" })),
+            ("systemUtility", json!({ "kind": "systemUtility", "value": { "action": "context" } })),
             ("openApplicationByName", json!({ "kind": "applicationQuery", "value": app })),
             ("controlApplication", json!({ "kind": "applicationControl", "value": { "action": "quit", "target": app, "force": true } })),
         ]);

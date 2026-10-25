@@ -3,31 +3,11 @@
 <head>
   <meta charset="utf-8">
   <title>Wiqo</title>
-  <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="panel.css">
 </head>
 <body class="panel-body">
-  <div class="panel-card">
-    <!-- A step waiting for a click here. -->
-    <section id="approval" hidden>
-      <div class="panel-head"><img src="img/agent-execution.png" alt=""><b>Wiqo onay istiyor</b><span id="approval-timer" class="muted small"></span></div>
-      <div id="approval-kind" class="panel-title"></div>
-      <div id="approval-detail" class="muted small panel-detail"></div>
-      <div class="panel-actions">
-        <button id="approval-deny" class="secondary">Reddet</button>
-        <button id="approval-allow" class="primary">İzin ver</button>
-      </div>
-    </section>
-    <!-- What runs right now. -->
-    <section id="work" hidden>
-      <div class="panel-head"><img src="img/agent-general.png" alt="" class="working"><b id="work-title">Wiqo çalışıyor</b><div class="spinner small-spinner"></div></div>
-      <ul id="work-list" class="panel-list"></ul>
-      <div class="panel-actions">
-        <button id="work-stop" class="secondary" title="Esc">Durdur</button>
-      </div>
-    </section>
-  </div>
-  <script src="labels.js"></script>
+  <!-- Only the mascot: it shows while Wiqo works or waits for a "yes", and a click brings the window forward. -->
+  <img id="mascot" src="img/agent-general.png" alt="Wiqo" draggable="false">
   <script src="panel.js"></script>
 </body>
 </html>

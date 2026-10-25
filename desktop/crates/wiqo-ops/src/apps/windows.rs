@@ -262,8 +262,8 @@ pub(super) fn running() -> Vec<Running> {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindow, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
-        GW_OWNER,
+        EnumWindows, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowTextLengthW,
+        GetWindowThreadProcessId, IsWindowVisible, GW_OWNER,
     };
 
     unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> BOOL {
@@ -272,6 +272,13 @@ pub(super) fn running() -> Vec<Running> {
             && GetWindow(window, GW_OWNER).is_null()
             && GetWindowTextLengthW(window) > 0
         {
+            // The desktop and the taskbar are explorer.exe's windows too; only a folder window should make explorer "running".
+            let mut class = [0u16; 64];
+            let length = GetClassNameW(window, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..length]);
+            if ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&class.as_str()) {
+                return 1;
+            }
             let mut pid = 0u32;
             GetWindowThreadProcessId(window, &mut pid);
             if pid != 0 && !pids.contains(&pid) {
@@ -312,6 +319,11 @@ pub(super) fn running() -> Vec<Running> {
     }
     let own = std::process::id();
     let names = display_names();
+    let foreground_pid = unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(GetForegroundWindow(), &mut pid);
+        pid
+    };
     let mut groups: Vec<Running> = Vec::new();
     for pid in pids.into_iter().filter(|pid| *pid != own) {
         let Some(name) = image_name(pid) else {
@@ -319,7 +331,6 @@ pub(super) fn running() -> Vec<Running> {
         };
         // The desktop shell and system hosts are not applications the person runs.
         if [
-            "explorer",
             "ApplicationFrameHost",
             "TextInputHost",
             "SystemSettings",
@@ -337,12 +348,15 @@ pub(super) fn running() -> Vec<Running> {
             .iter_mut()
             .find(|group| group.bundle.as_deref() == Some(identity.as_str()))
         {
-            Some(group) => group.pids.push(pid),
+            Some(group) => {
+                group.is_active |= pid == foreground_pid;
+                group.pids.push(pid);
+            }
             None => groups.push(Running {
                 // "Google Chrome", not "chrome", when the Start menu knows it.
                 name: names.get(&identity).cloned().unwrap_or(name),
                 bundle: Some(identity),
-                is_active: false,
+                is_active: pid == foreground_pid,
                 pids: vec![pid],
             }),
         }
@@ -385,8 +399,47 @@ fn kill(app: &Running, force: bool) -> bool {
     done
 }
 
-pub(super) fn activate(_app: &Running) -> bool {
-    false
+/// Brings the application's first visible window to the front; Windows may refuse a background process, which the caller's check then sees.
+pub(super) fn activate(app: &Running) -> bool {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER, SW_RESTORE,
+    };
+
+    struct Search {
+        pids: Vec<u32>,
+        found: bool,
+    }
+
+    unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> BOOL {
+        let search = &mut *(data as *mut Search);
+        if IsWindowVisible(window) == 0
+            || !GetWindow(window, GW_OWNER).is_null()
+            || GetWindowTextLengthW(window) == 0
+        {
+            return 1;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, &mut pid);
+        if !search.pids.contains(&pid) {
+            return 1;
+        }
+        if IsIconic(window) != 0 {
+            ShowWindow(window, SW_RESTORE);
+        }
+        search.found = SetForegroundWindow(window) != 0;
+        0
+    }
+
+    let mut search = Search {
+        pids: app.pids.clone(),
+        found: false,
+    };
+    unsafe {
+        EnumWindows(Some(visit), &mut search as *mut Search as LPARAM);
+    }
+    search.found
 }
 
 pub(super) fn terminate(app: &Running) -> bool {

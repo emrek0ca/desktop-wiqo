@@ -47,6 +47,11 @@ fn system_utility(_ctx: &Context, value: &Value) -> Result<Done> {
         "darkMode" => dark_mode(request.mode.as_deref()),
         "topProcesses" => top_processes(request.limit.clamp(1, 50)),
         "battery" => battery(),
+        "systemInfo" => system_info(),
+        "overview" => overview(),
+        "context" => context_report(),
+        "disks" => disks_report(),
+        "network" => network_report(),
         "arrangeWindows" => arrange_windows(request.mode.as_deref()),
         "speak" => speak(request.text.as_deref().unwrap_or("")),
         _ => Err(error(
@@ -155,14 +160,85 @@ fn dark_mode(mode: Option<&str>) -> Result<Done> {
 }
 
 fn top_processes(limit: usize) -> Result<Done> {
+    let lines = process_lines(limit);
+    if lines.len() <= 1 {
+        return Err(tool_failure("PROCESS_LIST_FAILED", "Süreçler okunamadı."));
+    }
+    Ok(Done::new(
+        format!("En çok kaynak kullanan {limit} süreç."),
+        Some(report("top-processes", &lines.join("\n"))),
+    ))
+}
+
+const GIB: f64 = 1_073_741_824.0;
+
+/// System and version, processor, memory: what the computer is.
+fn system_lines() -> Vec<String> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    system.refresh_cpu_all();
+    let cpus = system.cpus();
+    let brand = cpus
+        .first()
+        .map(|cpu| cpu.brand().trim().to_string())
+        .filter(|brand| !brand.is_empty())
+        .unwrap_or_else(|| "bilinmiyor".into());
+    let uptime = sysinfo::System::uptime();
+    vec![
+        format!(
+            "Sistem: {} {}",
+            sysinfo::System::name().unwrap_or_else(|| "bilinmiyor".into()),
+            sysinfo::System::os_version().unwrap_or_default()
+        ),
+        format!(
+            "Bilgisayar adı: {}",
+            sysinfo::System::host_name().unwrap_or_else(|| "bilinmiyor".into())
+        ),
+        format!("İşlemci: {brand} ({} çekirdek)", cpus.len()),
+        format!(
+            "Bellek: {:.1} GB toplam, {:.1} GB kullanımda, {:.1} GB boş",
+            system.total_memory() as f64 / GIB,
+            system.used_memory() as f64 / GIB,
+            system.available_memory() as f64 / GIB
+        ),
+        format!(
+            "Açık kalma süresi: {} saat {} dakika",
+            uptime / 3600,
+            (uptime % 3600) / 60
+        ),
+    ]
+}
+
+/// The real disks (not the many views of one volume): total, free, and how full.
+fn disk_lines() -> Vec<String> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut seen = std::collections::HashSet::new();
+    let mut lines = Vec::new();
+    for disk in disks.list() {
+        let total = disk.total_space();
+        if total < 1_000_000_000 || !seen.insert((total, disk.available_space())) {
+            continue;
+        }
+        let free = disk.available_space();
+        lines.push(format!(
+            "Disk {}: {:.0} GB toplam, {:.0} GB boş (%{:.0} dolu)",
+            disk.mount_point().to_string_lossy(),
+            total as f64 / GIB,
+            free as f64 / GIB,
+            (total - free.min(total)) as f64 / total as f64 * 100.0
+        ));
+    }
+    lines
+}
+
+/// The busiest processes by CPU, sampled twice so the numbers mean something.
+fn process_lines(limit: usize) -> Vec<String> {
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    let total_memory = {
-        system.refresh_memory();
-        system.total_memory().max(1) as f64
-    };
+    system.refresh_memory();
+    let total_memory = system.total_memory().max(1) as f64;
     let mut processes: Vec<_> = system.processes().values().collect();
     processes.sort_by(|a, b| b.cpu_usage().total_cmp(&a.cpu_usage()));
     let mut lines = vec!["PID  %CPU  %MEM  AD".to_string()];
@@ -175,12 +251,145 @@ fn top_processes(limit: usize) -> Result<Done> {
             process.name().to_string_lossy()
         )
     }));
-    if processes.is_empty() {
-        return Err(tool_failure("PROCESS_LIST_FAILED", "Süreçler okunamadı."));
+    lines
+}
+
+/// What the computer is: system and version, processor, memory, disks, uptime.
+fn system_info() -> Result<Done> {
+    let mut lines = system_lines();
+    lines.extend(disk_lines());
+    Ok(Done::new(
+        "Bilgisayarın sistem bilgisi.",
+        Some(report("system-info", &lines.join("\n"))),
+    ))
+}
+
+/// Everything about the state of the computer in one call: system, memory, disks, battery and the busiest processes. One round trip instead of four.
+fn overview() -> Result<Done> {
+    let mut lines = vec!["== Sistem ==".to_string()];
+    lines.extend(system_lines());
+    lines.push("== Diskler ==".into());
+    lines.extend(disk_lines());
+    lines.push("== Pil ==".into());
+    lines.push(match battery() {
+        Ok(done) => done.message,
+        Err(error) => error.message,
+    });
+    lines.push("== En çok kaynak kullanan süreçler ==".into());
+    lines.extend(process_lines(8));
+    Ok(Done::new(
+        "Bilgisayarın genel durumu.",
+        Some(report("overview", &lines.join("\n"))),
+    ))
+}
+
+/// What the person is looking at right now: the front application and its window, what is selected in Finder, the address of the tab in front in a browser.
+/// It is how "bunu özetle / şunu gönder" finds what "bunu" is. Read only; the clipboard is a different, explicitly permitted read.
+fn context_report() -> Result<Done> {
+    let lines = if cfg!(target_os = "macos") {
+        let source = r#"
+set out to ""
+tell application "System Events"
+  set frontProcess to first application process whose frontmost is true
+  set appName to name of frontProcess
+  set winTitle to ""
+  try
+    set winTitle to name of front window of frontProcess
+  end try
+end tell
+set out to "Ön plandaki uygulama: " & appName & linefeed & "Pencere: " & winTitle
+if appName is "Finder" then
+  try
+    tell application "Finder"
+      set picked to selection as alias list
+      set names to ""
+      repeat with item_ in picked
+        set names to names & POSIX path of item_ & linefeed
+      end repeat
+    end tell
+    if names is not "" then set out to out & linefeed & "Finder'da seçili:" & linefeed & names
+  end try
+end if
+if appName is "Safari" then
+  try
+    tell application "Safari" to set pageAddress to URL of current tab of front window
+    set out to out & linefeed & "Sekme adresi: " & pageAddress
+  end try
+end if
+if appName is "Google Chrome" then
+  try
+    tell application "Google Chrome" to set pageAddress to URL of active tab of front window
+    set out to out & linefeed & "Sekme adresi: " & pageAddress
+  end try
+end if
+return out
+"#;
+        vec![apple_script(source).map_err(|message| permission("AUTOMATION_PERMISSION", message))?]
+    } else if cfg!(windows) {
+        let script = r#"Add-Type @"
+using System; using System.Runtime.InteropServices; using System.Text;
+public class WiqoFront {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int p);
+}
+"@
+$h = [WiqoFront]::GetForegroundWindow(); $sb = New-Object System.Text.StringBuilder 256
+[void][WiqoFront]::GetWindowText($h, $sb, 256); $p = 0; [void][WiqoFront]::GetWindowThreadProcessId($h, [ref]$p)
+"Ön plandaki uygulama: $((Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName)`nPencere: $($sb.ToString())""#;
+        let out = run("powershell", &["-NoProfile", "-NonInteractive", "-Command", script], 15);
+        match out {
+            Some(out) if out.status.success() => vec![String::from_utf8_lossy(&out.stdout).trim().to_string()],
+            _ => return Err(tool_failure("CONTEXT_FAILED", "Ön plandaki pencere okunamadı.")),
+        }
+    } else {
+        return unsupported("Ön plandaki pencereyi okumak");
+    };
+    Ok(Done::new(
+        "Şu an ekranda olan.",
+        Some(report("context", &lines.join("\n"))),
+    ))
+}
+
+/// Every disk with how much room is left.
+fn disks_report() -> Result<Done> {
+    let lines = disk_lines();
+    if lines.is_empty() {
+        return Err(tool_failure("DISKS_UNAVAILABLE", "Diskler okunamadı."));
     }
     Ok(Done::new(
-        format!("En çok kaynak kullanan {limit} süreç."),
-        Some(report("top-processes", &lines.join("\n"))),
+        "Disklerin durumu.",
+        Some(report("disks", &lines.join("\n"))),
+    ))
+}
+
+/// The network interfaces with their addresses and what has gone through them since boot.
+fn network_report() -> Result<Done> {
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let mut lines = Vec::new();
+    for (name, data) in networks.iter() {
+        let addresses: Vec<String> = data
+            .ip_networks()
+            .iter()
+            .filter(|network| !network.addr.is_loopback())
+            .map(|network| network.addr.to_string())
+            .collect();
+        if addresses.is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "{name}: {} · alınan {:.0} MB, gönderilen {:.0} MB",
+            addresses.join(", "),
+            data.total_received() as f64 / 1_048_576.0,
+            data.total_transmitted() as f64 / 1_048_576.0
+        ));
+    }
+    if lines.is_empty() {
+        return Err(tool_failure("NETWORK_UNAVAILABLE", "Ağ bilgisi okunamadı."));
+    }
+    Ok(Done::new(
+        "Ağ bağlantıları.",
+        Some(report("network", &lines.join("\n"))),
     ))
 }
 
@@ -426,6 +635,24 @@ fn speak(text: &str) -> Result<Done> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overview_reports_the_computer_in_one_call() {
+        let text = |action: &str| {
+            let request = json!({ "kind": "systemUtility", "value": { "action": action } });
+            let done = system_utility(&Context::for_tests(), &request).unwrap();
+            done.data.unwrap()["value"]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let overview = text("overview");
+        for section in ["== Sistem ==", "== Diskler ==", "== Pil ==", "PID  %CPU"] {
+            assert!(overview.contains(section), "{section} missing: {overview}");
+        }
+        assert!(text("systemInfo").contains("İşlemci:"));
+        assert!(text("disks").contains("GB toplam"));
+    }
 
     #[test]
     fn top_processes_lists_this_one() {
