@@ -112,6 +112,12 @@ pub enum Event {
         turn: String,
         event: serde_json::Value,
     },
+    /// One event of an agent thread's answer (`turn` is the message it belongs to): the server's `agent_*` events, then `turnEnd`.
+    Thread {
+        turn: String,
+        thread: String,
+        event: serde_json::Value,
+    },
     /// A command failed for a missing system permission: the window opens on it.
     PermissionNeeded {
         id: String,
@@ -306,7 +312,16 @@ struct Desk(Arc<Shared>);
 impl wiqo_core::engine::Approver for Desk {
     async fn approve(&self, kind: &str, detail: &str) -> bool {
         // Changes that can be taken back (a move, a copy, a write) share one answer for a short while; a delete or a send is asked every time.
-        let batched = matches!(kind, "moveFile" | "copyFile" | "writeFile" | "saveTextFile" | "renameFile" | "moveDesktopFile" | "renameDesktopFile");
+        let batched = matches!(
+            kind,
+            "moveFile"
+                | "copyFile"
+                | "writeFile"
+                | "saveTextFile"
+                | "renameFile"
+                | "moveDesktopFile"
+                | "renameDesktopFile"
+        );
         if batched {
             let mut allowed = self.0.allowed_kinds.lock().expect("allowed lock");
             allowed.retain(|_, at| at.elapsed() < Duration::from_secs(120));
@@ -659,6 +674,26 @@ impl Desktop {
         });
     }
 
+    /// Sends one message to an agent thread; the answer arrives as `Event::Thread` with this `turn`, ending with `turnEnd` (and an error text when it failed).
+    pub async fn thread_send(&self, turn: &str, thread: &str, text: &str) {
+        let events = self.shared.events.clone();
+        let (turn_id, thread_id) = (turn.to_string(), thread.to_string());
+        let emit = move |event: serde_json::Value| {
+            let _ = events.send(Event::Thread {
+                turn: turn_id.clone(),
+                thread: thread_id.clone(),
+                event,
+            });
+        };
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let outcome = self
+            .chat
+            .thread_stream(thread, &request_id, text, &emit)
+            .await;
+        let error = outcome.err().map(|error| error.to_string());
+        emit(serde_json::json!({ "type": "turnEnd", "error": error }));
+    }
+
     /// Signs in to the person's Wiqo account and makes this computer one of the account's devices (online at once, no phone needed).
     pub async fn sign_in(self: &Arc<Self>, email: &str, password: &str) -> Result<String> {
         let email = self.chat.sign_in(email, password).await?;
@@ -862,6 +897,13 @@ impl Desktop {
             .update(|data| data.reads_without_phone = on)?;
         self.reannounce();
         Ok(())
+    }
+
+    /// Where the on-device speech model lives (next to the other data of this computer).
+    pub fn voice_dir(&self) -> std::path::PathBuf {
+        DataDir::default_location()
+            .map(|dir| dir.file("voice"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("wiqo-voice"))
     }
 
     /// The questions waiting for a click right now, with the seconds each has left.

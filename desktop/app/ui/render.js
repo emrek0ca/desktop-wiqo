@@ -281,8 +281,8 @@
 
   // Markdown → blocks. Three or more `##` sections become accordion cards (the first open unless `streaming`).
   function markdown(text, streaming) {
-    const root = el("div", "md");
-    const lines = String(text || "").replace(/\r/g, "").split("\n");
+    const root = el("div", streaming ? "md streaming" : "md");
+    const lines = String(text || "").replace(/\r/g, "").replace(/<img\b[^>\n]*>/giu, "").split("\n");
     let sections = [];
     let current = { title: null, nodes: [] };
     const flushSection = () => {
@@ -497,20 +497,25 @@
   // CopilotResultWidgetView's artifact symbols.
   const FILE_ICONS = { pdf: "doc.text", document: "doc.text", image: "photo", spreadsheet: "tablecells", table: "tablecells", chart: "chart.bar", code: "chevron.left.forwardslash.chevron.right", diagram: "sparkle" };
 
+  const previews = new Map();
+
   function artifactCard(artifact, ctx) {
     const id = artifact.artifactId || artifact.id;
     const name = artifact.title || artifact.filename || "Dosya";
     const mime = artifact.mimeType || "";
-    const box = el("div", "w-card artifact");
+    const box = el("div", mime.startsWith("image/") ? "w-card artifact is-image" : "w-card artifact");
     if (mime.startsWith("image/")) {
       const frame = el("div", "artifact-image");
       frame.append(el("div", "spinner"));
       box.append(frame);
-      invoke("artifact_preview", { id }).then((file) => {
-        const image = el("img");
-        image.src = `data:${file.mimeType};base64,${file.base64}`;
-        image.alt = name;
-        frame.replaceChildren(image);
+      // A picture that was fetched once is not fetched again when its card is drawn anew (the card is redrawn whenever the message around it changes).
+      const show = (source) => { const image = el("img"); image.src = source; image.alt = name; frame.replaceChildren(image); };
+      const known = previews.get(id);
+      if (known) show(known);
+      else invoke("artifact_preview", { id }).then((file) => {
+        const source = `data:${file.mimeType};base64,${file.base64}`;
+        previews.set(id, source);
+        show(source);
       }).catch(() => frame.replaceChildren(el("div", "w-sub", "Önizleme alınamadı.")));
     }
     const row = el("div", "artifact-row");
@@ -880,6 +885,63 @@
     return box;
   }
 
+  // A long task of the agent: who is doing it, how far it is, each step with its own state, and what it waits for.
+  const PERSONA_IMAGE = { general: "agent-general", research: "agent-research", developer: "agent-developer", execution: "agent-execution" };
+  const TASK_KIND = { agent_task: "Ajan görevi", project_task: "Proje görevi", deferred_task: "Zamanlı görev", act_task: "Act" };
+  const STEP_MARK = { done: "✓", failed: "!", running: "", pending: "" };
+
+  function duration(seconds) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return "";
+    return seconds < 60 ? `${Math.round(seconds)} sn` : `${Math.floor(seconds / 60)} dk${Math.round(seconds % 60) ? ` ${Math.round(seconds % 60)} sn` : ""}`;
+  }
+
+  function taskCard(item) {
+    const steps = Array.isArray(item.steps) ? item.steps : [];
+    const state = item.state || (item.status === "running" ? "running" : item.status) || "running";
+    const done = steps.filter((step) => step.status === "done").length;
+    const box = el("div", `w-card task-card state-${state}`);
+    const head = el("div", "task-head");
+    const image = PERSONA_IMAGE[item.persona];
+    if (image) { const mascot = el("img", `task-mascot${state === "running" ? " working" : ""}`); mascot.src = `img/${image}.png`; mascot.alt = ""; head.append(mascot); }
+    else { const badge = el("span", "w-icon"); badge.append(icon(item.type === "deferred_task" ? "clock.badge.checkmark" : item.type === "act_task" ? "hammer" : "sparkle", 15)); head.append(badge); }
+    const titles = el("div", "w-titles");
+    titles.append(el("div", "w-title", item.title || item.name || "Görev"));
+    titles.append(el("div", "w-sub", [TASK_KIND[item.type], item.progress || (steps.length ? `${done}/${steps.length} adım` : "")].filter(Boolean).join(" · ")));
+    head.append(titles);
+    const label = { running: "Çalışıyor", waiting_device: "PC bekleniyor", waiting_input: "Cevabını bekliyor", paused: "Duraklatıldı", done: "Tamamlandı", failed: "Tamamlanamadı", cancelled: "İptal edildi" }[state] || statusLabel(item.status);
+    head.append(pill(label, state === "done" ? "success" : state === "failed" ? "danger" : state === "cancelled" || state === "paused" ? "neutral" : "warning"));
+    box.append(head);
+    if (steps.length) {
+      const bar = el("div", `progress${state === "running" ? " running" : ""}`);
+      const fill = el("div", "progress-fill");
+      fill.style.width = `${Math.round((done / steps.length) * 100)}%`;
+      bar.append(fill);
+      box.append(bar);
+      const list = el("ol", "task-steps");
+      for (const step of steps.slice(0, 12)) {
+        const row = el("li", `task-step ${step.status || "pending"}`);
+        row.append(el("span", "task-mark", STEP_MARK[step.status] ?? ""));
+        const text = el("div", "row-text");
+        text.append(el("div", "row-title", step.title || "Adım"));
+        if (step.brief && step.status !== "pending") text.append(el("div", "row-sub", step.brief));
+        row.append(text);
+        const took = duration(step.seconds);
+        if (took) row.append(el("span", "task-time", took));
+        list.append(row);
+      }
+      if (steps.length > 12) list.append(el("li", "task-more", `+${steps.length - 12} adım daha`));
+      box.append(list);
+    }
+    if (item.waiting?.question) box.append(el("div", "task-waiting", item.waiting.question));
+    if (item.summary && (state === "done" || state === "failed")) box.append(markdown(item.summary));
+    else if (item.error) box.append(callout(item.error, "warning"));
+    const foot = el("div", "w-actions");
+    if (Number.isFinite(item.estimatedSeconds) && state === "running") foot.append(el("span", "w-sub small", `Tahmini ${duration(item.estimatedSeconds)}`));
+    foot.append(button("Ajanlar'da aç", "secondary small", () => window.showSection?.("agents")));
+    box.append(foot);
+    return box;
+  }
+
   function widget(item, ctx) {
     if (!item || typeof item !== "object") return null;
     switch (item.type) {
@@ -932,11 +994,7 @@
         box.append(meta);
         return box;
       }
-      case "agent_task": case "project_task": case "deferred_task": case "act_task": {
-        const box = card(item.title || item.name || "Görev", item.summary || item.detail);
-        if (item.status) box.append(pill(statusLabel(item.status), toneOf(item.status)));
-        return box;
-      }
+      case "agent_task": case "project_task": case "deferred_task": case "act_task": return taskCard(item);
       default: return null;
     }
   }

@@ -10,6 +10,8 @@
   let conversation = uuid();
   let conversations = [];
   let messages = [];
+  // The members of an open group chat (agent-group-<id>) by id: their names head their replies.
+  let members = new Map();
   let turn = null;
   let task = null;
   let pending = [];
@@ -39,10 +41,16 @@
     return "Daha eski";
   }
 
+  let listSignature = "";
+
   function renderList() {
     const box = $("conversation-list");
-    box.replaceChildren();
     const query = $("search").value.trim().toLocaleLowerCase("tr");
+    // The list is only redrawn when it changed (it used to flash after every answer).
+    const signature = JSON.stringify([conversations.map((item) => [item.id, item.title, item.updatedAt, item.preview]), conversation, query]);
+    if (signature === listSignature) return;
+    listSignature = signature;
+    box.replaceChildren();
     const items = conversations.filter((item) => !query || `${item.title || ""} ${item.preview || ""}`.toLocaleLowerCase("tr").includes(query));
     let last = null;
     for (const item of items) {
@@ -78,6 +86,8 @@
     $("top-title").textContent = current?.title || (messages.length ? messages[0].text.slice(0, 60) : "Yeni sohbet");
   }
 
+  const isGroup = () => conversation.startsWith("agent-group-");
+
   async function open(id) {
     if (turn) return toast("Çalışan cevap bitmeden sohbet değişmez; önce Durdur.", "bad");
     conversation = id;
@@ -85,11 +95,18 @@
     window.showSection("chat");
     render();
     renderList();
+    members = new Map();
+    if (isGroup()) {
+      try {
+        const opened = await invoke("thread_open", { thread: id });
+        members = new Map((opened.thread?.members || []).map((member) => [member.id, member.name]));
+      } catch { /* the names are missing; the replies still show */ }
+    }
     try {
       const value = await invoke("chat_messages", { conversation: id });
       messages = (value.messages || []).map((item) => ({
         role: item.role === "user" ? "user" : "assistant",
-        text: item.content || "",
+        text: item.role !== "user" && item.agentId && members.has(item.agentId) ? `**${members.get(item.agentId)}**\n\n${item.content || ""}` : item.content || "",
         widgets: item.widgets || [],
         artifacts: item.artifacts || [],
         steps: [],
@@ -221,9 +238,13 @@
     };
   }
 
+  const userRows = new WeakMap();
+
   function messageNode(message, index) {
     const latest = index === messages.length - 1;
     if (message.role === "user") {
+      const cached = userRows.get(message);
+      if (cached) return cached;
       const row = R.el("div", "msg user");
       const bubble = R.el("div", "bubble", message.text);
       if (message.images?.length) {
@@ -236,32 +257,41 @@
         row.append(thumbs);
       }
       row.append(bubble);
+      userRows.set(message, row);
       return row;
     }
-    const row = R.el("div", `msg assistant${message.error ? " error" : ""}`);
-    const live = latest && turn !== null;
+    return assistantRow(message, latest);
+  }
+
+  // An assistant message is four parts kept apart (the thinking trace, the text, the cards, the tools), each redrawn only when its own content changed:
+  // a streamed word used to rebuild the whole conversation, so pictures reloaded, cards flashed and the page seemed to refresh on its own.
+  function assistantPartNodes(message, latest, live) {
+    const parts = { trace: [], text: [], cards: [], tools: [] };
     if (message.trace) {
       const node = traceNode(message.trace, live);
-      if (node) row.append(node);
+      if (node) parts.trace.push(node);
     }
-    if (message.text) row.append(R.markdown(message.text, live));
+    if (message.text) parts.text.push(R.markdown(message.text, live));
     const ctx = context(message, latest);
     const replaced = new Set((message.widgets || []).map((widget) => widget.replaces).filter(Boolean));
+    // A file is drawn once: the server sends it as a file of the reply and also as a card of the same file.
+    const filed = new Set((message.artifacts || []).map((artifact) => artifact.artifactId || artifact.id).filter(Boolean));
     for (const widget of message.widgets || []) {
       if (widget.widgetId && replaced.has(widget.widgetId)) continue;
+      if (widget.type === "artifact" && filed.has(widget.artifactId || widget.id)) continue;
       const node = R.widget(widget, ctx);
-      if (node) row.append(node);
+      if (node) parts.cards.push(node);
     }
-    for (const artifact of message.artifacts || []) row.append(R.artifactCard(artifact, ctx));
+    for (const artifact of message.artifacts || []) parts.cards.push(R.artifactCard(artifact, ctx));
     for (const confirmation of message.confirmations || []) {
-      row.append(R.widget({ type: "approval", title: confirmation.title || confirmation.summary, detail: confirmation.message || confirmation.detail, confirmationId: confirmation.id, details: confirmation.details, expiresAt: confirmation.expiresAt }, ctx));
+      parts.cards.push(R.widget({ type: "approval", title: confirmation.title || confirmation.summary, detail: confirmation.message || confirmation.detail, confirmationId: confirmation.id, details: confirmation.details, expiresAt: confirmation.expiresAt }, ctx));
     }
     for (const taskCard of message.tasks || []) {
       const node = R.widget(taskCard, ctx);
-      if (node) row.append(node);
+      if (node) parts.cards.push(node);
     }
-    if (message.location) row.append(locationCard(message));
-    if (message.note) row.append(R.el("div", "msg-note", message.note));
+    if (message.location) parts.cards.push(locationCard(message));
+    if (message.note) parts.cards.push(R.el("div", "msg-note", message.note));
     if (!live && message.text) {
       const tools = R.el("div", "msg-tools");
       const copy = R.button("", "icon-button", async () => {
@@ -279,9 +309,47 @@
         again.append(window.WiqoIcons.icon("arrow.clockwise", 14));
         tools.append(again);
       }
-      row.append(tools);
+      parts.tools.push(tools);
     }
-    return row;
+    return parts;
+  }
+
+  /** What decides how each part looks: when it is the same as last time, the part is left alone. */
+  function partSignatures(message, latest, live) {
+    return {
+      trace: JSON.stringify([message.trace?.steps?.map((step) => [step.id, step.state, step.label]), message.trace?.endedAt, message.trace?.persona, message.trace?.failed, live]),
+      text: `${live ? 1 : 0}|${message.error ? 1 : 0}|${message.text || ""}`,
+      cards: JSON.stringify([message.widgets, (message.artifacts || []).map((artifact) => artifact.artifactId || artifact.id), message.confirmations, message.tasks, message.location, message.note, latest]),
+      tools: `${!live && message.text ? 1 : 0}|${latest ? 1 : 0}|${message.text || ""}`
+    };
+  }
+
+  const rowCache = new WeakMap();
+
+  function assistantRow(message, latest) {
+    const live = latest && turn !== null;
+    let entry = rowCache.get(message);
+    if (!entry) {
+      const row = R.el("div", "msg assistant");
+      const parts = {};
+      for (const name of ["trace", "text", "cards", "tools"]) {
+        parts[name] = R.el("div", "part");
+        row.append(parts[name]);
+      }
+      entry = { row, parts, sig: {} };
+      rowCache.set(message, entry);
+    }
+    entry.row.classList.toggle("error", Boolean(message.error));
+    const signatures = partSignatures(message, latest, live);
+    const stale = Object.keys(signatures).filter((name) => entry.sig[name] !== signatures[name]);
+    if (stale.length > 0) {
+      const nodes = assistantPartNodes(message, latest, live);
+      for (const name of stale) {
+        entry.parts[name].replaceChildren(...nodes[name]);
+        entry.sig[name] = signatures[name];
+      }
+    }
+    return entry.row;
   }
 
   // The server's held steps are asked in the one permission card (ask.js), not in the message.
@@ -364,7 +432,11 @@
   function render(scrollToEnd) {
     const scroller = $("chat-scroll");
     const atBottom = scrollToEnd || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
-    $("chat-messages").replaceChildren(...messages.map(messageNode));
+    // The rows of the conversation stay in place; only the ones whose content changed redraw their changed parts (see assistantRow).
+    const box = $("chat-messages");
+    const rows = messages.map(messageNode);
+    rows.forEach((row, position) => { if (box.children[position] !== row) box.insertBefore(row, box.children[position] ?? null); });
+    while (box.children.length > rows.length) box.lastElementChild.remove();
     $("chat-empty").hidden = messages.length > 0;
     $("chat-send").hidden = turn !== null;
     $("chat-stop").hidden = turn === null;
@@ -382,8 +454,13 @@
     });
   }
 
+  let sideSignature = "";
+
   function renderSide() {
     const steps = messages.flatMap((message) => message.steps || []).slice(-12);
+    const signature = JSON.stringify([steps.map((step) => [step.summary, step.status]), messages.flatMap((message) => [...(message.artifacts || []), ...(message.widgets || []).filter((widget) => widget.type === "artifact")]).map((file) => file.artifactId || file.id)]);
+    if (signature === sideSignature) return;
+    sideSignature = signature;
     const box = $("right-steps");
     box.replaceChildren();
     if (!steps.length) box.append(R.el("div", "muted small", "Henüz yok"));
@@ -416,6 +493,7 @@
     const message = String(text || "").trim();
     if ((!message && !pending.length) || turn) return;
     window.showSection("chat");
+    if (isGroup()) return sendGroup(message);
     const history = messages.slice(-16).map((item) => ({ role: item.role, content: String(item.text).slice(0, 4000) }));
     const attachments = pending.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }));
     messages.push({ role: "user", text: message || "Bu görselleri incele.", images: pending.map((item) => `data:${item.mimeType};base64,${item.dataBase64}`) });
@@ -435,8 +513,60 @@
     });
   }
 
+  // A group turn: the people it is for answer one after the other, each as a message headed with their name.
+  async function sendGroup(text) {
+    if (!text) return;
+    window.showSection("chat");
+    messages.push({ role: "user", text });
+    turn = uuid();
+    groupLive = new Map();
+    render(true);
+    try {
+      await invoke("thread_send", { turn, thread: conversation, message: text });
+    } catch (error) {
+      turn = null;
+      messages.push({ role: "assistant", text: `_${String(error)}_`, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [] });
+      render(true);
+    }
+  }
+
+  let groupLive = new Map();
+  const groupMessage = (agentId, text) => ({ role: "assistant", agentId, text: `**${members.get(agentId) || "Ajan"}**\n\n${text}`, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [] });
+
   listen("wiqo", (event) => {
     const payload = event.payload;
+    if (payload.type === "thread" && turn && payload.turn === turn && payload.thread === conversation) {
+      const data = payload.event;
+      switch (data.type) {
+        case "agent_typing":
+          if (!groupLive.has(data.agentId)) { const live = groupMessage(data.agentId, "…"); groupLive.set(data.agentId, { live, text: "" }); messages.push(live); }
+          break;
+        case "agent_delta": {
+          const entry = groupLive.get(data.agentId);
+          if (entry) { entry.text += data.text; Object.assign(entry.live, groupMessage(data.agentId, entry.text)); }
+          break;
+        }
+        case "agent_idle": {
+          const entry = groupLive.get(data.agentId);
+          if (entry) messages = messages.filter((item) => item !== entry.live);
+          groupLive.delete(data.agentId);
+          break;
+        }
+        case "agent_message": {
+          const entry = groupLive.get(data.agentId);
+          if (entry) Object.assign(entry.live, groupMessage(data.agentId, data.content));
+          else messages.push(groupMessage(data.agentId, data.content));
+          groupLive.delete(data.agentId);
+          break;
+        }
+        case "system_note": messages.push({ role: "assistant", text: `_${data.text}_`, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [] }); break;
+        case "error": messages.push({ role: "assistant", text: `_${data.message}_`, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [] }); break;
+        case "turnEnd": turn = null; groupLive = new Map(); break;
+        default: break;
+      }
+      queueRender();
+      return;
+    }
     if (payload.type !== "chat" || payload.turn !== turn) return;
     const reply = messages[messages.length - 1];
     const data = payload.event;
@@ -535,7 +665,8 @@
     const reply = messages[messages.length - 1];
     if (reply?.trace) note(reply.trace, "Durduruluyor");
     render();
-    if (task) await invoke("chat_cancel", { task, conversation });
+    if (isGroup()) await invoke("thread_stop", { thread: conversation });
+    else if (task) await invoke("chat_cancel", { task, conversation });
   };
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && turn && task) $("chat-stop").click();
@@ -586,4 +717,6 @@
     if (email) loadConversations();
   });
   render(true);
+  // The Ajanlar page opens a teammate's direct chat here: it is Wiqo's own chat, the server resolves the agent from the conversation id.
+  window.WiqoChat = { open };
 })();

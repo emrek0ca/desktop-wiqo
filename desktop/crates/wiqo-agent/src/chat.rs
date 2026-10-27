@@ -18,7 +18,11 @@ use wiqo_core::wire::{CommandStatus, Request};
 
 use crate::Event;
 
-const CLIENT_FEATURES: [&str; 3] = ["artifact-directory-v1", "relay-execution-v1", "receipt-card-v1"];
+const CLIENT_FEATURES: [&str; 3] = [
+    "artifact-directory-v1",
+    "relay-execution-v1",
+    "receipt-card-v1",
+];
 const MAX_ROUNDS: usize = 8;
 
 pub struct Chat {
@@ -335,6 +339,69 @@ impl Chat {
         }))
     }
 
+    /// The apps that can be connected, the connections and what each can do, in one answer for the "Uygulamalar" page.
+    pub async fn connectors(&self) -> Result<Value> {
+        let token = self.token()?;
+        let providers = self
+            .call(reqwest::Method::GET, "oauth/providers", None, Some(&token))
+            .await?;
+        let connections = self
+            .call(reqwest::Method::GET, "oauth", None, Some(&token))
+            .await?;
+        let capabilities = self
+            .call(
+                reqwest::Method::GET,
+                "oauth/capabilities",
+                None,
+                Some(&token),
+            )
+            .await?;
+        Ok(
+            json!({ "providers": providers["providers"], "connections": connections["connections"], "capabilities": capabilities["capabilities"] }),
+        )
+    }
+
+    /// The provider's consent page; the caller opens it in the browser and the answer returns as a `wiqo://oauth-callback` link.
+    pub async fn connector_start(&self, provider: &str) -> Result<String> {
+        let token = self.token()?;
+        let value = self
+            .call(
+                reqwest::Method::GET,
+                &format!("oauth/{provider}/start"),
+                None,
+                Some(&token),
+            )
+            .await?;
+        value["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("Bağlantı adresi alınamadı."))
+    }
+
+    pub async fn connector_disconnect(&self, provider: &str) -> Result<()> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::DELETE,
+            &format!("oauth/{provider}"),
+            None,
+            Some(&token),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn connector_access(&self, provider: &str, level: &str) -> Result<()> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::PUT,
+            &format!("oauth/{provider}/access"),
+            Some(json!({ "accessLevel": level })),
+            Some(&token),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub fn token_for_device(&self) -> Option<String> {
         self.token().ok()
     }
@@ -347,6 +414,191 @@ impl Chat {
         let token = self.token()?;
         self.call(reqwest::Method::GET, "conversations", None, Some(&token))
             .await
+    }
+
+    /// The agent chat's list: the bots (one thread each) and the groups.
+    pub async fn threads(&self) -> Result<Value> {
+        let token = self.token()?;
+        self.call(reqwest::Method::GET, "agents/threads", None, Some(&token))
+            .await
+    }
+
+    pub async fn thread_open(&self, thread: &str) -> Result<Value> {
+        check_id(thread)?;
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::GET,
+            &format!("agents/threads/{thread}"),
+            None,
+            Some(&token),
+        )
+        .await
+    }
+
+    /// A new group (`{ title?, agentIds: [2-4] }`).
+    pub async fn thread_create(&self, body: Value) -> Result<Value> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::POST,
+            "agents/threads",
+            Some(body),
+            Some(&token),
+        )
+        .await
+    }
+
+    /// Renames a group and/or changes its members.
+    pub async fn thread_update(&self, thread: &str, body: Value) -> Result<Value> {
+        check_id(thread)?;
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::PATCH,
+            &format!("agents/threads/{thread}"),
+            Some(body),
+            Some(&token),
+        )
+        .await
+    }
+
+    pub async fn thread_delete(&self, thread: &str) -> Result<Value> {
+        check_id(thread)?;
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::DELETE,
+            &format!("agents/threads/{thread}"),
+            None,
+            Some(&token),
+        )
+        .await
+    }
+
+    /// Stops the answer being written in a thread ("Durdur").
+    pub async fn thread_stop(&self, thread: &str) -> Result<Value> {
+        check_id(thread)?;
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::POST,
+            &format!("agents/threads/{thread}/stop"),
+            Some(json!({})),
+            Some(&token),
+        )
+        .await
+    }
+
+    /// Stops the group's running job.
+    pub async fn work_cancel(&self, task: u64) -> Result<Value> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::POST,
+            &format!("agent-tasks/{task}/cancel"),
+            Some(json!({})),
+            Some(&token),
+        )
+        .await
+    }
+
+    /// Clears what an agent remembers about the person.
+    pub async fn agent_forget(&self, id: u64) -> Result<Value> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::POST,
+            &format!("agents/{id}/forget"),
+            Some(json!({})),
+            Some(&token),
+        )
+        .await
+    }
+
+    /// Every agent of this person (the four ready-made ones included), for the agent form.
+    pub async fn agent_list(&self) -> Result<Value> {
+        let token = self.token()?;
+        self.call(reqwest::Method::GET, "agents", None, Some(&token))
+            .await
+    }
+
+    /// Makes (no id) or edits (id) an agent: `{ name, role, personality, persona }`.
+    pub async fn agent_save(&self, id: Option<u64>, body: Value) -> Result<Value> {
+        let token = self.token()?;
+        match id {
+            Some(id) => {
+                self.call(
+                    reqwest::Method::PATCH,
+                    &format!("agents/{id}"),
+                    Some(body),
+                    Some(&token),
+                )
+                .await
+            }
+            None => {
+                self.call(reqwest::Method::POST, "agents", Some(body), Some(&token))
+                    .await
+            }
+        }
+    }
+
+    pub async fn agent_remove(&self, id: u64) -> Result<Value> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::DELETE,
+            &format!("agents/{id}"),
+            None,
+            Some(&token),
+        )
+        .await
+    }
+
+    /// One message to an agent thread; each event of the answer goes to `emit` (typing, text pieces, finished messages). The server finishes the turn even when
+    /// this connection drops, so a break only ends the wait: the window reads the thread again.
+    pub async fn thread_stream(
+        &self,
+        thread: &str,
+        request_id: &str,
+        text: &str,
+        emit: &impl Fn(Value),
+    ) -> Result<()> {
+        check_id(thread)?;
+        let token = self.token()?;
+        let response = self
+            .http
+            .post(format!("{}/agents/threads/{thread}/messages", self.server))
+            .bearer_auth(&token)
+            .header("Accept", "text/event-stream")
+            .timeout(Duration::from_secs(5 * 60))
+            .json(&json!({ "message": text, "requestId": request_id }))
+            .send()
+            .await
+            .map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
+        if response.status().as_u16() == 401 {
+            let _ = self.store(None);
+            bail!("Oturumun sona erdi; yeniden giriş yap.");
+        }
+        if !response.status().is_success() {
+            let value: Value = response.json().await.unwrap_or(Value::Null);
+            bail!(
+                "{}",
+                value["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Mesaj gönderilemedi.")
+            );
+        }
+        let mut bytes = response.bytes_stream();
+        let mut buffer = String::new();
+        while let Some(chunk) = bytes.next().await {
+            let Ok(chunk) = chunk else { break };
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(end) = buffer.find('\n') {
+                let line: String = buffer.drain(..=end).collect();
+                let Some(event) = parse_event_line(&line) else {
+                    continue;
+                };
+                let last = matches!(event["type"].as_str(), Some("thread_done") | Some("error"));
+                emit(event);
+                if last {
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Everything Wiqo does for this person (reminders, routines, watches, jobs, to-dos, goals, helpers) in the one shape the phones draw too.
@@ -904,9 +1156,49 @@ async fn run_step(engine: &Engine, step: &Value) -> Value {
     fields
 }
 
+/// A thread or agent id from the window: letters, digits and dashes only, so it can never change the path it is put into.
+fn check_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        bail!("Bu sohbet açılamıyor.");
+    }
+    Ok(())
+}
+
+/// One `data:` line of a server-sent event stream as JSON; comments (`: ping`), blank lines and broken lines are not events.
+fn parse_event_line(line: &str) -> Option<Value> {
+    let payload = line.trim().strip_prefix("data:")?;
+    serde_json::from_str::<Value>(payload.trim()).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_lines_are_read_and_the_rest_is_ignored() {
+        let event = parse_event_line("data: {\"type\":\"agent_typing\",\"agentId\":3}\n").unwrap();
+        assert_eq!(event["type"], "agent_typing");
+        assert_eq!(event["agentId"], 3);
+        assert!(parse_event_line(": ping\n").is_none());
+        assert!(parse_event_line("\n").is_none());
+        assert!(parse_event_line("data: {broken\n").is_none());
+        assert!(parse_event_line("event: message\n").is_none());
+    }
+
+    #[test]
+    fn only_plain_ids_can_be_put_in_a_path() {
+        assert!(check_id("agent-dm-12").is_ok());
+        assert!(check_id("agent-group-6f1c0c52-3c1e-4b0e-8d6e-0f3a2b1c9d7e").is_ok());
+        assert!(check_id("").is_err());
+        assert!(check_id("../profile").is_err());
+        assert!(check_id("a/b").is_err());
+        assert!(check_id("a?b=c").is_err());
+    }
 
     /// Writes the chat's device context of a real engine to `WIQO_CONTEXT_OUT` (the backend's schema checks it: `npm run`-free, see the session notes).
     #[test]

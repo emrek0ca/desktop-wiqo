@@ -115,6 +115,8 @@ function render() {
     pill.querySelector(".label").textContent = title;
   }
   $("right-device").textContent = snapshot.deviceName;
+  $("session-full").textContent = snapshot.fullAccess ? "Açık" : "Kapalı";
+  $("session-phones").textContent = String(snapshot.phones.length);
   const running = key === "online" || key === "connecting" || key === "retrying";
   $("toggle-connection").textContent = running ? "Bağlantıyı kes" : "Bağlan";
   $("toggle-connection").className = running ? "secondary small" : "primary small";
@@ -123,14 +125,13 @@ function render() {
   $("device-name").textContent = snapshot.deviceName;
   $("device-platform").textContent = { macOS: "macOS", windows: "Windows", linux: "Linux" }[snapshot.platform] || snapshot.platform;
   $("phone-count").textContent = String(snapshot.phones.length);
-  $("phone-tip").hidden = snapshot.phones.length > 0;
   $("full-access-state").textContent = snapshot.fullAccess ? "Açık" : "Kapalı";
   $("full-access-chip").classList.toggle("on", snapshot.fullAccess);
   $("full-access-chip").setAttribute("aria-pressed", String(snapshot.fullAccess));
   $("approve-on-pc").checked = snapshot.approveOnPc;
   $("reads-without-phone").checked = snapshot.readsWithoutPhone;
 
-  renderPhones();
+  if (!$("phones-pop").hidden && !phonesPopPairing) renderPhonesPop();
   renderCapabilities();
   activityItems(snapshot.activity, $("recent"), 5);
   activityItems(snapshot.activity, $("right-activity"), 6);
@@ -142,12 +143,15 @@ async function refresh() {
   render();
 }
 
-const SECTION_TITLES = { status: "Durum", agents: "Ajanlar", activity: "Etkinlik", phones: "Telefonlar", permissions: "Ayarlar" };
+const SECTION_TITLES = { status: "Ayarlar", agents: "Ayarlar", activity: "Ayarlar", apps: "Uygulamalar", threads: "Ajanlar", permissions: "Ayarlar" };
+const SETTINGS_TABS = ["permissions", "status", "agents", "activity"];
 
 function showSection(name) {
   for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === name);
   for (const panel of document.querySelectorAll(".panel")) panel.hidden = panel.dataset.panel !== name;
   document.body.dataset.section = name;
+  $("settings-tabs").hidden = !SETTINGS_TABS.includes(name);
+  for (const tab of document.querySelectorAll("#settings-tabs button")) tab.classList.toggle("active", tab.dataset.tab === name);
   if (name !== "chat") $("top-title").textContent = SECTION_TITLES[name] || "";
   window.dispatchEvent(new CustomEvent("wiqo-section", { detail: name }));
   if (name === "permissions") loadPermissions();
@@ -161,16 +165,24 @@ try {
   Object.assign(columns, JSON.parse(localStorage.getItem("wiqo.columns") || "{}"));
 } catch { /* defaults */ }
 
+columns.right = false;
+document.addEventListener("click", (event) => {
+  if (!columns.right || $("right").contains(event.target) || $("session-toggle").contains(event.target)) return;
+  columns.right = false;
+  layout();
+});
+
 function layout() {
-  const narrow = window.innerWidth < 1080;
   $("shell").classList.toggle("left-closed", !columns.left);
-  $("shell").classList.toggle("right-closed", !columns.right || narrow);
+  $("shell").classList.toggle("right-closed", !columns.right);
+  $("session-toggle").classList.toggle("on", columns.right);
   $("open-left").hidden = columns.left;
 }
 
 function toggleColumn(side) {
   columns[side] = !columns[side];
-  try { localStorage.setItem("wiqo.columns", JSON.stringify(columns)); } catch { /* per launch */ }
+  // The session bar is a bubble, closed at every launch; only the sidebar remembers its state.
+  if (side === "left") try { localStorage.setItem("wiqo.columns", JSON.stringify({ left: columns.left })); } catch { /* per launch */ }
   layout();
 }
 
@@ -217,6 +229,7 @@ function renderWork(items) {
   }
 }
 for (const button of document.querySelectorAll(".nav")) button.onclick = () => showSection(button.dataset.section);
+for (const tab of document.querySelectorAll("#settings-tabs button")) tab.onclick = () => showSection(tab.dataset.tab);
 for (const button of document.querySelectorAll("[data-goto]")) button.onclick = () => showSection(button.dataset.goto);
 
 // ----- stage 1: sign in, create an account, reset the password -----
@@ -512,66 +525,93 @@ window.addEventListener("focus", loadPermissions);
 
 // ----- phones -----
 
-function renderPhones() {
-  const phones = $("phones");
-  phones.replaceChildren();
+// The phone bubble opens under the phone icon: no phone linked -> the QR code at once; linked -> the phones and "Telefon ekle".
+let phonesPopAnchor = null;
+let phonesPopPairing = false;
+
+function closePhonesPop() {
+  if ($("phones-pop").hidden) return;
+  $("phones-pop").hidden = true;
+  if (phonesPopPairing) invoke("cancel_pairing");
+  phonesPopPairing = false;
+}
+
+function phonesPopLine(parent, tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  parent.append(node);
+  return node;
+}
+
+async function showPairing(pop) {
+  phonesPopPairing = true;
+  pop.replaceChildren();
+  phonesPopLine(pop, "h3", "", "Telefonunu bağla");
+  phonesPopLine(pop, "p", "muted small", "Telefondaki Wiqo'da PC'ye bağlan'ı aç ve bu kodu okut. Kod 10 dakika geçerli.");
+  const qr = phonesPopLine(pop, "div", "qr", "");
+  qr.innerHTML = `<div class="spinner"></div>`;
+  const error = phonesPopLine(pop, "p", "error small", "");
+  error.hidden = true;
+  try {
+    const offer = await invoke("start_pairing");
+    qr.innerHTML = offer.qrSvg;
+  } catch (failure) {
+    qr.innerHTML = "";
+    error.textContent = `Kod oluşturulamadı: ${failure}`;
+    error.hidden = false;
+  }
+  if (snapshot.phones.length > 0) {
+    const back = phonesPopLine(pop, "button", "link small", "Vazgeç");
+    back.onclick = () => { invoke("cancel_pairing"); phonesPopPairing = false; renderPhonesPop(); };
+  }
+}
+
+function renderPhonesPop() {
+  const pop = $("phones-pop");
+  if (pop.hidden) return;
+  if (!snapshot || snapshot.phones.length === 0) { showPairing(pop); return; }
+  phonesPopPairing = false;
+  pop.replaceChildren();
+  phonesPopLine(pop, "h3", "", snapshot.phones.length === 1 ? "Bağlı telefon" : `${snapshot.phones.length} bağlı telefon`);
   for (const phone of snapshot.phones) {
-    const row = document.createElement("li");
-    const name = document.createElement("div");
-    const title = document.createElement("div");
-    title.textContent = phone.name;
-    const kind = document.createElement("div");
-    kind.className = "muted small";
-    kind.textContent = phone.platform === "ios" ? "iPhone" : phone.platform === "android" ? "Android" : "Telefon";
-    name.append(title, kind);
-    const remove = document.createElement("button");
-    remove.className = "danger";
-    remove.textContent = "Kaldır";
+    const row = document.createElement("div");
+    row.className = "phone-row";
+    const text = document.createElement("div");
+    phonesPopLine(text, "div", "w-title", phone.name);
+    phonesPopLine(text, "div", "muted small", `${phone.platform === "ios" ? "iPhone" : phone.platform === "android" ? "Android" : "Telefon"} · bu bilgisayara görev verebilir`);
+    const remove = phonesPopLine(row, "button", "danger", "Kaldır");
+    row.prepend(text);
     remove.onclick = async () => {
+      closePhonesPop();
       if (!(await WiqoDialog.confirm({ title: `${phone.name} kaldırılsın mı?`, message: "Bu telefon artık bu bilgisayara görev veremez.", confirm: "Kaldır", danger: true }))) return;
       snapshot = await invoke("remove_phone", { pairingId: phone.pairingId });
       render();
       toast("Telefon kaldırıldı.");
     };
-    row.append(name, remove);
-    phones.append(row);
-  }
-  if (snapshot.phones.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "muted";
-    empty.textContent = "Henüz bağlı telefon yok.";
-    phones.append(empty);
+    pop.append(row);
   }
 }
 
-async function addPhone() {
-  showSection("phones");
-  $("add-phone-box").hidden = false;
-  $("add-phone").hidden = true;
-  $("pair-error").hidden = true;
-  $("qr-inline").innerHTML = `<div class="spinner"></div>`;
-  try {
-    const offer = await invoke("start_pairing");
-    $("qr-inline").innerHTML = offer.qrSvg;
-  } catch (error) {
-    $("qr-inline").innerHTML = "";
-    $("pair-error").textContent = `Kod oluşturulamadı: ${error}`;
-    $("pair-error").hidden = false;
-  }
+function togglePhonesPop(anchor) {
+  const pop = $("phones-pop");
+  if (!pop.hidden && phonesPopAnchor === anchor) { closePhonesPop(); return; }
+  phonesPopAnchor = anchor;
+  const box = anchor.getBoundingClientRect();
+  // Under the icon, right edges aligned, and never past the window's edge.
+  const width = 300;
+  pop.style.top = `${Math.round(box.bottom + 8)}px`;
+  pop.style.left = `${Math.max(12, Math.min(Math.round(box.right - width), window.innerWidth - width - 12))}px`;
+  pop.hidden = false;
+  renderPhonesPop();
 }
 
-function closeAddPhone() {
-  $("add-phone-box").hidden = true;
-  $("add-phone").hidden = false;
-  invoke("cancel_pairing");
-}
+for (const button of document.querySelectorAll(".phones-link")) button.onclick = (event) => { event.stopPropagation(); togglePhonesPop(button); };
+document.addEventListener("click", (event) => { if (!$("phones-pop").hidden && !$("phones-pop").contains(event.target)) closePhonesPop(); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closePhonesPop(); });
 
-$("add-phone").onclick = addPhone;
-$("phone-tip-go").onclick = addPhone;
-$("add-phone-cancel").onclick = closeAddPhone;
 listen("pairing-failed", (message) => {
-  $("pair-error").textContent = String(message.payload);
-  $("pair-error").hidden = false;
+  toast(`Bağlantı kurulamadı: ${message.payload}`, "bad");
 });
 
 // ----- settings -----
@@ -825,10 +865,8 @@ listen("wiqo", async (message) => {
     }
     case "paired":
       toast(`${event.phone} bağlandı.`, "ok");
-      if (!$("add-phone-box").hidden) {
-        $("add-phone-box").hidden = true;
-        $("add-phone").hidden = false;
-      }
+      phonesPopPairing = false;
+      refresh().then(renderPhonesPop);
       break;
     case "activity":
       if (!snapshot) return;

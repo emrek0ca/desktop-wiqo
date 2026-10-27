@@ -53,6 +53,8 @@ jobs:
   # Independent of `check`, so a Linux-only failure never holds back the Windows installer.
   windows-package:
     runs-on: windows-latest
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
     strategy:
       fail-fast: false
       matrix:

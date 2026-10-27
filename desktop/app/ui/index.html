@@ -92,15 +92,15 @@
       <label class="search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="search" type="text" placeholder="Ara"></label>
       <div id="conversation-list" class="conv-list"></div>
       <nav class="left-nav">
-        <button class="nav" data-section="status"><span data-symbol="laptopcomputer" data-size="15" data-weight="0"></span>Durum</button>
-        <button class="nav" data-section="agents"><span data-symbol="sparkle" data-size="15" data-weight="0"></span>Ajanlar</button>
-        <button class="nav" data-section="activity"><span data-symbol="clock.arrow.circlepath" data-size="15" data-weight="0"></span>Etkinlik</button>
-        <button class="nav" data-section="phones"><span data-symbol="iphone" data-size="15" data-weight="0"></span>Telefonlar</button>
-        <button class="nav" data-section="permissions"><span data-symbol="gearshape" data-size="15" data-weight="0"></span>Ayarlar</button>
+        <button class="nav" data-section="threads"><span data-symbol="person.2" data-size="15" data-weight="0"></span>Ajanlar</button>
+        <button class="nav" data-section="apps"><span data-symbol="link" data-size="15" data-weight="0"></span>Uygulamalar</button>
       </nav>
+      <div id="voice-model" class="voice-model" hidden></div>
       <div class="me">
-        <span id="me-avatar" class="avatar">W</span>
-        <div class="me-text"><div id="account-email" class="small"></div></div>
+        <button id="me-settings" class="me-main" data-goto="permissions" title="Ayarlar">
+          <span id="me-avatar" class="avatar">W</span>
+          <div class="me-text"><div id="account-email" class="small"></div><div class="muted small">Ayarlar</div></div>
+        </button>
         <button id="me-menu" class="icon-button" title="Hesap"><span data-symbol="ellipsis" data-size="15" data-weight="0"></span></button>
         <div id="me-popover" class="popover" hidden>
           <button id="report-problem" class="pop-item"><span data-symbol="exclamationmark.bubble" data-size="14" data-weight="0"></span>Sorun bildir</button>
@@ -114,11 +114,19 @@
         <button class="icon-button" data-toggle="left" id="open-left" title="Kenar çubuğunu aç (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
         <div id="top-title" class="top-title" data-tauri-drag-region>Yeni sohbet</div>
         <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
-        <button class="icon-button" data-toggle="right" title="Sağ paneli aç/kapat (⌘I)"><span data-symbol="sidebar.right" data-size="16" data-weight="0"></span></button>
+        <button class="icon-button phones-link" title="Telefon"><span data-symbol="iphone" data-size="16" data-weight="0"></span></button>
+        <button id="session-toggle" class="icon-button" data-toggle="right" title="Oturum çubuğu (⌘I)"><span data-symbol="list.bullet" data-size="16" data-weight="0"></span></button>
       </div>
       <div id="update-banner" class="banner" hidden>
         <span id="update-text">Yeni sürüm hazır.</span>
         <button id="update-restart" class="primary small">Yeniden başlat</button>
+      </div>
+
+      <div id="settings-tabs" class="tabs" hidden>
+        <button data-tab="permissions">Genel</button>
+        <button data-tab="status">Durum</button>
+        <button data-tab="agents">Rutinler</button>
+        <button data-tab="activity">Etkinlik</button>
       </div>
 
       <div class="panel chat-panel" data-panel="chat">
@@ -136,13 +144,14 @@
           </div>
         </div>
         <div class="composer-wrap">
-          <form id="chat-form" class="composer">
+          <form id="chat-form" class="composer-card">
             <div id="chat-attachments" class="attachments" hidden></div>
             <textarea id="chat-input" rows="1" placeholder="Wiqo'ya yaz…"></textarea>
-            <div class="composer-bar">
-              <label class="icon-button attach" title="Görsel ekle"><input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><span data-symbol="plus" data-size="16" data-weight="0"></span></label>
-              <button id="full-access-chip" class="chip-toggle" type="button" title="Tam yetki: Wiqo adımları sormadan yapar"><span data-symbol="bolt" data-size="13" data-weight="0"></span><span class="chip-label">Tam yetki</span></button>
+            <div class="card-bar">
+              <label class="mini attach" title="Görsel ekle"><input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><span data-symbol="plus" data-size="18" data-weight="0"></span></label>
+              <button id="full-access-chip" class="access" type="button" title="Tam yetki: Wiqo adımları sormadan yapar"><span data-symbol="lock.shield" data-size="15" data-weight="0"></span><span class="chip-label">Tam yetki</span></button>
               <span class="spacer"></span>
+              <button id="voice-button" class="mini" type="button" title="Sesle yaz"><span data-symbol="mic" data-size="17" data-weight="0"></span></button>
               <button id="chat-stop" class="stop" type="button" title="Durdur (Esc)" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span></button>
               <button id="chat-send" class="send" type="submit" title="Gönder (Enter)"><span data-symbol="arrow.up" data-size="14" data-weight="0.3"></span></button>
             </div>
@@ -161,10 +170,6 @@
             <button id="toggle-connection" class="secondary small">Bağlantıyı kes</button>
           </div>
         </div>
-        <div id="phone-tip" class="card tip" hidden>
-          <div><h3>Telefonunu bağla</h3><p class="muted small">Telefondan görev vermek için bir kez QR okut.</p></div>
-          <button id="phone-tip-go" class="primary small">Bağla</button>
-        </div>
         <div class="grid">
           <div class="card stat"><div class="overline">Bilgisayar</div><div id="device-name" class="stat-value">—</div><div id="device-platform" class="muted small"></div></div>
           <div class="card stat"><div class="overline">Telefon</div><div id="phone-count" class="stat-value">0</div></div>
@@ -174,6 +179,35 @@
           <div class="row-head"><h3>Son işlemler</h3><button class="link small" data-goto="activity">Tümü</button></div>
           <ul id="recent" class="activity"></ul>
         </div>
+      </div>
+
+      <div class="panel threads-panel" data-panel="threads" hidden>
+        <aside class="threads-list">
+          <div class="threads-list-head">
+            <h3>Ajanlar</h3>
+            <span class="spacer"></span>
+            <button id="t-new-group" class="icon-button" title="Yeni grup"><span data-symbol="person.2" data-size="15" data-weight="0"></span></button>
+          </div>
+          <label class="search t-search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="t-search" type="text" placeholder="Ara"></label>
+          <p id="threads-error" class="error small" hidden></p>
+          <div id="t-people" class="t-people"></div>
+          <div id="threads-list-body" class="threads-list-body"></div>
+        </aside>
+        <section class="thread-pane">
+          <div id="thread-empty" class="thread-empty muted">Bir ajan ya da konuşma seç.</div>
+          <div id="thread-body" class="thread-body" hidden>
+            <div id="thread-head" class="thread-head"></div>
+            <div id="thread-work" class="thread-work" hidden></div>
+            <div id="thread-scroll" class="thread-scroll"><div id="thread-messages" class="thread-messages"></div></div>
+            <div id="thread-mentions" class="thread-mentions" hidden></div>
+            <div class="thread-composer">
+              <textarea id="t-input" rows="1" placeholder="Mesaj yaz"></textarea>
+              <button id="t-send" class="primary" title="Gönder"><span data-symbol="arrow.up" data-size="14" data-weight="0"></span></button>
+              <button id="t-stop" class="primary" title="Durdur" hidden><span data-symbol="stop.fill" data-size="13" data-weight="0"></span></button>
+            </div>
+          </div>
+        </section>
+        <aside id="thread-side" class="thread-side" hidden></aside>
       </div>
 
       <div class="panel page" data-panel="agents" hidden>
@@ -186,18 +220,11 @@
         <div class="card"><ul id="activity" class="activity"></ul></div>
       </div>
 
-      <div class="panel page" data-panel="phones" hidden>
-        <div class="card"><ul id="phones" class="list"></ul></div>
-        <button id="add-phone" class="primary">Telefon bağla</button>
-        <div id="add-phone-box" class="card qr-inline" hidden>
-          <div id="qr-inline" class="qr"></div>
-          <div>
-            <h3>QR kodu okut</h3>
-            <p class="muted small">Telefondaki Wiqo'da <b>PC'ye bağlan</b>'ı aç. Kod 10 dakika geçerli.</p>
-            <p id="pair-error" class="error small" hidden></p>
-            <button id="add-phone-cancel" class="link small">Vazgeç</button>
-          </div>
-        </div>
+      <div class="panel page" data-panel="apps" hidden>
+        <p class="muted small">Wiqo'nun senin adına bakabileceği ve yapabileceği hesaplar. Bağladığın bir uygulamayı istediğin an kesebilir ya da "sadece oku" yapabilirsin.</p>
+        <div id="apps-list" class="card apps-list"></div>
+        <p id="apps-soon" class="muted small" hidden></p>
+        <p id="apps-error" class="error small" hidden></p>
       </div>
 
       <div class="panel page" data-panel="permissions" hidden>
@@ -236,31 +263,31 @@
       </div>
     </main>
 
-    <aside id="right" class="right">
-      <div class="right-top">
-        <span class="overline">Bu bilgisayar</span>
-        <button class="icon-button" data-toggle="right" title="Kapat (⌘I)"><span data-symbol="sidebar.right" data-size="16" data-weight="0"></span></button>
-      </div>
-      <div class="side-card">
-        <div class="side-row"><span id="right-device" class="side-title">—</span><span id="right-state" class="pill"><span class="dot"></span><span class="label">—</span></span></div>
+    <aside id="right" class="right session-pop" aria-label="Oturum çubuğu">
+      <div class="right-top"><span class="pop-title">Oturum çubuğu</span></div>
+      <section class="session-card">
+        <div class="card-head"><span class="overline">Bilgisayar</span><span id="right-state" class="pill"><span class="dot"></span><span class="label">—</span></span></div>
+        <div id="right-device" class="side-title">—</div>
+        <div class="session-row"><span class="muted">Tam yetki</span><span id="session-full">Kapalı</span></div>
+        <div class="session-row"><span class="muted">Bağlı telefon</span><span id="session-phones">0</span></div>
         <button id="right-stop" class="secondary small stop-button" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span>İşi durdur</button>
-      </div>
-      <div class="side-section">
+      </section>
+      <section class="session-card side-section">
         <div class="overline">Şu an</div>
         <div id="right-work" class="side-list"><div class="muted small">Boşta</div></div>
-      </div>
-      <div class="side-section">
+      </section>
+      <section class="session-card side-section">
         <div class="overline">Bu sohbetin adımları</div>
         <div id="right-steps" class="side-list"><div class="muted small">Henüz yok</div></div>
-      </div>
-      <div class="side-section">
+      </section>
+      <section class="session-card side-section">
         <div class="overline">Dosyalar</div>
         <div id="right-files" class="side-list"><div class="muted small">Henüz yok</div></div>
-      </div>
-      <div class="side-section">
-        <div class="row-head"><span class="overline">Son işlemler</span><button class="link small" data-goto="activity">Tümü</button></div>
+      </section>
+      <section class="session-card side-section">
+        <div class="overline">Son işlemler</div>
         <ul id="right-activity" class="activity compact"></ul>
-      </div>
+      </section>
     </aside>
   </div>
 
@@ -282,6 +309,9 @@
     </form>
   </div>
 
+    <!-- The phone bubble: the QR code when no phone is linked, the linked phones otherwise. -->
+  <div id="phones-pop" class="phones-pop" hidden></div>
+
   <div id="toast" class="toast" hidden></div>
   <script src="dialog.js"></script>
   <script src="icons.js"></script>
@@ -290,6 +320,9 @@
   <script src="app.js"></script>
   <script src="chat.js"></script>
   <script src="ask.js"></script>
+  <script src="connectors.js"></script>
+  <script src="voice.js"></script>
   <script src="agents.js"></script>
+  <script src="threads.js"></script>
 </body>
 </html>

@@ -14,6 +14,8 @@
 	<string>Wiqo, istediğin dosyalar harici diskteyse onlara erişmek için bu izni ister.</string>
 	<key>NSNetworkVolumesUsageDescription</key>
 	<string>Wiqo, istediğin dosyalar ağ diskindeyse onlara erişmek için bu izni ister.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Wiqo, sesli sohbette söylediklerini yazıya çevirmek için mikrofonu kullanır; ses kaydedilip saklanmaz.</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Wiqo, hava durumu gibi yere bağlı sorularda bulunduğun şehri bulmak için konumunu bir kez okur; sunucuya yalnızca şehir adı gider.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

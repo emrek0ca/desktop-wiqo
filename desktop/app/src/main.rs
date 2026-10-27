@@ -10,6 +10,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use wiqo_agent::{Desktop, Event, PairingOffer, Snapshot};
 
+mod ear;
 mod login_item;
 mod symbols;
 
@@ -23,6 +24,8 @@ struct App {
     pairing: Mutex<Option<(PairingOffer, tokio::task::JoinHandle<()>)>>,
     /// Stops a Google sign-in that is waiting for the browser.
     google_cancel: Arc<tokio::sync::Notify>,
+    /// The on-device speech recognition and its model.
+    ear: Arc<ear::Ear>,
 }
 
 type Reply<T> = Result<T, String>;
@@ -245,6 +248,89 @@ async fn reset_password(
 }
 
 #[tauri::command]
+fn voice_model_status(app: State<'_, App>) -> ear::ModelStatus {
+    app.ear.status()
+}
+
+#[tauri::command]
+fn voice_model_retry(app: State<'_, App>, handle: AppHandle) {
+    app.ear.ensure_model(handle);
+}
+
+/// 16-bit mono PCM out of the window's own WAV (a 44-byte header and nothing else).
+#[allow(clippy::chunks_exact_to_as_chunks)]
+fn samples_of(wav: &[u8]) -> Vec<f32> {
+    wav.get(44..)
+        .unwrap_or_default()
+        .chunks_exact(2)
+        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]) as f32 / 32768.0)
+        .collect()
+}
+
+/// Dictation: the words of a recording (a 16 kHz WAV), recognised on this computer by the on-device model: free, private, offline.
+/// Until the first-launch download is done it says how far that is.
+#[tauri::command]
+async fn listen_transcribe(app: State<'_, App>, audio: String, language: String) -> Reply<String> {
+    use base64::Engine as _;
+    let status = app.ear.status();
+    if status.state != "ready" {
+        return Err(match status.state.as_str() {
+            "downloading" => format!(
+                "Ses paketi iniyor (%{}); bitince yazdırabilirsin.",
+                (status.progress * 100.0).round()
+            ),
+            _ => {
+                "Ses paketi henüz yok; internet bağlantını kontrol edip Ses paketi uyarısına dokun."
+                    .to_string()
+            }
+        });
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&audio)
+        .map_err(|_| "Ses verisi geçersiz.".to_string())?;
+    let ear = app.ear.clone();
+    tauri::async_runtime::spawn_blocking(move || ear.transcribe(&samples_of(&bytes), &language))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn connectors(app: State<'_, App>) -> Reply<serde_json::Value> {
+    app.desktop.chat.connectors().await.map_err(text)
+}
+
+/// Opens the provider's consent page in the browser; the result comes back as a `connector-result` event.
+#[tauri::command]
+async fn connector_connect(app: State<'_, App>, provider: String) -> Reply<()> {
+    let url = app
+        .desktop
+        .chat
+        .connector_start(&provider)
+        .await
+        .map_err(text)?;
+    open_browser(&url);
+    Ok(())
+}
+
+#[tauri::command]
+async fn connector_disconnect(app: State<'_, App>, provider: String) -> Reply<()> {
+    app.desktop
+        .chat
+        .connector_disconnect(&provider)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
+async fn connector_access(app: State<'_, App>, provider: String, level: String) -> Reply<()> {
+    app.desktop
+        .chat
+        .connector_access(&provider, &level)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
 async fn profile(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.profile().await.map_err(text)
 }
@@ -268,6 +354,18 @@ fn handle_link(handle: &AppHandle, link: &str) {
         return;
     }
     show_window(handle);
+    // A connected app (Gmail, Notion, ...) comes back through the same link as the sign-in; only the sign-in carries the provider "google-login".
+    if let Ok(url) = tauri::Url::parse(link) {
+        let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        let provider = query.get("provider").cloned().unwrap_or_default();
+        if !provider.is_empty() && provider != "google-login" {
+            let _ = handle.emit(
+                "connector-result",
+                serde_json::json!({ "provider": provider, "status": query.get("status"), "message": query.get("message") }),
+            );
+            return;
+        }
+    }
     let (handle, link) = (handle.clone(), link.to_string());
     tauri::async_runtime::spawn(async move {
         let desktop = handle.state::<App>().desktop.clone();
@@ -449,6 +547,81 @@ async fn agent_action(
         .map_err(text)
 }
 
+/// The agent chat: bots and groups.
+#[tauri::command]
+async fn threads_list(app: State<'_, App>) -> Reply<serde_json::Value> {
+    app.desktop.chat.threads().await.map_err(text)
+}
+
+#[tauri::command]
+async fn thread_open(app: State<'_, App>, thread: String) -> Reply<serde_json::Value> {
+    app.desktop.chat.thread_open(&thread).await.map_err(text)
+}
+
+#[tauri::command]
+async fn thread_create(app: State<'_, App>, body: serde_json::Value) -> Reply<serde_json::Value> {
+    app.desktop.chat.thread_create(body).await.map_err(text)
+}
+
+#[tauri::command]
+async fn thread_update(
+    app: State<'_, App>,
+    thread: String,
+    body: serde_json::Value,
+) -> Reply<serde_json::Value> {
+    app.desktop
+        .chat
+        .thread_update(&thread, body)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
+async fn thread_delete(app: State<'_, App>, thread: String) -> Reply<serde_json::Value> {
+    app.desktop.chat.thread_delete(&thread).await.map_err(text)
+}
+
+#[tauri::command]
+async fn thread_stop(app: State<'_, App>, thread: String) -> Reply<serde_json::Value> {
+    app.desktop.chat.thread_stop(&thread).await.map_err(text)
+}
+
+#[tauri::command]
+async fn work_cancel(app: State<'_, App>, task: u64) -> Reply<serde_json::Value> {
+    app.desktop.chat.work_cancel(task).await.map_err(text)
+}
+
+#[tauri::command]
+async fn agent_forget(app: State<'_, App>, id: u64) -> Reply<serde_json::Value> {
+    app.desktop.chat.agent_forget(id).await.map_err(text)
+}
+
+#[tauri::command]
+async fn agent_list(app: State<'_, App>) -> Reply<serde_json::Value> {
+    app.desktop.chat.agent_list().await.map_err(text)
+}
+
+#[tauri::command]
+async fn agent_save(
+    app: State<'_, App>,
+    id: Option<u64>,
+    body: serde_json::Value,
+) -> Reply<serde_json::Value> {
+    app.desktop.chat.agent_save(id, body).await.map_err(text)
+}
+
+#[tauri::command]
+async fn agent_remove(app: State<'_, App>, id: u64) -> Reply<serde_json::Value> {
+    app.desktop.chat.agent_remove(id).await.map_err(text)
+}
+
+/// Starts a message to an agent thread; its answer arrives as `thread` events with this `turn`.
+#[tauri::command]
+fn thread_send(app: State<'_, App>, turn: String, thread: String, message: String) {
+    let desktop = app.desktop.clone();
+    tauri::async_runtime::spawn(async move { desktop.thread_send(&turn, &thread, &message).await });
+}
+
 #[tauri::command]
 async fn chat_messages(app: State<'_, App>, conversation: String) -> Reply<serde_json::Value> {
     app.desktop.chat.messages(&conversation).await.map_err(text)
@@ -584,6 +757,16 @@ fn show_window(handle: &AppHandle) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn tray_icon() -> tauri::image::Image<'static> {
+    tauri::include_image!("icons/tray-mac.png")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn tray_icon() -> tauri::image::Image<'static> {
+    tauri::include_image!("icons/32x32.png")
+}
+
 fn tray(handle: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(handle, "open", "Wiqo'yu aç", true, None::<&str>)?;
     let stop = MenuItem::with_id(handle, "stop", "Çalışan işi durdur", true, None::<&str>)?;
@@ -601,7 +784,8 @@ fn tray(handle: &AppHandle) -> tauri::Result<()> {
     )?;
     let pause_item = pause.clone();
     TrayIconBuilder::with_id("wiqo")
-        .icon(tauri::include_image!("icons/32x32.png"))
+        // The menu bar of a Mac is dark more often than not: a white mark there (the other systems keep the app's own icon).
+        .icon(tray_icon())
         .tooltip("Wiqo")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -709,6 +893,7 @@ fn main() {
             desktop: desktop.clone(),
             pairing: Mutex::new(None),
             google_cancel: Arc::new(tokio::sync::Notify::new()),
+            ear: ear::Ear::new(desktop.voice_dir()),
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
@@ -731,12 +916,31 @@ fn main() {
             forgot_password,
             reset_password,
             profile,
+            connectors,
+            listen_transcribe,
+            voice_model_status,
+            voice_model_retry,
+            connector_connect,
+            connector_disconnect,
+            connector_access,
             sign_out,
             chat_send,
             chat_cancel,
             chat_conversations,
             agents_overview,
             agent_action,
+            threads_list,
+            thread_open,
+            thread_create,
+            thread_update,
+            thread_delete,
+            thread_stop,
+            work_cancel,
+            agent_forget,
+            agent_list,
+            agent_save,
+            agent_remove,
+            thread_send,
             chat_messages,
             chat_confirm,
             current_city,
@@ -772,6 +976,9 @@ fn main() {
                 });
             }
             keep_updated(app.handle().clone());
+            // First launch: the speech model comes down in the background, so the voice is ready when the person first asks for it.
+            app.state::<App>().ear.ensure_model(app.handle().clone());
+            app.state::<App>().ear.warm();
             if hidden {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
