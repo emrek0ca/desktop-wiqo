@@ -1,0 +1,13 @@
+diff --git a/crates/macos/src/system/appkit_bridge.m b/crates/macos/src/system/appkit_bridge.m
+index 19b9699..22cdfad 100644
+--- a/crates/macos/src/system/appkit_bridge.m
++++ b/crates/macos/src/system/appkit_bridge.m
+@@ -173,7 +173,7 @@ AgentDesktopBytesResult agent_desktop_copy_workspace_snapshot_json(void) {
+                 }
+                 int32_t pid = app.processIdentifier;
+                 if (pid <= 0) {
+-                    [skipped addObject:@{@"pid": @(pid), @"field": @"pid", @"index": @(index)}];
++                    // An exited process can linger in the list with pid -1; it can never be a target, so it must not make the whole inventory incomplete.
+                     continue;
+                 }
+                 NSApplicationActivationPolicy policy = app.activationPolicy;

@@ -15,3 +15,15 @@
     ${EndIf}
   !endif
 !macroend
+
+; The helper that drives other apps' controls (computerDesktop) goes next to Wiqo.exe. The release build sets WIQO_HELPER to the built program;
+; without it (a local test build) the installer simply has no helper and the operation answers "unavailable".
+!macro NSIS_HOOK_POSTINSTALL
+  !if /FileExists "$%WIQO_HELPER%"
+    File "/oname=$INSTDIR\agent-desktop.exe" "$%WIQO_HELPER%"
+  !endif
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  Delete "$INSTDIR\agent-desktop.exe"
+!macroend

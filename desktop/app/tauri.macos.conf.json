@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "macOS": {
+      "files": {
+        "Library/LaunchAgents/com.wiqo.desktop.login.plist": "launch-agent.plist",
+        "MacOS/agent-desktop": "binaries/agent-desktop",
+        "Resources/agent-desktop.LICENSE": "binaries/agent-desktop.LICENSE"
+      }
+    }
+  }
+}

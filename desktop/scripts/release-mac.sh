@@ -21,6 +21,10 @@ NOTES="${1:-}"
 [ -f "$KEY" ] || { echo "updater key missing: $KEY"; exit 1; }
 xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || { echo "notary profile '$PROFILE' missing (see the setup lines at the top)"; exit 1; }
 
+echo "== helper that drives other apps (agent-desktop), signed so notarization accepts it"
+scripts/build-helper.sh universal-apple-darwin app/binaries
+codesign --force --options runtime --timestamp --sign "Developer ID Application: Osman Emre Koca (7SRKKF75MC)" app/binaries/agent-desktop
+
 echo "== build $VERSION ($ARCH)"
 (cd app && cargo tauri build --target universal-apple-darwin --bundles app)
 

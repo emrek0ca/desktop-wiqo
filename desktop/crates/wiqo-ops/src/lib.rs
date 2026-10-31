@@ -4,6 +4,7 @@ mod agent;
 mod apps;
 mod chores;
 mod convert;
+mod desktop_control;
 mod device;
 mod documents;
 mod files;
@@ -47,6 +48,7 @@ fn all_operations() -> Vec<Op> {
         chores::operations(),
         personal::operations(),
         terminal::code::operations(),
+        desktop_control::operations(),
     ]
     .into_iter()
     .flatten()
@@ -88,8 +90,7 @@ mod tests {
     use wiqo_contract::{Manifest, Platform};
 
     /// The operations R3 does not cover yet; the test below fails when this list and the code drift apart.
-    const NOT_YET: [&str; 4] = [
-        "computerDesktop",
+    const NOT_YET: [&str; 3] = [
         "computerBrowser",
         "endBrowserTask",
         "localAnalyze",
