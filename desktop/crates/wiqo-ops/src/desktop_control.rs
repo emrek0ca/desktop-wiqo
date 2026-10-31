@@ -41,6 +41,8 @@ struct Request {
     target_ref: Option<String>,
     source_ref: Option<String>,
     destination_ref: Option<String>,
+    normalized_x: Option<f64>,
+    normalized_y: Option<f64>,
     direction: Option<String>,
     amount: Option<u32>,
     text: Option<String>,
@@ -62,6 +64,11 @@ pub(crate) struct Answer {
 /// Something that can run one helper command. The real one starts the program; tests answer from a script.
 pub(crate) trait Engine: Send + Sync {
     fn call(&self, args: &[String]) -> std::result::Result<Answer, String>;
+
+    /// Brings the app to the front and says whether the system confirmed it.
+    fn bring_to_front(&self, application: &str) -> bool {
+        crate::apps::bring_to_front(application)
+    }
 }
 
 struct Helper {
@@ -204,6 +211,8 @@ struct Target {
     actions: Vec<String>,
     enabled: bool,
     secure: bool,
+    /// The element that has keyboard focus: where typing without a target goes.
+    focused: bool,
 }
 
 impl Target {
@@ -221,6 +230,8 @@ struct Observation {
     application: String,
     window_title: String,
     targets: Vec<Target>,
+    /// The primary display's size in points: normalised frames and coordinates are fractions of it.
+    screen: [f64; 2],
 }
 
 fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
@@ -277,6 +288,7 @@ fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
                 actions,
                 enabled: !states.contains(&"disabled"),
                 secure,
+                focused: states.contains(&"focused"),
             });
         }
     }
@@ -322,17 +334,34 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
             ])
         })
         .unwrap_or([1920.0, 1080.0]);
+    // The app is always named: the window in front is often Wiqo's own, where the request was typed, and a bare snapshot would read that.
+    let named = application
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(crate::apps::frontmost);
     let mut args: Vec<String> = vec![
         "snapshot".into(),
         "-i".into(),
         "--compact".into(),
         "--include-bounds".into(),
     ];
-    if let Some(application) = application.filter(|name| !name.trim().is_empty()) {
-        args.extend(["--app".into(), application.trim().to_string()]);
+    if let Some(name) = &named {
+        args.extend(["--app".into(), name.clone()]);
     }
     let answer = engine.call(&args).map_err(unavailable)?;
     if !answer.ok {
+        // An app that is running with no window (TextEdit after its last document closed) is a real place to work: its shortcuts (command+n) still
+        // reach it. It is reported as an app with nothing on screen yet, not as an app that is missing.
+        if let (Some(name), "WINDOW_NOT_FOUND") = (&named, answer.code.as_str()) {
+            return Ok(Observation {
+                snapshot_id: format!("none-{}", uuid::Uuid::new_v4()),
+                application: name.clone(),
+                window_title: String::new(),
+                targets: Vec::new(),
+                screen,
+            });
+        }
         return Err(contract_error(&answer));
     }
     let mut targets = Vec::new();
@@ -348,6 +377,7 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
             .unwrap_or_default()
             .to_string(),
         targets,
+        screen,
     })
 }
 
@@ -376,8 +406,15 @@ fn unavailable(reason: String) -> wiqo_core::wire::WireError {
 struct Seen {
     snapshot_id: String,
     at: Instant,
+    scene: Scene,
+}
+
+/// What the latest observation showed: the controls, the app they belong to and the screen they sit on.
+#[derive(Clone)]
+struct Scene {
     targets: Vec<Target>,
     application: String,
+    screen: [f64; 2],
 }
 
 fn seen() -> &'static Mutex<HashMap<String, Seen>> {
@@ -392,8 +429,11 @@ fn remember(task: &str, observation: &Observation) {
             Seen {
                 snapshot_id: observation.snapshot_id.clone(),
                 at: Instant::now(),
-                targets: observation.targets.clone(),
-                application: observation.application.clone(),
+                scene: Scene {
+                    targets: observation.targets.clone(),
+                    application: observation.application.clone(),
+                    screen: observation.screen,
+                },
             },
         );
     }
@@ -450,11 +490,18 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
             let observation = observe(engine, request.text.as_deref())?;
             remember(&request.task_id, &observation);
             Ok(Done::new(
-                format!(
-                    "{} uygulamasında {} denetim görüldü.",
-                    observation.application,
-                    observation.targets.len()
-                ),
+                if observation.targets.is_empty() {
+                    format!(
+                        "{} açık ama penceresi yok; kısayolu (ör. command+n) ona gönderilir.",
+                        observation.application
+                    )
+                } else {
+                    format!(
+                        "{} uygulamasında {} denetim görüldü.",
+                        observation.application,
+                        observation.targets.len()
+                    )
+                },
                 Some(content(
                     &request,
                     Some(&observation),
@@ -497,16 +544,32 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
             }
         };
         let delivery = verdict.delivery.clone().unwrap_or_default();
-        // Read the screen again: a step is verified when the helper read its effect back, or when the controls on screen visibly changed.
-        let after = observe(engine, None).ok();
+        // Read the same app again: a step is verified when the helper read its effect back, or when its controls visibly changed. (The app is named:
+        // the frontmost window may be Wiqo's own, where the person typed the request.)
+        // Apps answer asynchronously (a new window takes a moment to appear): read again for up to 1.5 s until something changed.
+        let mut after = observe(engine, Some(&previous.application)).ok();
+        for _ in 0..6 {
+            if after
+                .as_ref()
+                .is_some_and(|after| differs(&previous.targets, &after.targets))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            after = observe(engine, Some(&previous.application)).ok();
+        }
         let changed = after
             .as_ref()
-            .is_some_and(|after| differs(&previous, &after.targets));
+            .is_some_and(|after| differs(&previous.targets, &after.targets));
         let verified = delivery == "delivered_verified" || (delivery != "not_delivered" && changed);
         evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": true, "changed": changed, "verified": verified }));
         if let Some(after) = after {
             remember(&request.task_id, &after);
-            previous = after.targets.clone();
+            previous = Scene {
+                targets: after.targets.clone(),
+                application: after.application.clone(),
+                screen: after.screen,
+            };
             latest = Some(after);
         }
         // An input that may have landed and shows no effect is not repeated by the next step: the model looks first.
@@ -544,7 +607,7 @@ fn with_verified(mut body: Value, verified: bool) -> Value {
 }
 
 /// The step's own rules before anything is sent: an observation exists, is recent, and is the one the model named.
-fn guard_observation(request: &Request) -> Result<Vec<Target>> {
+fn guard_observation(request: &Request) -> Result<Scene> {
     let map = seen()
         .lock()
         .map_err(|_| tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü durumu okunamadı."))?;
@@ -570,8 +633,7 @@ fn guard_observation(request: &Request) -> Result<Vec<Target>> {
             "Masaüstü görünümü değişti; işlemden önce yeniden gözlemleyin.",
         ));
     }
-    let _ = &prior.application;
-    Ok(prior.targets.clone())
+    Ok(prior.scene.clone())
 }
 
 fn differs(before: &[Target], after: &[Target]) -> bool {
@@ -582,9 +644,9 @@ fn differs(before: &[Target], after: &[Target]) -> bool {
             .any(|(a, b)| a.role != b.role || a.name != b.name || a.enabled != b.enabled)
 }
 
-/// One step as helper commands. A ref action is idempotent where the helper offers it, and physical input is never used unless the step is a drag or a double click.
-/// Every ref must be one the model saw in the latest observation; it is turned back into the helper's own ref here.
-fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answer> {
+/// One step as helper commands. Every ref must be one the model saw in the latest observation; it is turned back into the helper's own ref here.
+/// Keys go to the observed app by name, never to whatever window happens to be in front (often Wiqo's own, where the request was typed).
+fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer> {
     let find = |reference: Option<&String>| -> Result<&Target> {
         let reference = reference.ok_or_else(|| {
             tool_failure(
@@ -592,7 +654,9 @@ fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answe
                 "Bu işlem için bir hedef gerekiyor.",
             )
         })?;
-        seen.iter()
+        scene
+            .targets
+            .iter()
             .find(|target| &target.reference == reference)
             .ok_or_else(|| {
                 tool_failure(
@@ -601,40 +665,63 @@ fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answe
                 )
             })
     };
-    let target = || find(step.target_ref.as_ref());
+    // A point on screen, from the model's 0-1 coordinates: the last resort when a control has no ref.
+    let point = || -> Option<String> {
+        let (x, y) = (step.normalized_x?, step.normalized_y?);
+        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| {
+            format!(
+                "{},{}",
+                (x * scene.screen[0]).round(),
+                (y * scene.screen[1]).round()
+            )
+        })
+    };
+    let click = |command: &str, count: u8, button: &str| -> Result<Vec<String>> {
+        if step.target_ref.is_some() {
+            let target = find(step.target_ref.as_ref())?;
+            refuse_secure(target)?;
+            return Ok(match count {
+                2 => vec![
+                    "double-click".into(),
+                    target.helper.clone(),
+                    "--headed".into(),
+                ],
+                _ => vec![command.into(), target.helper.clone()],
+            });
+        }
+        let at = point().ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_TARGET_REQUIRED",
+                "Bir hedef ref ya da 0-1 arası koordinat gerekiyor.",
+            )
+        })?;
+        Ok(vec![
+            "mouse-click".into(),
+            "--xy".into(),
+            at,
+            "--count".into(),
+            count.to_string(),
+            "--button".into(),
+            button.into(),
+            "--headed".into(),
+        ])
+    };
     let args: Vec<String> = match step.action.as_str() {
-        "click" => {
-            let t = target()?;
-            refuse_secure(t)?;
-            vec!["click".into(), t.helper.clone()]
+        "click" => click("click", 1, "left")?,
+        "doubleClick" => click("click", 2, "left")?,
+        "rightClick" => click("right-click", 1, "right")?,
+        "move" => {
+            let at = point().ok_or_else(|| {
+                tool_failure(
+                    "DESKTOP_TARGET_REQUIRED",
+                    "İmleç için 0-1 arası koordinat gerekiyor.",
+                )
+            })?;
+            vec!["mouse-move".into(), "--xy".into(), at, "--headed".into()]
         }
-        "rightClick" => {
-            let t = target()?;
-            refuse_secure(t)?;
-            vec!["right-click".into(), t.helper.clone()]
-        }
-        "doubleClick" => {
-            let t = target()?;
-            refuse_secure(t)?;
-            vec!["double-click".into(), t.helper.clone(), "--headed".into()]
-        }
-        "type" => {
-            let t = target()?;
-            if t.secure {
-                return Err(tool_failure(
-                    "DESKTOP_SECURE_FIELD_BLOCKED",
-                    "Parola alanına yazılmaz; kullanıcı kendisi girmeli.",
-                ));
-            }
-            let text = step
-                .text
-                .clone()
-                .filter(|text| !text.is_empty())
-                .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak metin yok."))?;
-            vec!["type".into(), t.helper.clone(), text]
-        }
+        "type" => return type_text(engine, step, scene),
         "scroll" => {
-            let t = target()?;
+            let target = find(step.target_ref.as_ref())?;
             let direction = step.direction.clone().unwrap_or_else(|| "down".into());
             if !["up", "down", "left", "right"].contains(&direction.as_str()) {
                 return Err(tool_failure(
@@ -644,7 +731,7 @@ fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answe
             }
             vec![
                 "scroll".into(),
-                t.helper.clone(),
+                target.helper.clone(),
                 "--direction".into(),
                 direction,
                 "--amount".into(),
@@ -657,13 +744,12 @@ fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answe
                 .clone()
                 .filter(|keys| !keys.is_empty())
                 .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Kısayol tuşları yok."))?;
-            vec![
-                "press".into(),
-                keys.iter()
-                    .map(|key| helper_key(key))
-                    .collect::<Vec<_>>()
-                    .join("+"),
-            ]
+            let combo = keys
+                .iter()
+                .map(|key| helper_key(key))
+                .collect::<Vec<_>>()
+                .join("+");
+            return press(engine, &combo, &scene.application);
         }
         "dragDrop" => {
             let (from, to) = (
@@ -690,12 +776,100 @@ fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answe
             ))
         }
     };
-    let answer = engine.call(&args).map_err(unavailable)?;
+    call(engine, &args)
+}
+
+/// Keys as a person presses them: the app is brought to the front first (it may have no window yet, like TextEdit with no document), and the keys
+/// go only once the system says it is in front, so they never land in another app.
+fn press(engine: &dyn Engine, combo: &str, application: &str) -> Result<Answer> {
+    if !application.is_empty() && !engine.bring_to_front(application) {
+        return Err(tool_failure(
+            "DESKTOP_APP_UNAVAILABLE",
+            format!("{application} öne getirilemedi; tuşlar başka bir uygulamaya gitmesin diye gönderilmedi."),
+        ));
+    }
+    call(engine, &["press".into(), combo.to_string()])
+}
+
+fn call(engine: &dyn Engine, args: &[String]) -> Result<Answer> {
+    let answer = engine.call(args).map_err(unavailable)?;
     if answer.ok {
         Ok(answer)
     } else {
         Err(contract_error(&answer))
     }
+}
+
+/// Text goes in the way a person would put it there. Into the named field, or the focused one when no field is named, through the accessibility
+/// call that the app reads back; a field that refuses it (many web and custom editors) gets the text pasted: put on the clipboard, command/control+V
+/// to the app, and the person's own clipboard put back.
+fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer> {
+    let text = step
+        .text
+        .clone()
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak metin yok."))?;
+    let target = match step.target_ref.as_ref() {
+        Some(reference) => Some(
+            scene
+                .targets
+                .iter()
+                .find(|target| &target.reference == reference)
+                .ok_or_else(|| {
+                    tool_failure(
+                        "DESKTOP_TARGET_NOT_FOUND",
+                        format!("{reference} hedefi güncel görünümde yok."),
+                    )
+                })?,
+        ),
+        None => scene.targets.iter().find(|target| target.focused),
+    };
+    if target.is_some_and(|target| target.secure) {
+        return Err(tool_failure(
+            "DESKTOP_SECURE_FIELD_BLOCKED",
+            "Parola alanına yazılmaz; kullanıcı kendisi girmeli.",
+        ));
+    }
+    if let Some(target) = target {
+        match call(
+            engine,
+            &["type".into(), target.helper.clone(), text.clone()],
+        ) {
+            Ok(answer) => return Ok(answer),
+            // Only a refusal that sent nothing falls back to pasting; anything that may have typed is reported as it is.
+            Err(error)
+                if error.code != "DESKTOP_ACTION_UNSUPPORTED"
+                    && error.code != "DESKTOP_UNAVAILABLE" =>
+            {
+                return Err(error)
+            }
+            Err(_) => {
+                let _ = call(engine, &["focus".into(), target.helper.clone()]);
+            }
+        }
+    }
+    paste(engine, &text, &scene.application)
+}
+
+fn paste(engine: &dyn Engine, text: &str, application: &str) -> Result<Answer> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|_| tool_failure("DESKTOP_INPUT_UNAVAILABLE", "Pano kullanılamıyor."))?;
+    let saved = clipboard.get_text().ok();
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|_| tool_failure("DESKTOP_INPUT_UNAVAILABLE", "Pano kullanılamıyor."))?;
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    let pasted = press(engine, &format!("{modifier}+v"), application);
+    // The app reads the clipboard when it handles the keys; give it a moment before the person's own text goes back.
+    std::thread::sleep(Duration::from_millis(250));
+    if let Some(saved) = saved {
+        let _ = clipboard.set_text(saved);
+    }
+    pasted
 }
 
 fn refuse_secure(target: &Target) -> Result<()> {
@@ -753,6 +927,10 @@ mod tests {
     }
 
     impl Engine for Script {
+        fn bring_to_front(&self, _: &str) -> bool {
+            true
+        }
+
         fn call(&self, args: &[String]) -> std::result::Result<Answer, String> {
             let line = args.join(" ");
             let mut rules = self.0.lock().unwrap();
@@ -1013,6 +1191,58 @@ mod tests {
         assert_eq!(code, None, "arrowup is the helper's up");
     }
 
+    fn editor(snapshot: &str, text: &str) -> Value {
+        json!({ "ok": true, "data": { "app": "TextEdit", "snapshot_id": snapshot, "window": { "title": "Adsız" }, "tree": {
+            "role": "window", "children": [
+                { "ref_id": format!("@{snapshot}:e2"), "role": "textfield", "value": text, "states": ["focused"], "available_actions": ["SetValue", "TypeText"], "bounds": { "x": 0.0, "y": 40.0, "width": 800.0, "height": 400.0 } }
+            ] } } })
+    }
+
+    #[test]
+    fn text_without_a_named_field_goes_into_the_focused_one_and_is_read_back() {
+        let engine = Script::new(vec![
+            displays(),
+            (vec!["snapshot"], editor("s9", "")),
+            (
+                vec!["type", "@s9:e2", "merhaba"],
+                json!({ "ok": true, "data": { "action": "type", "disposition": { "delivery": "delivered_verified", "retry": "unsafe" } } }),
+            ),
+            (vec!["snapshot"], editor("s10", "merhaba")),
+        ]);
+        control(engine.as_ref(), &request("t-type", "observe", json!({}))).unwrap();
+        let (data, code) = result(control(
+            engine.as_ref(),
+            &request("t-type", "type", json!({ "text": "merhaba" })),
+        ));
+        assert_eq!(code, None);
+        assert_eq!(data["value"]["verified"], true);
+        assert_eq!(data["value"]["targets"][0]["name"], "merhaba");
+    }
+
+    #[test]
+    fn a_click_without_a_ref_lands_on_the_point_the_model_named() {
+        let engine = Script::new(vec![
+            displays(),
+            (vec!["snapshot"], screen("s11", "7")),
+            (
+                vec!["mouse-click", "--xy 500,250", "--headed"],
+                json!({ "ok": true, "data": { "action": "mouse_click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } }),
+            ),
+            (vec!["snapshot"], screen("s12", "8")),
+        ]);
+        control(engine.as_ref(), &request("t-point", "observe", json!({}))).unwrap();
+        let (data, code) = result(control(
+            engine.as_ref(),
+            &request(
+                "t-point",
+                "click",
+                json!({ "normalizedX": 0.5, "normalizedY": 0.5 }),
+            ),
+        ));
+        assert_eq!(code, None);
+        assert_eq!(data["value"]["verified"], true);
+    }
+
     /// Against the real helper on this computer: `WIQO_AGENT_DESKTOP=<path> WIQO_LIVE_APP=<app> cargo test live -- --ignored`.
     #[test]
     #[ignore]
@@ -1036,5 +1266,38 @@ mod tests {
         let targets = data["value"]["targets"].as_array().unwrap();
         assert!(!targets.is_empty());
         println!("{} targets, first: {}", targets.len(), targets[0]);
+    }
+
+    /// The task that failed in the chat, against the real helper and TextEdit:
+    /// `WIQO_AGENT_DESKTOP=<path> cargo test -p wiqo-ops live_textedit -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_textedit_new_document_and_text() {
+        if std::env::var_os("WIQO_AGENT_DESKTOP").is_none() {
+            return;
+        }
+        let engine = Helper::locate();
+        let task = "t-live-textedit";
+        let (_, code) = result(control(
+            &engine,
+            &request(task, "observe", json!({ "text": "TextEdit" })),
+        ));
+        assert_eq!(code, None);
+        let (data, code) = result(control(
+            &engine,
+            &request(task, "hotkey", json!({ "keys": ["command", "n"] })),
+        ));
+        println!("command+n: {code:?} verified={}", data["value"]["verified"]);
+        assert_eq!(code, None);
+        let (data, code) = result(control(
+            &engine,
+            &request(task, "type", json!({ "text": "merhaba" })),
+        ));
+        println!(
+            "type: {code:?} verified={} targets={}",
+            data["value"]["verified"], data["value"]["targets"]
+        );
+        assert_eq!(code, None);
+        assert_eq!(data["value"]["verified"], true);
     }
 }

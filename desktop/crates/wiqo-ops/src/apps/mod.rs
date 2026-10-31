@@ -86,6 +86,47 @@ pub(crate) struct Running {
     pub pids: Vec<u32>,
 }
 
+/// Brings a running application to the front and waits (up to 1.5 s) until the system says it is in front. Keys sent after a `true` go to it.
+pub(crate) fn bring_to_front(name: &str) -> bool {
+    let Some(app) = matching_running(name, None) else {
+        return false;
+    };
+    if frontmost().as_deref() == Some(app.name.as_str()) {
+        return true;
+    }
+    #[cfg(target_os = "macos")]
+    let asked = sys::bring_forward(&app);
+    #[cfg(not(target_os = "macos"))]
+    let asked = sys::activate(&app);
+    if !asked {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < deadline {
+        if frontmost().as_deref() == Some(app.name.as_str()) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
+/// The application in front, by the name the system shows for it.
+pub(crate) fn frontmost() -> Option<String> {
+    let running = sys::running();
+    #[cfg(target_os = "macos")]
+    if let Some(pid) = sys::front_pid() {
+        return running
+            .into_iter()
+            .find(|app| app.pids.contains(&pid))
+            .map(|app| app.name);
+    }
+    running
+        .into_iter()
+        .find(|app| app.is_active)
+        .map(|app| app.name)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Target {
     pub name: String,

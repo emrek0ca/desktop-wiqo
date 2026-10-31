@@ -173,6 +173,37 @@ pub(super) fn launch(target: &Target) -> Result<(), String> {
     }
 }
 
+/// The process in front, read live from Launch Services (`lsappinfo`): AppKit's own answer goes stale in a process without a running event loop.
+pub(super) fn front_pid() -> Option<u32> {
+    let front = crate::process::command("/usr/bin/lsappinfo")
+        .arg("front")
+        .output()
+        .ok()?;
+    let asn = String::from_utf8_lossy(&front.stdout).trim().to_string();
+    let info = crate::process::command("/usr/bin/lsappinfo")
+        .args(["info", "-only", "pid", &asn])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&info.stdout).to_string();
+    text.split("pid =")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Brings an app forward through Launch Services (`open -b`), which the system honours from a background process too.
+pub(super) fn bring_forward(app: &Running) -> bool {
+    match &app.bundle {
+        Some(bundle) => crate::process::command("/usr/bin/open")
+            .args(["-b", bundle])
+            .status()
+            .is_ok_and(|status| status.success()),
+        None => activate(app),
+    }
+}
+
 pub(super) fn activate(app: &Running) -> bool {
     instances(app).iter().any(|instance| {
         instance.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows)

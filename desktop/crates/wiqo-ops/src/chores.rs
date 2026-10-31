@@ -337,10 +337,21 @@ public class WiqoFront {
 $h = [WiqoFront]::GetForegroundWindow(); $sb = New-Object System.Text.StringBuilder 256
 [void][WiqoFront]::GetWindowText($h, $sb, 256); $p = 0; [void][WiqoFront]::GetWindowThreadProcessId($h, [ref]$p)
 "Ön plandaki uygulama: $((Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName)`nPencere: $($sb.ToString())""#;
-        let out = run("powershell", &["-NoProfile", "-NonInteractive", "-Command", script], 15);
+        let out = run(
+            "powershell",
+            &["-NoProfile", "-NonInteractive", "-Command", script],
+            15,
+        );
         match out {
-            Some(out) if out.status.success() => vec![String::from_utf8_lossy(&out.stdout).trim().to_string()],
-            _ => return Err(tool_failure("CONTEXT_FAILED", "Ön plandaki pencere okunamadı.")),
+            Some(out) if out.status.success() => {
+                vec![String::from_utf8_lossy(&out.stdout).trim().to_string()]
+            }
+            _ => {
+                return Err(tool_failure(
+                    "CONTEXT_FAILED",
+                    "Ön plandaki pencere okunamadı.",
+                ))
+            }
         }
     } else {
         return unsupported("Ön plandaki pencereyi okumak");

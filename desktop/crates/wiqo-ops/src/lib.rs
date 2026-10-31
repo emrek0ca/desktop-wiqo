@@ -90,11 +90,7 @@ mod tests {
     use wiqo_contract::{Manifest, Platform};
 
     /// The operations R3 does not cover yet; the test below fails when this list and the code drift apart.
-    const NOT_YET: [&str; 3] = [
-        "computerBrowser",
-        "endBrowserTask",
-        "localAnalyze",
-    ];
+    const NOT_YET: [&str; 3] = ["computerBrowser", "endBrowserTask", "localAnalyze"];
 
     /// Mac-only operations left out on purpose: driving another app's controls and clicking the screen stay with the old Mac app's careful
     /// accessibility layer until they are ported with the same checks.

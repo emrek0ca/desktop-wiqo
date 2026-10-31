@@ -274,9 +274,17 @@ pub(super) fn running() -> Vec<Running> {
         {
             // The desktop and the taskbar are explorer.exe's windows too; only a folder window should make explorer "running".
             let mut class = [0u16; 64];
-            let length = GetClassNameW(window, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
+            let length =
+                GetClassNameW(window, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
             let class = String::from_utf16_lossy(&class[..length]);
-            if ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&class.as_str()) {
+            if [
+                "Progman",
+                "WorkerW",
+                "Shell_TrayWnd",
+                "Shell_SecondaryTrayWnd",
+            ]
+            .contains(&class.as_str())
+            {
                 return 1;
             }
             let mut pid = 0u32;
