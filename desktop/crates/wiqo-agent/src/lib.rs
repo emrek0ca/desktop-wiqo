@@ -207,7 +207,6 @@ pub struct Snapshot {
     pub connection: ConnectionState,
     pub phones: Vec<PhoneInfo>,
     pub full_access: bool,
-    pub approve_on_pc: bool,
     pub reads_without_phone: bool,
     /// The signed-in Wiqo account, if any.
     pub account: Option<String>,
@@ -881,14 +880,6 @@ impl Desktop {
         }
     }
 
-    pub fn set_approve_on_pc(&self, on: bool) -> Result<()> {
-        self.runtime
-            .engine
-            .settings()
-            .update(|data| data.approve_on_pc = on)?;
-        Ok(())
-    }
-
     /// "Okuma adımlarını telefonsuz çalıştır": the server hears it at once (the registration's `agent.readOnly`).
     pub fn set_reads_without_phone(&self, on: bool) -> Result<()> {
         self.runtime
@@ -1007,7 +998,6 @@ impl Desktop {
                 })
                 .collect(),
             full_access: settings.full_access(),
-            approve_on_pc: settings.approve_on_pc(),
             reads_without_phone: settings.reads_without_phone(),
             account: self.chat.email(),
             capabilities,

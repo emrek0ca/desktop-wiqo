@@ -1084,16 +1084,7 @@ async fn run_step(engine: &Engine, step: &Value) -> Value {
         return refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP");
     }
     let summary = step["summary"].as_str().unwrap_or("").to_string();
-    let sensitive = step["approvalRequired"] == true
-        || step["isDestructive"] == true
-        || matches!(kind.as_str(), "deleteFile" | "sendEmail" | "sendMessage");
-    if sensitive
-        && !engine
-            .ask_on_pc(&kind, if summary.is_empty() { &kind } else { &summary })
-            .await
-    {
-        return refused("Kullanıcı PC adımına izin vermedi.", "PERMISSION_DENIED");
-    }
+    // Approval happened on the server card before this step was sent (the one approval path); nothing is asked again here.
     let request = Request {
         id,
         kind: kind.clone(),

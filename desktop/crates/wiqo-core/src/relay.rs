@@ -202,35 +202,6 @@ pub async fn handle_terminal(
     let digest = wiqo_contract::canonical_json(request)
         .map(|text| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(text.as_bytes())))
         .unwrap_or_default();
-    // The server's own full-access grant changes files with no phone in the loop: "PC'de onayla" holds such a step for a click here.
-    let action = request["action"].as_str().unwrap_or("run");
-    let reads = matches!(action, "read_file" | "search" | "get_job" | "cancel_job");
-    if !reads && request["grant"]["signature"] == terminal::LOCAL_FULL_ACCESS {
-        let detail = request["command"]
-            .as_str()
-            .or(request["filePath"].as_str())
-            .unwrap_or(action)
-            .chars()
-            .take(120)
-            .collect::<String>();
-        if !runtime
-            .engine
-            .approved_on_pc(&format!("terminal.{action}"), &detail)
-            .await
-        {
-            let refused = WireError::new(
-                codes::DENIED_ON_PC,
-                "Bu adım PC'de onaylanmadı; işlem yapılmadı.",
-                "permission",
-            );
-            return Some(CommandResult::failed(
-                Uuid::new_v4(),
-                CommandStatus::Denied,
-                refused,
-                Utc::now(),
-            ));
-        }
-    }
     let checker = runtime.clone();
     let session = Session {
         services: runtime.engine.services().clone(),
@@ -265,6 +236,36 @@ pub async fn handle_command(
     handle(runtime, command_id, raw_request, from_agent).await.0
 }
 
+/// The pairing whose key signed this step's card approval (`wiqo-terminal-grant:v1` over the step's own digest, mode `step`), if one did.
+fn approved_by(
+    request: &Request,
+    approval: &Value,
+    phones: &[crate::storage::PairedPhone],
+) -> Option<String> {
+    let grant_id = approval["grantId"].as_str()?;
+    let root = approval["root"].as_str()?;
+    let signature = approval["signature"].as_str()?;
+    let expires_at = approval["expiresAt"].as_u64()?;
+    let now = Utc::now().timestamp() as u64;
+    if approval["mode"] != "step"
+        || expires_at <= now
+        || expires_at > now + 3_600
+        || root != crate::engine::request_digest(request)
+    {
+        return None;
+    }
+    phones.iter().find_map(|phone| {
+        let expected = wiqo_contract::terminal_grant_signature(
+            &phone.token,
+            grant_id,
+            root,
+            "step",
+            expires_at,
+        );
+        wiqo_contract::verify_signature(&expected, signature).then(|| phone.pairing_id.clone())
+    })
+}
+
 async fn handle(
     runtime: &Runtime,
     command_id: &str,
@@ -289,7 +290,12 @@ async fn handle(
         }
     };
     let origin = if from_agent {
-        Origin::Agent
+        // A step the person approved on a card (phone or this window) carries the grant they signed with a paired key: it runs as if that
+        // phone had sent it. Anything else from the server is the agent, bound by "Tam yetki" or the phone's task grant.
+        match approved_by(&request, &raw_request["approval"], &runtime.phones.list()) {
+            Some(pairing_id) => Origin::Phone { pairing_id },
+            None => Origin::Agent,
+        }
     } else {
         let phones = runtime.phones.list();
         let keys = phones
@@ -570,5 +576,59 @@ impl Relay {
             },
             Incoming::Ignored => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod approval_tests {
+    use super::*;
+
+    fn request() -> Request {
+        serde_json::from_value(serde_json::json!({
+            "id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301", "type": "deleteFile", "createdAt": "2026-10-31T00:00:00Z",
+            "payload": { "kind": "fileName", "value": { "path": "~/Desktop/a b.txt", "size": 0.5, "n": 3 } }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_server_and_the_pc_compute_the_same_step_digest() {
+        // The same step through the backend's agentStepDigest (src/agent/pcAgent.ts).
+        assert_eq!(
+            crate::engine::request_digest(&request()),
+            "7055c70f0d5100fd56d8b7bfef7d8d6e00ad405b6ae1bfcab61d637adbcb2b86"
+        );
+    }
+
+    #[test]
+    fn a_card_approval_runs_as_the_phone_that_signed_it_and_nothing_else_does() {
+        let phone = crate::storage::PairedPhone {
+            pairing_id: "p1".into(),
+            name: "Telefon".into(),
+            platform: "iOS".into(),
+            token: "secret".into(),
+        };
+        let root = crate::engine::request_digest(&request());
+        let expires = Utc::now().timestamp() as u64 + 600;
+        let signature =
+            wiqo_contract::terminal_grant_signature("secret", "g1", &root, "step", expires);
+        let approval = serde_json::json!({ "grantId": "g1", "root": root, "mode": "step", "expiresAt": expires, "signature": signature });
+        assert_eq!(
+            approved_by(&request(), &approval, std::slice::from_ref(&phone)).as_deref(),
+            Some("p1")
+        );
+        let mut forged = approval.clone();
+        forged["signature"] = serde_json::json!("00".repeat(32));
+        assert_eq!(
+            approved_by(&request(), &forged, std::slice::from_ref(&phone)),
+            None
+        );
+        let mut other = approval.clone();
+        other["root"] = serde_json::json!("ab".repeat(32));
+        assert_eq!(
+            approved_by(&request(), &other, &[phone]),
+            None,
+            "an approval for another step"
+        );
     }
 }

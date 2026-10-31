@@ -269,9 +269,6 @@ pub struct SettingsData {
     /// Capabilities (contracts/companion/operations.json) the owner switched off.
     #[serde(default)]
     pub disabled_capabilities: BTreeSet<String>,
-    /// The server's agent waits for a click on this computer before anything that changes or deletes (off: the phone's approval is enough).
-    #[serde(default)]
-    pub approve_on_pc: bool,
     /// The server's agent may read in the own folders without the phone in the loop (grants.rs `read_without_phone`). On unless turned off.
     #[serde(default = "on")]
     pub reads_without_phone: bool,
@@ -286,7 +283,6 @@ impl Default for SettingsData {
         SettingsData {
             full_access: false,
             disabled_capabilities: BTreeSet::new(),
-            approve_on_pc: false,
             reads_without_phone: true,
         }
     }
@@ -316,10 +312,6 @@ impl Settings {
 
     pub fn reads_without_phone(&self) -> bool {
         self.data.read().expect("settings lock").reads_without_phone
-    }
-
-    pub fn approve_on_pc(&self) -> bool {
-        self.data.read().expect("settings lock").approve_on_pc
     }
 
     pub fn capability_enabled(&self, capability: &str) -> bool {

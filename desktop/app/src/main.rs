@@ -669,12 +669,6 @@ fn answer_approval(app: State<'_, App>, id: String, allow: bool) {
 }
 
 #[tauri::command]
-fn set_approve_on_pc(app: State<'_, App>, on: bool) -> Reply<Snapshot> {
-    app.desktop.set_approve_on_pc(on).map_err(text)?;
-    Ok(app.desktop.snapshot())
-}
-
-#[tauri::command]
 fn set_reads_without_phone(app: State<'_, App>, on: bool) -> Reply<Snapshot> {
     app.desktop.set_reads_without_phone(on).map_err(text)?;
     Ok(app.desktop.snapshot())
@@ -950,7 +944,6 @@ fn main() {
             open_link,
             undo_record,
             symbol,
-            set_approve_on_pc,
             set_reads_without_phone,
             working,
             hide_panel,

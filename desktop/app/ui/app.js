@@ -128,7 +128,6 @@ function render() {
   $("full-access-state").textContent = snapshot.fullAccess ? "Açık" : "Kapalı";
   $("full-access-chip").classList.toggle("on", snapshot.fullAccess);
   $("full-access-chip").setAttribute("aria-pressed", String(snapshot.fullAccess));
-  $("approve-on-pc").checked = snapshot.approveOnPc;
   $("reads-without-phone").checked = snapshot.readsWithoutPhone;
 
   if (!$("phones-pop").hidden && !phonesPopPairing) renderPhonesPop();
@@ -677,11 +676,6 @@ $("full-access-chip").onclick = async () => {
 
 $("reads-without-phone").onchange = async (event) => {
   snapshot = await invoke("set_reads_without_phone", { on: event.target.checked });
-  render();
-};
-
-$("approve-on-pc").onchange = async (event) => {
-  snapshot = await invoke("set_approve_on_pc", { on: event.target.checked });
   render();
 };
 
