@@ -526,6 +526,33 @@ impl Operation for ComputerDesktop {
     }
 }
 
+/// While Wiqo works on the screen, the screen stays on: a sleeping display has no windows to read and no controls to press, and the person is often
+/// away. Each step wakes the display and holds it awake for five more minutes (macOS `caffeinate`, Windows `SetThreadExecutionState`).
+fn stay_awake() {
+    #[cfg(target_os = "macos")]
+    {
+        static HOLD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+        if let Ok(mut hold) = HOLD.lock() {
+            if let Some(mut previous) = hold.take() {
+                let _ = previous.kill();
+                let _ = previous.wait();
+            }
+            *hold = Command::new("/usr/bin/caffeinate")
+                .args(["-du", "-t", "300"])
+                .spawn()
+                .ok();
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Power::{
+            SetThreadExecutionState, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+        };
+        // One-shot: resets the idle timers now, so the display wakes and the system does not sleep under the step.
+        unsafe { SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) };
+    }
+}
+
 fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
     let request: Request = payload(value, "computerDesktop", "masaüstü")?;
     if request.task_id.trim().is_empty() {
@@ -533,6 +560,9 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
             "DESKTOP_TASK_INVALID",
             "Masaüstü görevi geçersiz.",
         ));
+    }
+    if request.action != "cancel" {
+        stay_awake();
     }
     match request.action.as_str() {
         "cancel" => {
