@@ -362,10 +362,27 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
                 screen,
             });
         }
+        // A window the accessibility tree cannot see (a game, a canvas, a remote desktop) is read from its pixels instead.
+        if answer.code == "ACTION_NOT_SUPPORTED" {
+            let targets = read_screen(engine);
+            if !targets.is_empty() {
+                return Ok(Observation {
+                    snapshot_id: format!("ocr-{}", uuid::Uuid::new_v4()),
+                    application: named.unwrap_or_default(),
+                    window_title: String::new(),
+                    targets,
+                    screen,
+                });
+            }
+        }
         return Err(contract_error(&answer));
     }
     let mut targets = Vec::new();
     collect(&answer.data["tree"], screen, &mut targets);
+    // A tree with almost nothing in it (custom-drawn apps) gets the words on screen too.
+    if targets.len() < MIN_TREE_TARGETS {
+        targets.extend(read_screen(engine));
+    }
     Ok(Observation {
         snapshot_id: answer.data["snapshot_id"]
             .as_str()
@@ -379,6 +396,47 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
         targets,
         screen,
     })
+}
+
+/// Below this many controls the tree is taken to be blind to the window, and the screen's text is read as well.
+const MIN_TREE_TARGETS: usize = 3;
+const MAX_TEXT_TARGETS: usize = 80;
+
+/// The words on the primary screen, each a target the model can click by ref (no helper ref: a click lands on the middle of the word).
+fn read_screen(engine: &dyn Engine) -> Vec<Target> {
+    let path = std::env::temp_dir().join(format!("wiqo-ocr-{}.png", uuid::Uuid::new_v4()));
+    let taken = engine
+        .call(&[
+            "screenshot".into(),
+            "--screen".into(),
+            "0".into(),
+            path.to_string_lossy().to_string(),
+        ])
+        .is_ok_and(|answer| answer.ok);
+    let words = if taken {
+        crate::ocr::read(&path)
+    } else {
+        Vec::new()
+    };
+    let _ = std::fs::remove_file(&path);
+    words
+        .into_iter()
+        .take(MAX_TEXT_TARGETS)
+        .map(|word| {
+            let round = |value: f64| (value * 100_000.0).round() / 100_000.0;
+            Target {
+                reference: contract_ref(&format!("ocr:{}:{:?}", word.text, word.frame)),
+                helper: String::new(),
+                role: "text".into(),
+                name: word.text,
+                frame: word.frame.map(round),
+                actions: vec!["Click".into()],
+                enabled: true,
+                secure: false,
+                focused: false,
+            }
+        })
+        .collect()
 }
 
 fn unavailable(reason: String) -> wiqo_core::wire::WireError {
@@ -676,10 +734,32 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
             )
         })
     };
+    let mouse = |at: String, count: u8, button: &str| -> Vec<String> {
+        vec![
+            "mouse-click".into(),
+            "--xy".into(),
+            at,
+            "--count".into(),
+            count.to_string(),
+            "--button".into(),
+            button.into(),
+            "--headed".into(),
+        ]
+    };
     let click = |command: &str, count: u8, button: &str| -> Result<Vec<String>> {
         if step.target_ref.is_some() {
             let target = find(step.target_ref.as_ref())?;
             refuse_secure(target)?;
+            // A word read from the screen has no helper ref: the click lands on its middle.
+            if target.helper.is_empty() {
+                let [x, y, w, h] = target.frame;
+                let at = format!(
+                    "{},{}",
+                    ((x + w / 2.0) * scene.screen[0]).round(),
+                    ((y + h / 2.0) * scene.screen[1]).round()
+                );
+                return Ok(mouse(at, count, button));
+            }
             return Ok(match count {
                 2 => vec![
                     "double-click".into(),
@@ -695,16 +775,7 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
                 "Bir hedef ref ya da 0-1 arası koordinat gerekiyor.",
             )
         })?;
-        Ok(vec![
-            "mouse-click".into(),
-            "--xy".into(),
-            at,
-            "--count".into(),
-            count.to_string(),
-            "--button".into(),
-            button.into(),
-            "--headed".into(),
-        ])
+        Ok(mouse(at, count, button))
     };
     let args: Vec<String> = match step.action.as_str() {
         "click" => click("click", 1, "left")?,
@@ -829,6 +900,20 @@ fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answe
             "DESKTOP_SECURE_FIELD_BLOCKED",
             "Parola alanına yazılmaz; kullanıcı kendisi girmeli.",
         ));
+    }
+    // A field read from the screen's text: click into it the way a person would, then paste.
+    if let Some(target) = target.filter(|target| target.helper.is_empty()) {
+        let [x, y, w, h] = target.frame;
+        let at = format!(
+            "{},{}",
+            ((x + w / 2.0) * scene.screen[0]).round(),
+            ((y + h / 2.0) * scene.screen[1]).round()
+        );
+        call(
+            engine,
+            &["mouse-click".into(), "--xy".into(), at, "--headed".into()],
+        )?;
+        return paste(engine, &text, &scene.application);
     }
     if let Some(target) = target {
         match call(

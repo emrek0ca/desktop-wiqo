@@ -9,6 +9,7 @@ mod device;
 mod documents;
 mod files;
 mod fsx;
+mod ocr;
 mod op;
 mod personal;
 mod plan;
