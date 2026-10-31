@@ -13,7 +13,7 @@ use crate::fsx::{self, is_regular_file};
 use crate::op::{data, tool_failure, Blocking, Done, Result};
 use crate::Op;
 
-const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = 250 * 1024 * 1024;
 const MAX_TEXT_CHARS: usize = 500_000;
 const MAX_PDF_PAGES: usize = 200;
 

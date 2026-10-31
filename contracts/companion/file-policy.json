@@ -1,9 +1,7 @@
 {
-  "about": "The file rules every desktop applies the same way (Rust desktop; the Swift/C# companions carry the same lists until they are retired). Names are matched case-insensitively.",
+  "about": "The file rules every desktop applies the same way. ownFolders [\"*\"]: the whole home folder is the person's own (read, listed and searched without a card), except notOwnFolders and hidden folders; sensitive names ask everywhere. Names are matched case-insensitively.",
   "ownFolders": [
-    "desktop",
-    "documents",
-    "downloads"
+    "*"
   ],
   "sensitiveNames": [
     ".ssh",
@@ -65,5 +63,12 @@
     "muzik": "Music",
     "filmler": "Movies",
     "videolar": "Movies"
-  }
+  },
+  "notOwnFolders": [
+    "library",
+    "applications",
+    "appdata",
+    "application data",
+    "local settings"
+  ]
 }

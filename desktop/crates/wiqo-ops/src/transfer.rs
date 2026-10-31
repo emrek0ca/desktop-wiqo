@@ -17,8 +17,8 @@ use crate::fsx::{self, is_regular_file, is_symlink};
 use crate::op::{data, error, outcome, payload, permission, tool_failure, Done, Result};
 use crate::{undo, Op};
 
-const MAX_ARTIFACT_BYTES: u64 = 25 * 1024 * 1024;
-const MAX_PHONE_TRANSFER_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES: u64 = 250 * 1024 * 1024;
+const MAX_PHONE_TRANSFER_BYTES: u64 = 250 * 1024 * 1024;
 
 pub(crate) fn operations() -> Vec<Op> {
     vec![Arc::new(SaveArtifact), Arc::new(SendFileToPhone)]
@@ -126,7 +126,8 @@ async fn save_artifact(ctx: &Context, value: &Value) -> Result<Done> {
             "Artifact indirme adresi güvenli değil.",
         ));
     }
-    let response = client(45)
+    // Up to 250 MB: the download may take minutes on a slow line.
+    let response = client(600)
         .get(&artifact.download_url)
         .bearer_auth(token)
         .send()
@@ -374,7 +375,7 @@ fn prepare_send(path: &str) -> Result<(PathBuf, Vec<u8>)> {
     if size > MAX_PHONE_TRANSFER_BYTES {
         return Err(tool_failure(
             "FILE_TOO_LARGE",
-            "Yalnızca 25 MB veya daha küçük normal dosyalar gönderilebilir.",
+            "Yalnızca 250 MB veya daha küçük normal dosyalar gönderilebilir.",
         ));
     }
     let bytes = fs::read(&file).map_err(|source| {
@@ -418,7 +419,8 @@ pub(crate) async fn send_file(ctx: &Context, value: &Value) -> Result<Done> {
         .collect();
     let failed = || tool_failure("TRANSFER_FAILED", "Dosya telefona iletilemedi.");
     let size = bytes.len();
-    let response = client(120)
+    // Up to 250 MB: the upload may take minutes on a slow line.
+    let response = client(900)
         .put(format!(
             "{}/file-transfers/{}",
             api_base.trim_end_matches('/'),

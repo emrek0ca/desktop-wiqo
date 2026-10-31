@@ -10,6 +10,8 @@ use serde::Deserialize;
 #[serde(rename_all = "camelCase")]
 struct File {
     own_folders: Vec<String>,
+    #[serde(default)]
+    not_own_folders: Vec<String>,
     sensitive_names: Vec<String>,
     sensitive_extensions: Vec<String>,
     sensitive_words: Vec<String>,
@@ -19,6 +21,7 @@ struct File {
 #[derive(Debug)]
 pub struct FilePolicy {
     own_folders: HashSet<String>,
+    not_own_folders: HashSet<String>,
     sensitive_names: Vec<String>,
     sensitive_extensions: HashSet<String>,
     sensitive_words: Vec<String>,
@@ -33,6 +36,7 @@ impl FilePolicy {
                 serde_json::from_str(crate::FILE_POLICY_JSON).expect("file-policy.json is valid");
             FilePolicy {
                 own_folders: file.own_folders.into_iter().collect(),
+                not_own_folders: file.not_own_folders.into_iter().collect(),
                 sensitive_names: file.sensitive_names,
                 sensitive_extensions: file.sensitive_extensions.into_iter().collect(),
                 sensitive_words: file.sensitive_words,
@@ -67,12 +71,18 @@ impl FilePolicy {
             .any(|word| lowered.contains(word.as_str()))
     }
 
-    /// The path is (a place inside) Desktop, Documents or Downloads of some user's home.
+    /// The path is a place inside some user's home that is the person's own: with `ownFolders` ["*"], anywhere in the home except the
+    /// `notOwnFolders` (system and app data) and hidden folders; otherwise one of the listed folders.
     pub fn is_own_folder(&self, raw: &str) -> bool {
         match home_relative_parts(raw) {
-            Some(parts) => parts
-                .first()
-                .is_some_and(|first| self.own_folders.contains(&first.to_lowercase())),
+            Some(parts) => parts.first().is_some_and(|first| {
+                let first = first.to_lowercase();
+                if self.own_folders.contains("*") {
+                    !self.not_own_folders.contains(&first) && !first.starts_with('.')
+                } else {
+                    self.own_folders.contains(&first)
+                }
+            }),
             None => false,
         }
     }
