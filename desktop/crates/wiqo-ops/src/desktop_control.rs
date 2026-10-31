@@ -377,8 +377,9 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
         }
         return Err(contract_error(&answer));
     }
-    let mut targets = Vec::new();
-    collect(&answer.data["tree"], screen, &mut targets);
+    let mut collected = Vec::new();
+    collect(&answer.data["tree"], screen, &mut collected);
+    let mut targets = ranked(collected);
     // A tree with almost nothing in it (custom-drawn apps) gets the words on screen too.
     if targets.len() < MIN_TREE_TARGETS {
         targets.extend(read_screen(engine));
@@ -396,6 +397,45 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
         targets,
         screen,
     })
+}
+
+/// What the model reads first: the controls a person acts with (buttons, fields, menus), then the rest. The result travels in a bounded message, and
+/// a file dialog's sidebar listed first used to push its "Yeni Belge" button out of it. A cell that only repeats the row beside it, and nameless
+/// scaffolding (scroll areas, bars, handles), are left out.
+fn ranked(targets: Vec<Target>) -> Vec<Target> {
+    let rank = |role: &str| match role {
+        "button" | "menubutton" | "popupbutton" | "splitbutton" => 0,
+        "textfield" | "textarea" | "searchfield" | "combobox" => 1,
+        "checkbox" | "radiobutton" | "switch" | "tab" | "menuitem" | "link" | "slider"
+        | "stepper" => 2,
+        "text" => 3,
+        _ => 4,
+    };
+    let mut kept: Vec<Target> = Vec::new();
+    for target in targets {
+        let scaffolding = target.name.trim().is_empty()
+            && matches!(
+                target.role.as_str(),
+                "scrollarea"
+                    | "scrollbar"
+                    | "handle"
+                    | "group"
+                    | "splitter"
+                    | "ruler"
+                    | "browser"
+                    | "list"
+                    | "outline"
+            );
+        let repeat = target.role == "cell"
+            && kept
+                .iter()
+                .any(|other| other.name == target.name && other.role != "cell");
+        if !scaffolding && !repeat {
+            kept.push(target);
+        }
+    }
+    kept.sort_by_key(|target| rank(&target.role));
+    kept
 }
 
 /// Below this many controls the tree is taken to be blind to the window, and the screen's text is read as well.
@@ -1356,6 +1396,30 @@ mod tests {
         ));
         assert_eq!(code, None);
         assert_eq!(data["value"]["verified"], true);
+    }
+
+    #[test]
+    fn a_dialogs_buttons_come_before_its_sidebar_and_repeats_are_dropped() {
+        let target = |role: &str, name: &str| Target {
+            reference: contract_ref(name),
+            helper: String::new(),
+            role: role.into(),
+            name: name.into(),
+            frame: [0.0; 4],
+            actions: vec!["Click".into()],
+            enabled: true,
+            secure: false,
+            focused: false,
+        };
+        let ranked = ranked(vec![
+            target("treeitem", "Desktop"),
+            target("cell", "Desktop"),
+            target("scrollarea", ""),
+            target("textfield", "Ara"),
+            target("button", "Yeni Belge"),
+        ]);
+        let names: Vec<&str> = ranked.iter().map(|target| target.name.as_str()).collect();
+        assert_eq!(names, ["Yeni Belge", "Ara", "Desktop"]);
     }
 
     /// Against the real helper on this computer: `WIQO_AGENT_DESKTOP=<path> WIQO_LIVE_APP=<app> cargo test live -- --ignored`.
