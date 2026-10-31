@@ -71,7 +71,11 @@ struct Helper {
 impl Helper {
     /// `WIQO_AGENT_DESKTOP`, else the program shipped next to Wiqo.
     fn locate() -> Helper {
-        let name = if cfg!(windows) { "agent-desktop.exe" } else { "agent-desktop" };
+        let name = if cfg!(windows) {
+            "agent-desktop.exe"
+        } else {
+            "agent-desktop"
+        };
         let beside = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.join(name)));
@@ -104,7 +108,9 @@ impl Engine for Helper {
         loop {
             match child.try_wait() {
                 Ok(Some(_)) => break,
-                Ok(None) if started.elapsed() < CALL_TIMEOUT => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) if started.elapsed() < CALL_TIMEOUT => {
+                    std::thread::sleep(Duration::from_millis(25))
+                }
                 _ => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -118,13 +124,24 @@ impl Engine for Helper {
 }
 
 fn parse_envelope(text: &str) -> std::result::Result<Answer, String> {
-    let envelope: Value = serde_json::from_str(text.trim()).map_err(|_| "unreadable answer".to_string())?;
+    let envelope: Value =
+        serde_json::from_str(text.trim()).map_err(|_| "unreadable answer".to_string())?;
     let ok = envelope["ok"].as_bool().unwrap_or(false);
-    let delivery_of = |value: &Value| value["disposition"]["delivery"].as_str().map(str::to_string);
+    let delivery_of = |value: &Value| {
+        value["disposition"]["delivery"]
+            .as_str()
+            .map(str::to_string)
+    };
     if ok {
         let data = envelope["data"].clone();
         let delivery = delivery_of(&data);
-        Ok(Answer { ok, data, code: String::new(), message: String::new(), delivery })
+        Ok(Answer {
+            ok,
+            data,
+            code: String::new(),
+            message: String::new(),
+            delivery,
+        })
     } else {
         let error = &envelope["error"];
         Ok(Answer {
@@ -145,14 +162,21 @@ fn contract_error(answer: &Answer) -> wiqo_core::wire::WireError {
         "ELEMENT_NOT_FOUND" | "AMBIGUOUS_TARGET" => ("DESKTOP_TARGET_NOT_FOUND", "tool_failure"),
         "STALE_REF" | "SNAPSHOT_NOT_FOUND" => ("DESKTOP_STALE_OBSERVATION", "tool_failure"),
         "APP_NOT_FOUND" | "WINDOW_NOT_FOUND" => ("DESKTOP_APP_UNAVAILABLE", "tool_failure"),
-        "ACTION_NOT_SUPPORTED" | "PLATFORM_NOT_SUPPORTED" | "POLICY_DENIED" => ("DESKTOP_ACTION_UNSUPPORTED", "tool_failure"),
+        "ACTION_NOT_SUPPORTED" | "PLATFORM_NOT_SUPPORTED" | "POLICY_DENIED" => {
+            ("DESKTOP_ACTION_UNSUPPORTED", "tool_failure")
+        }
         "INVALID_ARGS" => ("DESKTOP_ACTION_INVALID", "validation"),
         _ if untouched => ("DESKTOP_UNAVAILABLE", "tool_failure"),
         "TIMEOUT" | "APP_UNRESPONSIVE" => ("COMMAND_TIMEOUT", "timeout"),
         _ => ("OUTCOME_UNKNOWN", "tool_failure"),
     };
     // A refusal that says the keys are dangerous is the contract's own hotkey rule.
-    let code = if answer.code == "ACTION_FAILED" && answer.message.to_lowercase().contains("dangerous") { "DESKTOP_HOTKEY_BLOCKED" } else { code };
+    let code =
+        if answer.code == "ACTION_FAILED" && answer.message.to_lowercase().contains("dangerous") {
+            "DESKTOP_HOTKEY_BLOCKED"
+        } else {
+            code
+        };
     let message = match code {
         "ACCESSIBILITY_PERMISSION_REQUIRED" => "Masaüstü kontrolü için Erişilebilirlik izni gerekiyor; izin verip yeniden dene.".to_string(),
         "DESKTOP_STALE_OBSERVATION" => "Masaüstü görünümü değişti; işlemden önce yeniden gözlemleyin.".to_string(),
@@ -170,7 +194,10 @@ fn contract_error(answer: &Answer) -> wiqo_core::wire::WireError {
 
 #[derive(Debug, Clone, PartialEq)]
 struct Target {
+    /// The ref the model sees, in the contract's form (`d-` and 8 hex digits); the server refuses any other shape.
     reference: String,
+    /// The helper's own ref (`@<snapshot>:eN`), used only between this module and the helper.
+    helper: String,
     role: String,
     name: String,
     frame: [f64; 4],
@@ -198,7 +225,10 @@ struct Observation {
 
 fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
     if let Some(reference) = node["ref_id"].as_str() {
-        let states: Vec<&str> = node["states"].as_array().map(|list| list.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        let states: Vec<&str> = node["states"]
+            .as_array()
+            .map(|list| list.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
         let bounds = &node["bounds"];
         let (x, y, w, h) = (
             bounds["x"].as_f64().unwrap_or(0.0),
@@ -206,18 +236,44 @@ fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
             bounds["width"].as_f64().unwrap_or(0.0),
             bounds["height"].as_f64().unwrap_or(0.0),
         );
-        let actions: Vec<String> = node["available_actions"].as_array().map(|list| list.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-        let name = node["name"].as_str().or_else(|| node["value"].as_str()).unwrap_or_default();
+        let actions: Vec<String> = node["available_actions"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let name = node["name"]
+            .as_str()
+            .or_else(|| node["value"].as_str())
+            .unwrap_or_default();
         let secure = states.contains(&"secure");
         // Anonymous, action-less, invisible rows are scaffolding, not targets.
-        if !actions.is_empty() && w > 1.0 && h > 1.0 && !states.contains(&"offscreen") && out.len() < MAX_TARGETS {
+        if !actions.is_empty()
+            && w > 1.0
+            && h > 1.0
+            && !states.contains(&"offscreen")
+            && out.len() < MAX_TARGETS
+        {
             let round = |value: f64| (value * 100_000.0).round() / 100_000.0;
             out.push(Target {
-                reference: reference.to_string(),
+                reference: contract_ref(reference),
+                helper: reference.to_string(),
                 role: node["role"].as_str().unwrap_or("unknown").to_string(),
                 // A secure field's content is never read back to the model.
-                name: if secure { String::new() } else { name.chars().take(100).collect() },
-                frame: [round(x / screen[0]), round(y / screen[1]), round(w / screen[0]), round(h / screen[1])],
+                name: if secure {
+                    String::new()
+                } else {
+                    name.chars().take(100).collect()
+                },
+                frame: [
+                    round(x / screen[0]),
+                    round(y / screen[1]),
+                    round(w / screen[0]),
+                    round(h / screen[1]),
+                ],
                 actions,
                 enabled: !states.contains(&"disabled"),
                 secure,
@@ -229,6 +285,26 @@ fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
     }
 }
 
+/// `d-` and the first 8 hex digits of the helper ref's SHA-256: the shape the server accepts, unique within one observation.
+fn contract_ref(helper: &str) -> String {
+    use sha2::Digest;
+    format!(
+        "d-{}",
+        &hex::encode(sha2::Sha256::digest(helper.as_bytes()))[..8]
+    )
+}
+
+/// The contract's key names, as the helper spells them.
+fn helper_key(key: &str) -> String {
+    match key.trim().to_lowercase().as_str() {
+        "arrowup" => "up".into(),
+        "arrowdown" => "down".into(),
+        "arrowleft" => "left".into(),
+        "arrowright" => "right".into(),
+        other => other.to_string(),
+    }
+}
+
 fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation> {
     let screen = engine
         .call(&["list-displays".into()])
@@ -236,11 +312,22 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
         .and_then(|answer| answer.ok.then_some(answer.data))
         .and_then(|displays| {
             let list = displays.as_array()?;
-            let first = list.iter().find(|display| display["is_primary"].as_bool() == Some(true)).or_else(|| list.first())?;
-            Some([first["bounds"]["width"].as_f64()?.max(1.0), first["bounds"]["height"].as_f64()?.max(1.0)])
+            let first = list
+                .iter()
+                .find(|display| display["is_primary"].as_bool() == Some(true))
+                .or_else(|| list.first())?;
+            Some([
+                first["bounds"]["width"].as_f64()?.max(1.0),
+                first["bounds"]["height"].as_f64()?.max(1.0),
+            ])
         })
         .unwrap_or([1920.0, 1080.0]);
-    let mut args: Vec<String> = vec!["snapshot".into(), "-i".into(), "--compact".into(), "--include-bounds".into()];
+    let mut args: Vec<String> = vec![
+        "snapshot".into(),
+        "-i".into(),
+        "--compact".into(),
+        "--include-bounds".into(),
+    ];
     if let Some(application) = application.filter(|name| !name.trim().is_empty()) {
         args.extend(["--app".into(), application.trim().to_string()]);
     }
@@ -251,20 +338,36 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
     let mut targets = Vec::new();
     collect(&answer.data["tree"], screen, &mut targets);
     Ok(Observation {
-        snapshot_id: answer.data["snapshot_id"].as_str().unwrap_or_default().to_string(),
+        snapshot_id: answer.data["snapshot_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         application: answer.data["app"].as_str().unwrap_or_default().to_string(),
-        window_title: answer.data["window"]["title"].as_str().unwrap_or_default().to_string(),
+        window_title: answer.data["window"]["title"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         targets,
     })
 }
 
 fn unavailable(reason: String) -> wiqo_core::wire::WireError {
     if reason == "helper missing" {
-        tool_failure("DESKTOP_ADAPTER_UNAVAILABLE", "Masaüstü kontrol bileşeni bu Wiqo sürümünde yok.")
+        tool_failure(
+            "DESKTOP_ADAPTER_UNAVAILABLE",
+            "Masaüstü kontrol bileşeni bu Wiqo sürümünde yok.",
+        )
     } else if reason == "timeout" {
-        wiqo_core::wire::WireError::new("COMMAND_TIMEOUT", "Masaüstü işlemi zamanında bitmedi; sonucu doğrulanamadı.", "timeout")
+        wiqo_core::wire::WireError::new(
+            "COMMAND_TIMEOUT",
+            "Masaüstü işlemi zamanında bitmedi; sonucu doğrulanamadı.",
+            "timeout",
+        )
     } else {
-        tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü kontrol bileşeni çalıştırılamadı.")
+        tool_failure(
+            "DESKTOP_UNAVAILABLE",
+            "Masaüstü kontrol bileşeni çalıştırılamadı.",
+        )
     }
 }
 
@@ -284,12 +387,15 @@ fn seen() -> &'static Mutex<HashMap<String, Seen>> {
 
 fn remember(task: &str, observation: &Observation) {
     if let Ok(mut map) = seen().lock() {
-        map.insert(task.to_string(), Seen {
-            snapshot_id: observation.snapshot_id.clone(),
-            at: Instant::now(),
-            targets: observation.targets.clone(),
-            application: observation.application.clone(),
-        });
+        map.insert(
+            task.to_string(),
+            Seen {
+                snapshot_id: observation.snapshot_id.clone(),
+                at: Instant::now(),
+                targets: observation.targets.clone(),
+                application: observation.application.clone(),
+            },
+        );
     }
 }
 
@@ -313,34 +419,59 @@ impl Operation for ComputerDesktop {
         let engine = Arc::clone(&self.engine);
         let value = value.clone();
         let result = tokio::task::spawn_blocking(move || control(engine.as_ref(), &value)).await;
-        outcome(result.unwrap_or_else(|_| Err(tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü işlemi tamamlanamadı."))))
+        outcome(result.unwrap_or_else(|_| {
+            Err(tool_failure(
+                "DESKTOP_UNAVAILABLE",
+                "Masaüstü işlemi tamamlanamadı.",
+            ))
+        }))
     }
 }
 
 fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
     let request: Request = payload(value, "computerDesktop", "masaüstü")?;
     if request.task_id.trim().is_empty() {
-        return Err(tool_failure("DESKTOP_TASK_INVALID", "Masaüstü görevi geçersiz."));
+        return Err(tool_failure(
+            "DESKTOP_TASK_INVALID",
+            "Masaüstü görevi geçersiz.",
+        ));
     }
     match request.action.as_str() {
         "cancel" => {
             if let Ok(mut map) = seen().lock() {
                 map.remove(&request.task_id);
             }
-            Ok(Done::new("Masaüstü görevi durduruldu.", Some(content(&request, None, &[], true, false, Vec::new()))))
+            Ok(Done::new(
+                "Masaüstü görevi durduruldu.",
+                Some(content(&request, None, &[], true, false, Vec::new())),
+            ))
         }
         "observe" => {
             let observation = observe(engine, request.text.as_deref())?;
             remember(&request.task_id, &observation);
             Ok(Done::new(
-                format!("{} uygulamasında {} denetim görüldü.", observation.application, observation.targets.len()),
-                Some(content(&request, Some(&observation), &[], true, false, Vec::new())),
+                format!(
+                    "{} uygulamasında {} denetim görüldü.",
+                    observation.application,
+                    observation.targets.len()
+                ),
+                Some(content(
+                    &request,
+                    Some(&observation),
+                    &[],
+                    true,
+                    false,
+                    Vec::new(),
+                )),
             ))
         }
         "runSteps" => {
             let steps = request.steps.clone().unwrap_or_default();
             if steps.is_empty() || steps.len() > MAX_STEPS {
-                return Err(tool_failure("DESKTOP_STEPS_INVALID", "Adım listesi geçersiz."));
+                return Err(tool_failure(
+                    "DESKTOP_STEPS_INVALID",
+                    "Adım listesi geçersiz.",
+                ));
             }
             run_steps(engine, &request, steps)
         }
@@ -357,8 +488,7 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
     let mut latest: Option<Observation> = None;
     let mut failure: Option<wiqo_core::wire::WireError> = None;
     for (index, step) in steps.iter().enumerate() {
-        let target = step.target_ref.as_deref().and_then(|reference| previous.iter().find(|target| target.reference == reference));
-        let verdict = match perform(engine, step, target) {
+        let verdict = match perform(engine, step, &previous) {
             Ok(answer) => answer,
             Err(error) => {
                 evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": false, "changed": false, "verified": false, "errorCode": error.code }));
@@ -369,7 +499,9 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
         let delivery = verdict.delivery.clone().unwrap_or_default();
         // Read the screen again: a step is verified when the helper read its effect back, or when the controls on screen visibly changed.
         let after = observe(engine, None).ok();
-        let changed = after.as_ref().is_some_and(|after| differs(&previous, &after.targets));
+        let changed = after
+            .as_ref()
+            .is_some_and(|after| differs(&previous, &after.targets));
         let verified = delivery == "delivered_verified" || (delivery != "not_delivered" && changed);
         evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": true, "changed": changed, "verified": verified }));
         if let Some(after) = after {
@@ -379,18 +511,28 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
         }
         // An input that may have landed and shows no effect is not repeated by the next step: the model looks first.
         if !verified && delivery != "not_delivered" && index + 1 < steps.len() {
-            failure = Some(wiqo_core::wire::WireError::new("DESKTOP_TYPE_UNVERIFIED", "Adımın etkisi görülemedi; sonraki adımlar çalıştırılmadı.", "tool_failure"));
+            failure = Some(wiqo_core::wire::WireError::new(
+                "DESKTOP_TYPE_UNVERIFIED",
+                "Adımın etkisi görülemedi; sonraki adımlar çalıştırılmadı.",
+                "tool_failure",
+            ));
             break;
         }
     }
-    let all_verified = failure.is_none() && !evidence.is_empty() && evidence.iter().all(|entry| entry["verified"] == true);
+    let all_verified = failure.is_none()
+        && !evidence.is_empty()
+        && evidence.iter().all(|entry| entry["verified"] == true);
     let any_changed = evidence.iter().any(|entry| entry["changed"] == true);
     let body = content(request, latest.as_ref(), &[], true, any_changed, evidence);
     let body = with_verified(body, all_verified);
     match failure {
         Some(error) => Ok(Done::partial(error, body)),
         None => Ok(Done::new(
-            if all_verified { "Masaüstü işlemi yapıldı ve ekranda görüldü." } else { "Masaüstü işlemi gönderildi; etkisi ekranda doğrulanamadı." },
+            if all_verified {
+                "Masaüstü işlemi yapıldı ve ekranda görüldü."
+            } else {
+                "Masaüstü işlemi gönderildi; etkisi ekranda doğrulanamadı."
+            },
             Some(body),
         )),
     }
@@ -403,95 +545,198 @@ fn with_verified(mut body: Value, verified: bool) -> Value {
 
 /// The step's own rules before anything is sent: an observation exists, is recent, and is the one the model named.
 fn guard_observation(request: &Request) -> Result<Vec<Target>> {
-    let map = seen().lock().map_err(|_| tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü durumu okunamadı."))?;
-    let prior = map.get(&request.task_id).ok_or_else(|| tool_failure("DESKTOP_OBSERVATION_REQUIRED", "Önce masaüstünü gözlemleyip güncel hedefleri alın."))?;
+    let map = seen()
+        .lock()
+        .map_err(|_| tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü durumu okunamadı."))?;
+    let prior = map.get(&request.task_id).ok_or_else(|| {
+        tool_failure(
+            "DESKTOP_OBSERVATION_REQUIRED",
+            "Önce masaüstünü gözlemleyip güncel hedefleri alın.",
+        )
+    })?;
     if prior.at.elapsed() > OBSERVATION_LIFETIME {
-        return Err(tool_failure("DESKTOP_STALE_OBSERVATION", "Masaüstü gözlemi eskidi; işlemden önce yeniden gözlemleyin."));
+        return Err(tool_failure(
+            "DESKTOP_STALE_OBSERVATION",
+            "Masaüstü gözlemi eskidi; işlemden önce yeniden gözlemleyin.",
+        ));
     }
-    if request.snapshot_id.as_deref().is_some_and(|named| named != prior.snapshot_id) {
-        return Err(tool_failure("DESKTOP_STALE_OBSERVATION", "Masaüstü görünümü değişti; işlemden önce yeniden gözlemleyin."));
+    if request
+        .snapshot_id
+        .as_deref()
+        .is_some_and(|named| named != prior.snapshot_id)
+    {
+        return Err(tool_failure(
+            "DESKTOP_STALE_OBSERVATION",
+            "Masaüstü görünümü değişti; işlemden önce yeniden gözlemleyin.",
+        ));
     }
     let _ = &prior.application;
     Ok(prior.targets.clone())
 }
 
 fn differs(before: &[Target], after: &[Target]) -> bool {
-    before.len() != after.len() || before.iter().zip(after).any(|(a, b)| a.role != b.role || a.name != b.name || a.enabled != b.enabled)
+    before.len() != after.len()
+        || before
+            .iter()
+            .zip(after)
+            .any(|(a, b)| a.role != b.role || a.name != b.name || a.enabled != b.enabled)
 }
 
 /// One step as helper commands. A ref action is idempotent where the helper offers it, and physical input is never used unless the step is a drag or a double click.
-fn perform(engine: &dyn Engine, step: &Request, target: Option<&Target>) -> Result<Answer> {
-    let reference = step.target_ref.clone();
-    let need_ref = || reference.clone().ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Bu işlem için bir hedef gerekiyor."));
-    let known = |reference: &str| -> Result<()> {
-        // A ref the model never saw is refused here; the helper would resolve it, but the model must have looked first.
-        match target {
-            Some(_) => Ok(()),
-            None => Err(tool_failure("DESKTOP_TARGET_NOT_FOUND", format!("{reference} hedefi güncel görünümde yok."))),
-        }
+/// Every ref must be one the model saw in the latest observation; it is turned back into the helper's own ref here.
+fn perform(engine: &dyn Engine, step: &Request, seen: &[Target]) -> Result<Answer> {
+    let find = |reference: Option<&String>| -> Result<&Target> {
+        let reference = reference.ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_ACTION_INVALID",
+                "Bu işlem için bir hedef gerekiyor.",
+            )
+        })?;
+        seen.iter()
+            .find(|target| &target.reference == reference)
+            .ok_or_else(|| {
+                tool_failure(
+                    "DESKTOP_TARGET_NOT_FOUND",
+                    format!("{reference} hedefi güncel görünümde yok."),
+                )
+            })
     };
+    let target = || find(step.target_ref.as_ref());
     let args: Vec<String> = match step.action.as_str() {
-        "click" => { let r = need_ref()?; known(&r)?; refuse_secure(target)?; vec!["click".into(), r] }
-        "rightClick" => { let r = need_ref()?; known(&r)?; refuse_secure(target)?; vec!["right-click".into(), r] }
-        "doubleClick" => { let r = need_ref()?; known(&r)?; refuse_secure(target)?; vec!["double-click".into(), r, "--headed".into()] }
+        "click" => {
+            let t = target()?;
+            refuse_secure(t)?;
+            vec!["click".into(), t.helper.clone()]
+        }
+        "rightClick" => {
+            let t = target()?;
+            refuse_secure(t)?;
+            vec!["right-click".into(), t.helper.clone()]
+        }
+        "doubleClick" => {
+            let t = target()?;
+            refuse_secure(t)?;
+            vec!["double-click".into(), t.helper.clone(), "--headed".into()]
+        }
         "type" => {
-            let r = need_ref()?;
-            known(&r)?;
-            if target.is_some_and(|target| target.secure) {
-                return Err(tool_failure("DESKTOP_SECURE_FIELD_BLOCKED", "Parola alanına yazılmaz; kullanıcı kendisi girmeli."));
+            let t = target()?;
+            if t.secure {
+                return Err(tool_failure(
+                    "DESKTOP_SECURE_FIELD_BLOCKED",
+                    "Parola alanına yazılmaz; kullanıcı kendisi girmeli.",
+                ));
             }
-            let text = step.text.clone().filter(|text| !text.is_empty()).ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak metin yok."))?;
-            vec!["type".into(), r, text]
+            let text = step
+                .text
+                .clone()
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak metin yok."))?;
+            vec!["type".into(), t.helper.clone(), text]
         }
         "scroll" => {
-            let r = need_ref()?;
-            known(&r)?;
+            let t = target()?;
             let direction = step.direction.clone().unwrap_or_else(|| "down".into());
             if !["up", "down", "left", "right"].contains(&direction.as_str()) {
-                return Err(tool_failure("DESKTOP_ACTION_INVALID", "Kaydırma yönü geçersiz."));
+                return Err(tool_failure(
+                    "DESKTOP_ACTION_INVALID",
+                    "Kaydırma yönü geçersiz.",
+                ));
             }
-            vec!["scroll".into(), r, "--direction".into(), direction, "--amount".into(), step.amount.unwrap_or(3).clamp(1, 20).to_string()]
+            vec![
+                "scroll".into(),
+                t.helper.clone(),
+                "--direction".into(),
+                direction,
+                "--amount".into(),
+                step.amount.unwrap_or(3).clamp(1, 20).to_string(),
+            ]
         }
         "hotkey" => {
-            let keys = step.keys.clone().filter(|keys| !keys.is_empty()).ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Kısayol tuşları yok."))?;
-            vec!["press".into(), keys.join("+")]
+            let keys = step
+                .keys
+                .clone()
+                .filter(|keys| !keys.is_empty())
+                .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Kısayol tuşları yok."))?;
+            vec![
+                "press".into(),
+                keys.iter()
+                    .map(|key| helper_key(key))
+                    .collect::<Vec<_>>()
+                    .join("+"),
+            ]
         }
         "dragDrop" => {
-            let (from, to) = (step.source_ref.clone(), step.destination_ref.clone());
-            let (Some(from), Some(to)) = (from, to) else { return Err(tool_failure("DESKTOP_ACTION_INVALID", "Sürükleme için kaynak ve hedef gerekiyor.")); };
-            vec!["drag".into(), "--from".into(), from, "--to".into(), to, "--headed".into()]
+            let (from, to) = (
+                find(step.source_ref.as_ref())?,
+                find(step.destination_ref.as_ref())?,
+            );
+            vec![
+                "drag".into(),
+                "--from".into(),
+                from.helper.clone(),
+                "--to".into(),
+                to.helper.clone(),
+                "--headed".into(),
+            ]
         }
-        "wait" => vec!["wait".into(), step.amount.unwrap_or(500).clamp(50, 5000).to_string()],
-        _ => return Err(tool_failure("DESKTOP_ACTION_UNSUPPORTED", "Bu masaüstü işlemi desteklenmiyor.")),
+        "wait" => vec![
+            "wait".into(),
+            step.amount.unwrap_or(500).clamp(50, 5000).to_string(),
+        ],
+        _ => {
+            return Err(tool_failure(
+                "DESKTOP_ACTION_UNSUPPORTED",
+                "Bu masaüstü işlemi desteklenmiyor.",
+            ))
+        }
     };
     let answer = engine.call(&args).map_err(unavailable)?;
-    if answer.ok { Ok(answer) } else { Err(contract_error(&answer)) }
+    if answer.ok {
+        Ok(answer)
+    } else {
+        Err(contract_error(&answer))
+    }
 }
 
-fn refuse_secure(target: Option<&Target>) -> Result<()> {
-    if target.is_some_and(|target| target.secure) {
-        return Err(permission("DESKTOP_SECURE_FIELD_BLOCKED", "Parola alanıyla etkileşilmez; kullanıcı kendisi yapmalı."));
+fn refuse_secure(target: &Target) -> Result<()> {
+    if target.secure {
+        return Err(permission(
+            "DESKTOP_SECURE_FIELD_BLOCKED",
+            "Parola alanıyla etkileşilmez; kullanıcı kendisi yapmalı.",
+        ));
     }
     Ok(())
 }
 
-fn content(request: &Request, observation: Option<&Observation>, removed: &[String], access: bool, changed: bool, evidence: Vec<Value>) -> Value {
-    let targets: Vec<Value> = observation.map(|observation| observation.targets.iter().map(Target::json).collect()).unwrap_or_default();
-    data("computerDesktop", json!({
-        "taskId": request.task_id,
-        "action": request.action,
-        "snapshotId": observation.map(|observation| observation.snapshot_id.clone()),
-        "applicationName": observation.map(|observation| observation.application.clone()),
-        "windowTitle": observation.map(|observation| observation.window_title.clone()),
-        "targets": targets,
-        "addedTargets": [],
-        "changedTargets": [],
-        "removedTargetRefs": removed,
-        "accessGranted": access,
-        "changed": changed,
-        "verified": true,
-        "evidence": evidence,
-    }))
+fn content(
+    request: &Request,
+    observation: Option<&Observation>,
+    removed: &[String],
+    access: bool,
+    changed: bool,
+    evidence: Vec<Value>,
+) -> Value {
+    let targets: Vec<Value> = observation
+        .map(|observation| observation.targets.iter().map(Target::json).collect())
+        .unwrap_or_default();
+    data(
+        "computerDesktop",
+        json!({
+            "taskId": request.task_id,
+            "action": request.action,
+            "snapshotId": observation.map(|observation| observation.snapshot_id.clone()),
+            "applicationName": observation.map(|observation| observation.application.clone()),
+            "windowTitle": observation.map(|observation| observation.window_title.clone()),
+            "targets": targets,
+            "addedTargets": [],
+            "changedTargets": [],
+            "removedTargetRefs": removed,
+            "accessGranted": access,
+            "changed": changed,
+            "verified": true,
+            "evidence": evidence,
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -511,8 +756,16 @@ mod tests {
         fn call(&self, args: &[String]) -> std::result::Result<Answer, String> {
             let line = args.join(" ");
             let mut rules = self.0.lock().unwrap();
-            let position = rules.iter().position(|(words, _)| words.iter().all(|word| line.contains(word))).ok_or_else(|| format!("no rule for {line}"))?;
-            let envelope = if rules.iter().filter(|(words, _)| words.iter().all(|word| line.contains(word))).count() > 1 {
+            let position = rules
+                .iter()
+                .position(|(words, _)| words.iter().all(|word| line.contains(word)))
+                .ok_or_else(|| format!("no rule for {line}"))?;
+            let envelope = if rules
+                .iter()
+                .filter(|(words, _)| words.iter().all(|word| line.contains(word)))
+                .count()
+                > 1
+            {
                 rules.remove(position).1
             } else {
                 rules[position].1.clone()
@@ -531,7 +784,10 @@ mod tests {
     }
 
     fn displays() -> (Vec<&'static str>, Value) {
-        (vec!["list-displays"], json!({ "ok": true, "data": [{ "is_primary": true, "bounds": { "width": 1000.0, "height": 500.0 } }] }))
+        (
+            vec!["list-displays"],
+            json!({ "ok": true, "data": [{ "is_primary": true, "bounds": { "width": 1000.0, "height": 500.0 } }] }),
+        )
     }
 
     fn request(task: &str, action: &str, extra: Value) -> Value {
@@ -544,7 +800,10 @@ mod tests {
 
     fn result(done: Result<Done>) -> (Value, Option<String>) {
         match done {
-            Ok(done) => (done.data.unwrap_or(Value::Null), done.error.map(|error| error.code)),
+            Ok(done) => (
+                done.data.unwrap_or(Value::Null),
+                done.error.map(|error| error.code),
+            ),
             Err(error) => (Value::Null, Some(error.code)),
         }
     }
@@ -552,10 +811,18 @@ mod tests {
     #[test]
     fn observing_lists_only_real_controls_with_normalised_frames_and_hides_secure_names() {
         let engine = Script::new(vec![displays(), (vec!["snapshot"], screen("s1", "7"))]);
-        let (data, code) = result(control(engine.as_ref(), &request("t-obs", "observe", json!({}))));
+        let (data, code) = result(control(
+            engine.as_ref(),
+            &request("t-obs", "observe", json!({})),
+        ));
         assert_eq!(code, None);
         let targets = data["value"]["targets"].as_array().unwrap();
         assert_eq!(targets.len(), 2, "the anonymous group is scaffolding");
+        // The server accepts only `d-` and 8 hex digits as a desktop ref.
+        let shape = regex::Regex::new("^d-[0-9a-f]{8}$").unwrap();
+        assert!(targets
+            .iter()
+            .all(|target| shape.is_match(target["ref"].as_str().unwrap())));
         assert_eq!(targets[0]["frame"]["x"], 0.1);
         assert_eq!(targets[0]["frame"]["width"], 0.04);
         assert_eq!(targets[1]["secure"], true);
@@ -565,12 +832,33 @@ mod tests {
     #[test]
     fn a_click_needs_a_recent_observation_that_the_model_named() {
         let engine = Script::new(vec![displays(), (vec!["snapshot"], screen("s2", "7"))]);
-        let none = result(control(engine.as_ref(), &request("t-none", "click", json!({ "targetRef": "@s2:e1" }))));
+        let none = result(control(
+            engine.as_ref(),
+            &request(
+                "t-none",
+                "click",
+                json!({ "targetRef": contract_ref("@s2:e1") }),
+            ),
+        ));
         assert_eq!(none.1.as_deref(), Some("DESKTOP_OBSERVATION_REQUIRED"));
         control(engine.as_ref(), &request("t-snap", "observe", json!({}))).unwrap();
-        let wrong = result(control(engine.as_ref(), &request("t-snap", "click", json!({ "targetRef": "@s2:e1", "snapshotId": "other" }))));
+        let wrong = result(control(
+            engine.as_ref(),
+            &request(
+                "t-snap",
+                "click",
+                json!({ "targetRef": contract_ref("@s2:e1"), "snapshotId": "other" }),
+            ),
+        ));
         assert_eq!(wrong.1.as_deref(), Some("DESKTOP_STALE_OBSERVATION"));
-        let unseen = result(control(engine.as_ref(), &request("t-snap", "click", json!({ "targetRef": "@s2:e99" }))));
+        let unseen = result(control(
+            engine.as_ref(),
+            &request(
+                "t-snap",
+                "click",
+                json!({ "targetRef": contract_ref("@s2:e99") }),
+            ),
+        ));
         assert_eq!(unseen.1.as_deref(), Some("DESKTOP_TARGET_NOT_FOUND"));
     }
 
@@ -579,13 +867,26 @@ mod tests {
         let engine = Script::new(vec![
             displays(),
             (vec!["snapshot"], screen("s3", "7")),
-            (vec!["click"], json!({ "ok": true, "data": { "action": "click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } })),
+            (
+                vec!["click", "@s3:e1"],
+                json!({ "ok": true, "data": { "action": "click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } }),
+            ),
             (vec!["snapshot"], screen("s4", "8")),
         ]);
         control(engine.as_ref(), &request("t-click", "observe", json!({}))).unwrap();
-        let (data, code) = result(control(engine.as_ref(), &request("t-click", "click", json!({ "targetRef": "@s3:e1" }))));
+        let (data, code) = result(control(
+            engine.as_ref(),
+            &request(
+                "t-click",
+                "click",
+                json!({ "targetRef": contract_ref("@s3:e1") }),
+            ),
+        ));
         assert_eq!(code, None);
-        assert_eq!(data["value"]["verified"], true, "the button's name changed on screen");
+        assert_eq!(
+            data["value"]["verified"], true,
+            "the button's name changed on screen"
+        );
         assert_eq!(data["value"]["changed"], true);
         assert_eq!(data["value"]["snapshotId"], "s4");
     }
@@ -595,11 +896,21 @@ mod tests {
         let engine = Script::new(vec![
             displays(),
             (vec!["snapshot"], screen("s5", "7")),
-            (vec!["click"], json!({ "ok": true, "data": { "action": "click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } })),
+            (
+                vec!["click"],
+                json!({ "ok": true, "data": { "action": "click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } }),
+            ),
             (vec!["snapshot"], screen("s5", "7")),
         ]);
         control(engine.as_ref(), &request("t-quiet", "observe", json!({}))).unwrap();
-        let (data, code) = result(control(engine.as_ref(), &request("t-quiet", "click", json!({ "targetRef": "@s5:e1" }))));
+        let (data, code) = result(control(
+            engine.as_ref(),
+            &request(
+                "t-quiet",
+                "click",
+                json!({ "targetRef": contract_ref("@s5:e1") }),
+            ),
+        ));
         assert_eq!(code, None);
         assert_eq!(data["value"]["verified"], false);
     }
@@ -612,15 +923,26 @@ mod tests {
         assert_eq!(contract_error(&uncertain).code, "COMMAND_TIMEOUT");
         let stale = parse_envelope(r#"{"ok":false,"error":{"code":"STALE_REF","message":"x","disposition":{"delivery":"not_delivered","retry":"safe"}}}"#).unwrap();
         assert_eq!(contract_error(&stale).code, "DESKTOP_STALE_OBSERVATION");
-        let permission = parse_envelope(r#"{"ok":false,"error":{"code":"PERM_DENIED","message":"x"}}"#).unwrap();
-        assert_eq!(contract_error(&permission).code, "ACCESSIBILITY_PERMISSION_REQUIRED");
+        let permission =
+            parse_envelope(r#"{"ok":false,"error":{"code":"PERM_DENIED","message":"x"}}"#).unwrap();
+        assert_eq!(
+            contract_error(&permission).code,
+            "ACCESSIBILITY_PERMISSION_REQUIRED"
+        );
     }
 
     #[test]
     fn a_password_field_is_never_typed_into_or_clicked() {
         let engine = Script::new(vec![displays(), (vec!["snapshot"], screen("s6", "7"))]);
         control(engine.as_ref(), &request("t-secure", "observe", json!({}))).unwrap();
-        let typed = result(control(engine.as_ref(), &request("t-secure", "type", json!({ "targetRef": "@s6:e2", "text": "x" }))));
+        let typed = result(control(
+            engine.as_ref(),
+            &request(
+                "t-secure",
+                "type",
+                json!({ "targetRef": contract_ref("@s6:e2"), "text": "x" }),
+            ),
+        ));
         assert_eq!(typed.1.as_deref(), Some("DESKTOP_SECURE_FIELD_BLOCKED"));
     }
 
@@ -632,7 +954,10 @@ mod tests {
                 Err("helper missing".into())
             }
         }
-        let (_, code) = result(control(&Missing, &request("t-missing", "observe", json!({}))));
+        let (_, code) = result(control(
+            &Missing,
+            &request("t-missing", "observe", json!({})),
+        ));
         assert_eq!(code.as_deref(), Some("DESKTOP_ADAPTER_UNAVAILABLE"));
     }
 
@@ -641,23 +966,72 @@ mod tests {
         let engine = Script::new(vec![
             displays(),
             (vec!["snapshot"], screen("s7", "7")),
-            (vec!["click"], json!({ "ok": true, "data": { "action": "click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } })),
+            (
+                vec!["click"],
+                json!({ "ok": true, "data": { "action": "click", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } }),
+            ),
             (vec!["snapshot"], screen("s7", "7")),
         ]);
         control(engine.as_ref(), &request("t-steps", "observe", json!({}))).unwrap();
-        let steps = json!({ "steps": [{ "action": "click", "targetRef": "@s7:e1" }, { "action": "click", "targetRef": "@s7:e1" }] });
-        let (data, code) = result(control(engine.as_ref(), &request("t-steps", "runSteps", steps)));
+        let steps = json!({ "steps": [{ "action": "click", "targetRef": contract_ref("@s7:e1") }, { "action": "click", "targetRef": contract_ref("@s7:e1") }] });
+        let (data, code) = result(control(
+            engine.as_ref(),
+            &request("t-steps", "runSteps", steps),
+        ));
         assert_eq!(code.as_deref(), Some("DESKTOP_TYPE_UNVERIFIED"));
-        assert_eq!(data["value"]["evidence"].as_array().unwrap().len(), 1, "the second click was not sent");
+        assert_eq!(
+            data["value"]["evidence"].as_array().unwrap().len(),
+            1,
+            "the second click was not sent"
+        );
+    }
+
+    #[test]
+    fn a_shortcut_reaches_the_helper_in_its_own_key_names() {
+        let engine = Script::new(vec![
+            displays(),
+            (vec!["snapshot"], screen("s8", "7")),
+            (
+                vec!["press", "cmd+n"],
+                json!({ "ok": true, "data": { "action": "press", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } }),
+            ),
+            (
+                vec!["press", "up"],
+                json!({ "ok": true, "data": { "action": "press", "disposition": { "delivery": "delivered_unverified", "retry": "unsafe" } } }),
+            ),
+        ]);
+        control(engine.as_ref(), &request("t-keys", "observe", json!({}))).unwrap();
+        let (_, code) = result(control(
+            engine.as_ref(),
+            &request("t-keys", "hotkey", json!({ "keys": ["cmd", "n"] })),
+        ));
+        assert_eq!(code, None);
+        let (_, code) = result(control(
+            engine.as_ref(),
+            &request("t-keys", "hotkey", json!({ "keys": ["arrowup"] })),
+        ));
+        assert_eq!(code, None, "arrowup is the helper's up");
     }
 
     /// Against the real helper on this computer: `WIQO_AGENT_DESKTOP=<path> WIQO_LIVE_APP=<app> cargo test live -- --ignored`.
     #[test]
     #[ignore]
     fn live_observation_names_real_controls() {
-        let (Some(app), Some(_)) = (std::env::var_os("WIQO_LIVE_APP"), std::env::var_os("WIQO_AGENT_DESKTOP")) else { return };
+        let (Some(app), Some(_)) = (
+            std::env::var_os("WIQO_LIVE_APP"),
+            std::env::var_os("WIQO_AGENT_DESKTOP"),
+        ) else {
+            return;
+        };
         let engine = Helper::locate();
-        let (data, code) = result(control(&engine, &request("t-live", "observe", json!({ "text": app.to_string_lossy() }))));
+        let (data, code) = result(control(
+            &engine,
+            &request(
+                "t-live",
+                "observe",
+                json!({ "text": app.to_string_lossy() }),
+            ),
+        ));
         assert_eq!(code, None, "{data}");
         let targets = data["value"]["targets"].as_array().unwrap();
         assert!(!targets.is_empty());
