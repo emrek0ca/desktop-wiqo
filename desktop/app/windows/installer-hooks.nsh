@@ -22,8 +22,18 @@
   !if /FileExists "$%WIQO_HELPER%"
     File "/oname=$INSTDIR\agent-desktop.exe" "$%WIQO_HELPER%"
   !endif
+  ; Wiqo's own browser (computerBrowser): the Playwright worker, run with the computer's Node.js.
+  !if /FileExists "$%WIQO_BROWSER_WORKER_DIR%\index.mjs"
+    SetOutPath "$INSTDIR\browser-worker"
+    File "$%WIQO_BROWSER_WORKER_DIR%\index.mjs"
+    File "$%WIQO_BROWSER_WORKER_DIR%\downloads.mjs"
+    File "$%WIQO_BROWSER_WORKER_DIR%\package.json"
+    File "$%WIQO_BROWSER_WORKER_DIR%\package-lock.json"
+    SetOutPath "$INSTDIR"
+  !endif
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   Delete "$INSTDIR\agent-desktop.exe"
+  RMDir /r "$INSTDIR\browser-worker"
 !macroend

@@ -1,0 +1,10 @@
+{
+  "name": "wiqo-local-browser-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Optional, isolated visible browser worker for the Wiqo desktop companion",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

@@ -78,10 +78,19 @@ mod tests {
     #[test]
     #[ignore]
     fn reads_words_with_their_place() {
-        let Some(path) = std::env::var_os("WIQO_OCR_SAMPLE") else { return };
+        let Some(path) = std::env::var_os("WIQO_OCR_SAMPLE") else {
+            return;
+        };
         let words = super::read(std::path::Path::new(&path));
         println!("{words:?}");
-        let save = words.iter().find(|word| word.text.contains("Kaydet")).expect("Kaydet read");
-        assert!(save.frame[0] < 0.3 && save.frame[1] < 0.5, "top-left: {:?}", save.frame);
+        let save = words
+            .iter()
+            .find(|word| word.text.contains("Kaydet"))
+            .expect("Kaydet read");
+        assert!(
+            save.frame[0] < 0.3 && save.frame[1] < 0.5,
+            "top-left: {:?}",
+            save.frame
+        );
     }
 }

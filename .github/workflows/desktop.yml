@@ -78,6 +78,7 @@ jobs:
       - name: Build the installer
         env:
           WIQO_HELPER: ${{ github.workspace }}\desktop\app\binaries\agent-desktop.exe
+          WIQO_BROWSER_WORKER_DIR: ${{ github.workspace }}\desktop\browser-worker
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build --target ${{ matrix.target }} --bundles nsis

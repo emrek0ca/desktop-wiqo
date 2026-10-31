@@ -4,7 +4,11 @@
       "files": {
         "Library/LaunchAgents/com.wiqo.desktop.login.plist": "launch-agent.plist",
         "MacOS/agent-desktop": "binaries/agent-desktop",
-        "Resources/agent-desktop.LICENSE": "binaries/agent-desktop.LICENSE"
+        "Resources/agent-desktop.LICENSE": "binaries/agent-desktop.LICENSE",
+        "Resources/browser-worker/index.mjs": "../browser-worker/index.mjs",
+        "Resources/browser-worker/downloads.mjs": "../browser-worker/downloads.mjs",
+        "Resources/browser-worker/package.json": "../browser-worker/package.json",
+        "Resources/browser-worker/package-lock.json": "../browser-worker/package-lock.json"
       }
     }
   }
