@@ -2,6 +2,7 @@
 //! backed up first, and a verified change leaves an undo record (undo.rs).
 
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -334,12 +335,6 @@ pub(crate) fn read_file(_ctx: &Context, value: &Value) -> Result<Done> {
     if policy.is_sensitive(&file.to_string_lossy()) {
         return Err(fsx::sensitive_blocked("dosyalar"));
     }
-    let size = fs::metadata(&file)
-        .map_err(|source| fsx::local_file_error("FILE_READ_FAILED", "Dosya okunamadı.", &source))?
-        .len();
-    if size > MAX_LOCAL_READ_BYTES {
-        return Err(tool_failure("FILE_TOO_LARGE", "Bu dosya tek yanıt için çok büyük; daha küçük bir dosya veya sayfalı belge okuma kullan."));
-    }
     let mime = fsx::mime_type(&file);
     // PDF, Word and Excel come back as base64, which the server drops before the model sees it: the text is extracted instead.
     if crate::documents::is_document(&file) {
@@ -354,8 +349,32 @@ pub(crate) fn read_file(_ctx: &Context, value: &Value) -> Result<Done> {
             )),
         ));
     }
-    let bytes = fs::read(&file)
-        .map_err(|source| fsx::local_file_error("FILE_READ_FAILED", "Dosya okunamadı.", &source))?;
+    // The byte limit is on what goes back raw: a document above comes back as its text whatever the size of the file, and a long text file as its beginning.
+    let read_failed = |source: std::io::Error| fsx::local_file_error("FILE_READ_FAILED", "Dosya okunamadı.", &source);
+    let size = fs::metadata(&file).map_err(read_failed)?.len();
+    if size > MAX_LOCAL_READ_BYTES {
+        if !fsx::is_likely_text(&file) {
+            return Err(tool_failure("FILE_TOO_LARGE", "Bu dosya metin değil ve tek yanıt için çok büyük; okumak yerine telefona gönderilebilir."));
+        }
+        let mut head = Vec::new();
+        fs::File::open(&file)
+            .and_then(|opened| opened.take(MAX_LOCAL_READ_BYTES).read_to_end(&mut head))
+            .map_err(read_failed)?;
+        // The cut can fall inside a letter; left there, the whole text would read as not UTF-8.
+        if let Err(cut) = std::str::from_utf8(&head) {
+            if cut.error_len().is_none() {
+                head.truncate(cut.valid_up_to());
+            }
+        }
+        return Ok(Done::new(
+            "Dosyanın başı okundu; dosya bundan daha uzun.",
+            Some(data(
+                "fileData",
+                json!({ "path": file_path_text(&file), "mimeType": mime, "text": fsx::decode_text(&head), "truncated": true }),
+            )),
+        ));
+    }
+    let bytes = fs::read(&file).map_err(read_failed)?;
     let content = match fsx::text_if_likely(&file, &bytes) {
         Some(text) => {
             json!({ "path": file_path_text(&file), "mimeType": mime, "text": text, "truncated": false })
@@ -441,24 +460,34 @@ fn requested_target(request: &FileOperation) -> Option<PathBuf> {
 }
 
 fn transfer(ctx: &Context, request: &FileOperation, copy: bool) -> Result<PathBuf> {
-    let invalid = || {
-        tool_failure(
-            "INVALID_FILE_PATH",
-            "Kaynak, hedef veya hedef klasör geçersiz.",
-        )
-    };
+    // The kinds of "invalid" are told apart, so the next call fixes the right path instead of guessing which one was wrong.
     let source = fsx::resolve(&request.path, false)
         .filter(|path| path.exists())
-        .ok_or_else(invalid)?;
+        .ok_or_else(|| {
+            tool_failure(
+                "INVALID_FILE_PATH",
+                "Taşınacak kaynak bulunamadı; önce arama veya listeleme ile gerçek yolu doğrula.",
+            )
+        })?;
     // "Move it into ~/Desktop/Arşiv/2026/" works when that folder does not exist yet.
     if let Some(raw) = request.destination.as_deref() {
         fsx::ensure_parent(raw);
     }
-    let destination = requested_target(request).ok_or_else(invalid)?;
+    let destination = requested_target(request).ok_or_else(|| {
+        tool_failure(
+            "INVALID_FILE_PATH",
+            "Hedef yol geçersiz; hedef klasörü ya da yeni dosya adını belirt.",
+        )
+    })?;
     let parent = destination
         .parent()
         .filter(|parent| is_dir(parent))
-        .ok_or_else(invalid)?;
+        .ok_or_else(|| {
+            tool_failure(
+                "INVALID_FILE_PATH",
+                "Hedef klasör oluşturulamadı; yolu ve izinleri kontrol et.",
+            )
+        })?;
     let _ = parent;
     if is_symlink(&source) || is_symlink(&destination) {
         return Err(permission(
@@ -1078,12 +1107,21 @@ mod tests {
         assert_eq!(text.data.unwrap()["value"]["text"], "merhaba");
         let binary = read_file(&ctx, &op(&dir.join("ikili.bin"), json!({}))).unwrap();
         assert!(binary.data.unwrap()["value"]["base64"].is_string());
+        let head = read_file(&ctx, &op(&dir.join("big.txt"), json!({}))).unwrap();
+        let head = &head.data.unwrap()["value"];
+        assert_eq!(head["truncated"], true);
+        assert_eq!(head["text"].as_str().unwrap().len(), MAX_LOCAL_READ_BYTES as usize);
+        fs::write(dir.join("big.bin"), vec![0u8; 600_000]).unwrap();
         assert_eq!(
-            read_file(&ctx, &op(&dir.join("big.txt"), json!({})))
+            read_file(&ctx, &op(&dir.join("big.bin"), json!({})))
                 .unwrap_err()
                 .code,
             "FILE_TOO_LARGE"
         );
+        // Cut inside a letter, a long Turkish text still reads as UTF-8.
+        fs::write(dir.join("uzun.txt"), "ş".repeat(300_000)).unwrap();
+        let turkish = read_file(&ctx, &op(&dir.join("uzun.txt"), json!({}))).unwrap();
+        assert!(turkish.data.unwrap()["value"]["text"].as_str().unwrap().chars().all(|letter| letter == 'ş'));
         assert_eq!(
             read_file(&ctx, &op(&dir.join("id_rsa"), json!({})))
                 .unwrap_err()

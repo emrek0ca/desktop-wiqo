@@ -427,7 +427,7 @@ pub fn sensitive_blocked(what: &str) -> WireError {
     )
 }
 
-fn is_likely_text(path: &Path) -> bool {
+pub fn is_likely_text(path: &Path) -> bool {
     let ext = path
         .extension()
         .map(|ext| ext.to_string_lossy().to_lowercase())

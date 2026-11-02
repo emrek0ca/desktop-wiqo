@@ -59,6 +59,8 @@ fn client(seconds: u64) -> reqwest::Client {
 #[serde(rename_all = "camelCase")]
 struct Artifact {
     filename: String,
+    // The phones and the backend write the key as `downloadURL`; camelCase alone would only accept `downloadUrl`.
+    #[serde(alias = "downloadURL")]
     download_url: String,
     #[serde(default)]
     overwrite: bool,
@@ -435,7 +437,11 @@ pub(crate) async fn send_file(ctx: &Context, value: &Value) -> Result<Done> {
         .await
         .map_err(|_| failed())?;
     if response.status().as_u16() != 201 {
-        return Err(failed());
+        // The server's answer is the only trace of why: this line hid a refusal of every transfer for weeks.
+        return Err(tool_failure(
+            "TRANSFER_FAILED",
+            format!("Dosya telefona iletilemedi (sunucu yanıtı {}).", response.status().as_u16()),
+        ));
     }
     let body: Value = response.json().await.map_err(|_| failed())?;
     let artifact_id = body["artifactId"].as_str().ok_or_else(failed)?.to_string();
@@ -559,5 +565,14 @@ mod tests {
                 .code,
             "FILE_NOT_FOUND"
         );
+    }
+
+    #[test]
+    fn artifact_payload_accepts_the_key_the_backend_and_phones_send() {
+        for key in ["downloadURL", "downloadUrl"] {
+            let value = serde_json::json!({ "kind": "artifactFile", "value": { "filename": "a.pdf", key: "https://x/y" } });
+            let artifact: Artifact = payload(&value, "artifactFile", "artifact").unwrap();
+            assert_eq!(artifact.download_url, "https://x/y");
+        }
     }
 }
