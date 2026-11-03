@@ -75,7 +75,8 @@ pub fn platform_name(platform: Platform) -> &'static str {
 fn registration(runtime: &Runtime) -> Value {
     let engine = &runtime.engine;
     // Only what this desktop really does: saving into a sub-folder of the Desktop, taking task grants, and full access or a running grant.
-    let mut features: Vec<&str> = vec!["artifact-directory-v1"];
+    // "desktop.approvalGate": this companion asks before a press that cannot be taken back. The server sends desktop actions only to one that does.
+    let mut features: Vec<&str> = vec!["artifact-directory-v1", "desktop.approvalGate"];
     let names = engine.operation_names();
     if names.contains(&"grantAgentAccess") {
         features.push(FEATURE_TASK_GRANT);
@@ -272,7 +273,7 @@ async fn handle(
     raw_request: Value,
     from_agent: bool,
 ) -> (String, Option<(String, CommandResult)>) {
-    let request: Request = match serde_json::from_value(raw_request.clone()) {
+    let mut request: Request = match serde_json::from_value(raw_request.clone()) {
         Ok(request) => request,
         Err(_) => {
             return (
@@ -331,8 +332,32 @@ async fn handle(
             }
         }
     };
+    let approved = from_agent && matches!(origin, Origin::Phone { .. });
+    vouch_for_person(&mut request, from_agent, approved);
     let result = runtime.engine.execute(&request, &origin).await;
     (answer(command_id, &result), Some((request.kind, result)))
+}
+
+/// What a desktop action may say about the person is decided here and nowhere else: `cardApproved` when their signature on a card was checked above, `person` only
+/// inside a phone's own signature. Whatever else came in those fields, from the server or the model, is dropped.
+fn vouch_for_person(request: &mut Request, from_agent: bool, approved: bool) {
+    if request.kind != "computerDesktop" {
+        return;
+    }
+    let Some(value) = request
+        .payload
+        .get_mut("value")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    value.remove("cardApproved");
+    if from_agent {
+        value.remove("person");
+    }
+    if approved {
+        value.insert("cardApproved".into(), Value::Bool(true));
+    }
 }
 
 pub struct Relay {

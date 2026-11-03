@@ -4,7 +4,7 @@
 //! asks it, and turns its answers into the contract's words: the same targets, the same error codes, and a plain `verified` that is true only when the effect
 //! was read back. One rule decides whether a failed step may be repeated: the helper's own `delivery` (did the input reach the app), never the wording.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wiqo_core::engine::{Context, Lane, Operation, Outcome};
 
@@ -24,6 +24,8 @@ const OBSERVATION_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_TARGETS: usize = 120;
 const MAX_STEPS: usize = 12;
 const CALL_TIMEOUT: Duration = Duration::from_secs(25);
+/// How long a step waits to see its effect. A deadline, not a number of looks: one look takes seconds on a heavy window, and seven of them held a task for 47 s.
+const SETTLE_FOR: Duration = Duration::from_millis(1500);
 
 pub(crate) fn operations() -> Vec<Op> {
     vec![Arc::new(ComputerDesktop {
@@ -48,6 +50,13 @@ struct Request {
     text: Option<String>,
     keys: Option<Vec<String>>,
     steps: Option<Vec<Request>>,
+    /// Where a drag ends when it does not end on a control.
+    to_normalized_x: Option<f64>,
+    to_normalized_y: Option<f64>,
+    /// The person's own finger on the phone's live screen. Honoured only on a phone's signature: the relay removes it from anything the server sends.
+    person: bool,
+    /// The person said yes on a card and the relay checked their signature. The relay alone sets this.
+    card_approved: bool,
 }
 
 /// What the helper program answers: its envelope, already split into success data or a failure.
@@ -68,6 +77,16 @@ pub(crate) trait Engine: Send + Sync {
     /// Brings the app to the front and says whether the system confirmed it.
     fn bring_to_front(&self, application: &str) -> bool {
         crate::apps::bring_to_front(application)
+    }
+
+    /// The app in front, when the system can say.
+    fn frontmost(&self) -> Option<String> {
+        None
+    }
+
+    /// Seconds since the keyboard or mouse was last touched; `None` where the system cannot say.
+    fn seconds_since_input(&self) -> Option<f64> {
+        None
     }
 }
 
@@ -128,6 +147,44 @@ impl Engine for Helper {
         let text = reader.join().map_err(|_| "no output")?;
         parse_envelope(&text)
     }
+
+    fn seconds_since_input(&self) -> Option<f64> {
+        seconds_since_input()
+    }
+
+    fn frontmost(&self) -> Option<String> {
+        crate::apps::frontmost()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn seconds_since_input() -> Option<f64> {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceSecondsSinceLastEventType(state: i32, event: u32) -> f64;
+    }
+    const HID_SYSTEM_STATE: i32 = 1;
+    const ANY_INPUT_EVENT: u32 = u32::MAX;
+    Some(unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, ANY_INPUT_EVENT) })
+}
+
+#[cfg(windows)]
+fn seconds_since_input() -> Option<f64> {
+    use windows_sys::Win32::System::SystemInformation::GetTickCount;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    let mut info = LASTINPUTINFO {
+        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    if unsafe { GetLastInputInfo(&mut info) } == 0 {
+        return None;
+    }
+    Some(unsafe { GetTickCount() }.wrapping_sub(info.dwTime) as f64 / 1000.0)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn seconds_since_input() -> Option<f64> {
+    None
 }
 
 fn parse_envelope(text: &str) -> std::result::Result<Answer, String> {
@@ -213,6 +270,12 @@ struct Target {
     secure: bool,
     /// The element that has keyboard focus: where typing without a target goes.
     focused: bool,
+    /// What it holds now (a field's text, a slider's position). Never read from a secure field.
+    value: String,
+    /// Checked, selected, expanded...: an effect that changes neither its name nor its value.
+    states: String,
+    /// What it is called, without what it holds: a field keeps its ref while text is typed into it.
+    identity: String,
 }
 
 impl Target {
@@ -221,6 +284,7 @@ impl Target {
             "ref": self.reference, "role": self.role, "name": self.name,
             "frame": { "x": self.frame[0], "y": self.frame[1], "width": self.frame[2], "height": self.frame[3] },
             "actions": self.actions, "enabled": self.enabled, "secure": self.secure,
+            "value": if self.value == self.name { "" } else { self.value.as_str() },
         })
     }
 }
@@ -230,11 +294,15 @@ struct Observation {
     application: String,
     window_title: String,
     targets: Vec<Target>,
-    /// The primary display's size in points: normalised frames and coordinates are fractions of it.
-    screen: [f64; 2],
+    /// The display the window is on, in points (x, y, width, height): normalised frames and coordinates are fractions of it.
+    screen: [f64; 4],
+    /// That display's place in the helper's list, which is what its screenshot asks for.
+    display: usize,
+    /// The window itself, as fractions of the display.
+    window: Option<[f64; 4]>,
 }
 
-fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
+fn collect(node: &Value, screen: [f64; 4], out: &mut Vec<Target>) {
     if let Some(reference) = node["ref_id"].as_str() {
         let states: Vec<&str> = node["states"]
             .as_array()
@@ -280,15 +348,32 @@ fn collect(node: &Value, screen: [f64; 2], out: &mut Vec<Target>) {
                     name.chars().take(100).collect()
                 },
                 frame: [
-                    round(x / screen[0]),
-                    round(y / screen[1]),
-                    round(w / screen[0]),
-                    round(h / screen[1]),
+                    round((x - screen[0]) / screen[2]),
+                    round((y - screen[1]) / screen[3]),
+                    round(w / screen[2]),
+                    round(h / screen[3]),
                 ],
                 actions,
                 enabled: !states.contains(&"disabled"),
                 secure,
                 focused: states.contains(&"focused"),
+                value: if secure {
+                    String::new()
+                } else {
+                    node["value"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(100)
+                        .collect()
+                },
+                states: states
+                    .iter()
+                    .filter(|state| **state != "focused")
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(","),
+                identity: node["name"].as_str().unwrap_or_default().to_string(),
             });
         }
     }
@@ -306,6 +391,23 @@ fn contract_ref(helper: &str) -> String {
     )
 }
 
+/// Refs that outlive one look: a control is its role, its name and which of that kind it is. The helper's own ref changes with every snapshot; this one lets the model
+/// keep what it has read, send several steps at once, and be told only what changed.
+fn assign_references(targets: &mut [Target]) {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for target in targets.iter_mut() {
+        let name = if target.identity.is_empty() && target.helper.is_empty() {
+            &target.name
+        } else {
+            &target.identity
+        };
+        let key = format!("{}|{}", target.role, name);
+        let count = seen.entry(key.clone()).or_insert(0);
+        target.reference = contract_ref(&format!("{key}|{count}"));
+        *count += 1;
+    }
+}
+
 /// The contract's key names, as the helper spells them.
 fn helper_key(key: &str) -> String {
     match key.trim().to_lowercase().as_str() {
@@ -317,23 +419,138 @@ fn helper_key(key: &str) -> String {
     }
 }
 
-fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation> {
-    let screen = engine
+/// The displays as the helper lists them, in points, with the primary one's place. The list's order is what its screenshot's `--screen` counts.
+fn displays(engine: &dyn Engine) -> (Vec<[f64; 4]>, usize) {
+    let listed = engine
         .call(&["list-displays".into()])
         .ok()
-        .and_then(|answer| answer.ok.then_some(answer.data))
-        .and_then(|displays| {
-            let list = displays.as_array()?;
-            let first = list
-                .iter()
-                .find(|display| display["is_primary"].as_bool() == Some(true))
-                .or_else(|| list.first())?;
+        .and_then(|answer| answer.ok.then_some(answer.data));
+    let entries = listed
+        .as_ref()
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let rects: Vec<[f64; 4]> = entries
+        .iter()
+        .filter_map(|display| {
+            let bounds = &display["bounds"];
             Some([
-                first["bounds"]["width"].as_f64()?.max(1.0),
-                first["bounds"]["height"].as_f64()?.max(1.0),
+                bounds["x"].as_f64().unwrap_or(0.0),
+                bounds["y"].as_f64().unwrap_or(0.0),
+                bounds["width"].as_f64()?.max(1.0),
+                bounds["height"].as_f64()?.max(1.0),
             ])
         })
-        .unwrap_or([1920.0, 1080.0]);
+        .collect();
+    if rects.is_empty() {
+        return (vec![[0.0, 0.0, 1920.0, 1080.0]], 0);
+    }
+    let primary = entries
+        .iter()
+        .position(|display| display["is_primary"].as_bool() == Some(true))
+        .filter(|place| *place < rects.len())
+        .unwrap_or(0);
+    (rects, primary)
+}
+
+/// The display a window sits on: the one holding its middle.
+fn display_of(window: &Value, rects: &[[f64; 4]], primary: usize) -> usize {
+    let (Some(x), Some(y), Some(w), Some(h)) = (
+        window["x"].as_f64(),
+        window["y"].as_f64(),
+        window["width"].as_f64(),
+        window["height"].as_f64(),
+    ) else {
+        return primary;
+    };
+    let (middle_x, middle_y) = (x + w / 2.0, y + h / 2.0);
+    rects
+        .iter()
+        .position(|r| {
+            middle_x >= r[0] && middle_x < r[0] + r[2] && middle_y >= r[1] && middle_y < r[1] + r[3]
+        })
+        .unwrap_or(primary)
+}
+
+/// What an open menu, sheet, popover or alert of the app shows. A window snapshot does not include them, and they are what the person acts on next.
+fn open_surfaces(engine: &dyn Engine, application: &str, screen: [f64; 4]) -> Vec<Target> {
+    let Some(listed) = engine
+        .call(&["list-surfaces".into(), "--app".into(), application.into()])
+        .ok()
+        .and_then(|answer| answer.ok.then_some(answer.data))
+    else {
+        return Vec::new();
+    };
+    let mut targets = Vec::new();
+    for surface in listed["surfaces"].as_array().into_iter().flatten() {
+        let kind = surface
+            .as_str()
+            .or_else(|| surface["kind"].as_str())
+            .or_else(|| surface["type"].as_str())
+            .or_else(|| surface["surface"].as_str())
+            .unwrap_or_default();
+        if !["menu", "sheet", "popover", "alert"].contains(&kind) {
+            continue;
+        }
+        let answer = engine.call(&[
+            "snapshot".into(),
+            "-i".into(),
+            "--compact".into(),
+            "--include-bounds".into(),
+            "--app".into(),
+            application.into(),
+            "--surface".into(),
+            kind.into(),
+        ]);
+        if let Some(answer) = answer.ok().filter(|answer| answer.ok) {
+            collect(&answer.data["tree"], screen, &mut targets);
+        }
+    }
+    targets
+}
+
+/// The words on screen, added when the controls alone say too little of what the window shows (a web page, an Electron or custom-drawn app). Only words inside
+/// the observed window, and none a control already names. Local and free; without Screen Recording permission there are simply no words.
+fn add_screen_text(engine: &dyn Engine, observation: &mut Observation) {
+    if observation.targets.len() >= READ_TEXT_BELOW {
+        return;
+    }
+    let words = read_screen(engine, observation.display);
+    let inside = |target: &Target| match observation.window {
+        Some([x, y, w, h]) => {
+            let (middle_x, middle_y) = (
+                target.frame[0] + target.frame[2] / 2.0,
+                target.frame[1] + target.frame[3] / 2.0,
+            );
+            middle_x >= x && middle_x <= x + w && middle_y >= y && middle_y <= y + h
+        }
+        None => true,
+    };
+    let fresh: Vec<Target> = words
+        .into_iter()
+        .filter(|word| inside(word))
+        .filter(|word| {
+            !observation
+                .targets
+                .iter()
+                .any(|target| target.name == word.name)
+        })
+        .collect();
+    observation.targets.extend(fresh);
+}
+
+/// The controls of an app as they are now, in whatever opens over its window first.
+fn observe_controls(engine: &dyn Engine, application: Option<&str>) -> Result<Observation> {
+    let known = displays(engine);
+    observe_on(engine, application, &known)
+}
+
+fn observe_on(
+    engine: &dyn Engine,
+    application: Option<&str>,
+    (rects, primary): &(Vec<[f64; 4]>, usize),
+) -> Result<Observation> {
+    let (rects, primary) = (rects.as_slice(), *primary);
     // The app is always named: the window in front is often Wiqo's own, where the request was typed, and a bare snapshot would read that.
     let named = application
         .map(str::trim)
@@ -359,44 +576,69 @@ fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation
                 application: name.clone(),
                 window_title: String::new(),
                 targets: Vec::new(),
-                screen,
+                screen: rects[primary],
+                display: primary,
+                window: None,
             });
         }
         // A window the accessibility tree cannot see (a game, a canvas, a remote desktop) is read from its pixels instead.
         if answer.code == "ACTION_NOT_SUPPORTED" {
-            let targets = read_screen(engine);
+            let targets = read_screen(engine, primary);
             if !targets.is_empty() {
                 return Ok(Observation {
                     snapshot_id: format!("ocr-{}", uuid::Uuid::new_v4()),
                     application: named.unwrap_or_default(),
                     window_title: String::new(),
                     targets,
-                    screen,
+                    screen: rects[primary],
+                    display: primary,
+                    window: None,
                 });
             }
         }
         return Err(contract_error(&answer));
     }
+    let bounds = &answer.data["tree"]["bounds"];
+    let display = display_of(bounds, rects, primary);
+    let screen = rects[display];
+    let window = bounds["width"].as_f64().map(|width| {
+        [
+            (bounds["x"].as_f64().unwrap_or(screen[0]) - screen[0]) / screen[2],
+            (bounds["y"].as_f64().unwrap_or(screen[1]) - screen[1]) / screen[3],
+            width / screen[2],
+            bounds["height"].as_f64().unwrap_or(screen[3]) / screen[3],
+        ]
+    });
+    let application = answer.data["app"].as_str().unwrap_or_default().to_string();
     let mut collected = Vec::new();
     collect(&answer.data["tree"], screen, &mut collected);
-    let mut targets = ranked(collected);
-    // A tree with almost nothing in it (custom-drawn apps) gets the words on screen too.
-    if targets.len() < MIN_TREE_TARGETS {
-        targets.extend(read_screen(engine));
-    }
+    let over_window = open_surfaces(engine, named.as_deref().unwrap_or(&application), screen);
+    let mut targets = ranked(over_window);
+    targets.extend(ranked(collected));
+    targets.truncate(MAX_TARGETS);
+    assign_references(&mut targets);
     Ok(Observation {
         snapshot_id: answer.data["snapshot_id"]
             .as_str()
             .unwrap_or_default()
             .to_string(),
-        application: answer.data["app"].as_str().unwrap_or_default().to_string(),
+        application,
         window_title: answer.data["window"]["title"]
             .as_str()
             .unwrap_or_default()
             .to_string(),
         targets,
         screen,
+        display,
+        window,
     })
+}
+
+fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation> {
+    let mut observation = observe_controls(engine, application)?;
+    add_screen_text(engine, &mut observation);
+    assign_references(&mut observation.targets);
+    Ok(observation)
 }
 
 /// What the model reads first: the controls a person acts with (buttons, fields, menus), then the rest. The result travels in a bounded message, and
@@ -439,26 +681,34 @@ fn ranked(targets: Vec<Target>) -> Vec<Target> {
 }
 
 /// Below this many controls the tree is taken to be blind to the window, and the screen's text is read as well.
-const MIN_TREE_TARGETS: usize = 3;
+/// Fewer controls than this and the window is mostly something the tree does not name, so its words are read too.
+const READ_TEXT_BELOW: usize = 25;
+const READ_TEXT_FOR: Duration = Duration::from_secs(3);
 const MAX_TEXT_TARGETS: usize = 80;
 
 /// The words on the primary screen, each a target the model can click by ref (no helper ref: a click lands on the middle of the word).
-fn read_screen(engine: &dyn Engine) -> Vec<Target> {
+fn read_screen(engine: &dyn Engine, display: usize) -> Vec<Target> {
     let path = std::env::temp_dir().join(format!("wiqo-ocr-{}.png", uuid::Uuid::new_v4()));
     let taken = engine
         .call(&[
             "screenshot".into(),
             "--screen".into(),
-            "0".into(),
+            display.to_string(),
             path.to_string_lossy().to_string(),
         ])
         .is_ok_and(|answer| answer.ok);
+    // Words are a help, never worth holding an action for: a late reading is dropped and the turn goes on with the controls alone.
     let words = if taken {
-        crate::ocr::read(&path)
+        let (send, receive) = std::sync::mpsc::channel();
+        let picture = path.clone();
+        std::thread::spawn(move || {
+            let _ = send.send(crate::ocr::read(&picture));
+            let _ = std::fs::remove_file(&picture);
+        });
+        receive.recv_timeout(READ_TEXT_FOR).unwrap_or_default()
     } else {
         Vec::new()
     };
-    let _ = std::fs::remove_file(&path);
     words
         .into_iter()
         .take(MAX_TEXT_TARGETS)
@@ -474,6 +724,9 @@ fn read_screen(engine: &dyn Engine) -> Vec<Target> {
                 enabled: true,
                 secure: false,
                 focused: false,
+                value: String::new(),
+                states: String::new(),
+                identity: String::new(),
             }
         })
         .collect()
@@ -512,7 +765,8 @@ struct Seen {
 struct Scene {
     targets: Vec<Target>,
     application: String,
-    screen: [f64; 2],
+    screen: [f64; 4],
+    window: Option<[f64; 4]>,
 }
 
 fn seen() -> &'static Mutex<HashMap<String, Seen>> {
@@ -531,9 +785,426 @@ fn remember(task: &str, observation: &Observation) {
                     targets: observation.targets.clone(),
                     application: observation.application.clone(),
                     screen: observation.screen,
+                    window: observation.window,
                 },
             },
         );
+    }
+}
+
+/// The tasks the person stopped. Their next command is refused, whatever it is: the model does not get to look again and carry on.
+fn stopped() -> &'static Mutex<HashSet<String>> {
+    static STOPPED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    STOPPED.get_or_init(Default::default)
+}
+
+/// "Durdur": every task that has touched the screen stops here. A new request is a new task and runs.
+pub fn stop_all() {
+    stop_tasks(|_| true);
+    show_cursor(None, "stop", "Durduruldu");
+}
+
+fn stop_tasks(which: impl Fn(&str) -> bool) {
+    if let (Ok(mut map), Ok(mut stopped)) = (seen().lock(), stopped().lock()) {
+        let tasks: Vec<String> = map.keys().filter(|task| which(task)).cloned().collect();
+        for task in tasks {
+            map.remove(&task);
+            stopped.insert(task);
+        }
+    }
+}
+
+fn refuse_if_stopped(task: &str) -> Result<()> {
+    if stopped().lock().is_ok_and(|stopped| stopped.contains(task)) {
+        return Err(permission(
+            "DESKTOP_STOPPED_BY_PERSON",
+            "Bu görevi sen durdurdun; ekrana dokunmuyorum.",
+        ));
+    }
+    Ok(())
+}
+
+// ---------- what the person sees: Wiqo's own cursor ----------
+
+/// One move of the cursor Wiqo draws on the screen. `x`, `y` are in the helper's screen points; absent, the cursor stays and only the words change.
+#[derive(Debug, Clone, Serialize)]
+pub struct CursorEvent {
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub action: &'static str,
+    pub label: String,
+}
+
+type CursorSink = Box<dyn Fn(CursorEvent) + Send + Sync>;
+static CURSOR_SINK: OnceLock<CursorSink> = OnceLock::new();
+/// The cursor reaches the target before the action lands, so the person sees where it goes.
+const CURSOR_TRAVEL: Duration = Duration::from_millis(280);
+
+/// The window that draws the cursor. Without one (the command-line agent, tests) nothing is drawn and nothing waits.
+pub fn set_cursor_sink(sink: CursorSink) {
+    let _ = CURSOR_SINK.set(sink);
+}
+
+fn show_cursor(at: Option<[f64; 2]>, action: &'static str, label: &str) {
+    let Some(sink) = CURSOR_SINK.get() else {
+        return;
+    };
+    sink(CursorEvent {
+        x: at.map(|point| point[0]),
+        y: at.map(|point| point[1]),
+        action,
+        label: label.to_string(),
+    });
+    if at.is_some() {
+        std::thread::sleep(CURSOR_TRAVEL);
+    }
+}
+
+fn middle_of(frame: [f64; 4], screen: [f64; 4]) -> [f64; 2] {
+    [
+        screen[0] + (frame[0] + frame[2] / 2.0) * screen[2],
+        screen[1] + (frame[1] + frame[3] / 2.0) * screen[3],
+    ]
+}
+
+fn named_target<'a>(scene: &'a Scene, reference: Option<&String>) -> Option<&'a Target> {
+    let reference = reference?;
+    scene
+        .targets
+        .iter()
+        .find(|target| &target.reference == reference)
+}
+
+/// The point on screen a fraction of the display names.
+fn screen_point(x: Option<f64>, y: Option<f64>, screen: [f64; 4]) -> Option<[f64; 2]> {
+    let (x, y) = (x?, y?);
+    ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y))
+        .then(|| [screen[0] + x * screen[2], screen[1] + y * screen[3]])
+}
+
+/// Where the step acts: its control, or the point it names, or (a scroll with neither) the middle of the window.
+fn aim(step: &Request, scene: &Scene) -> Option<[f64; 2]> {
+    let reference = if step.action == "dragDrop" {
+        step.source_ref.as_ref()
+    } else {
+        step.target_ref.as_ref()
+    };
+    named_target(scene, reference)
+        .map(|target| middle_of(target.frame, scene.screen))
+        .or_else(|| screen_point(step.normalized_x, step.normalized_y, scene.screen))
+        .or_else(|| {
+            (step.action == "scroll")
+                .then(|| middle_of(scene.window.unwrap_or([0.0, 0.0, 1.0, 1.0]), scene.screen))
+        })
+}
+
+fn cursor_words(step: &Request, scene: &Scene) -> (&'static str, String) {
+    let name = named_target(scene, step.target_ref.as_ref())
+        .or_else(|| named_target(scene, step.source_ref.as_ref()))
+        .map(|target| target.name.as_str())
+        .unwrap_or_default();
+    let (action, doing) = match step.action.as_str() {
+        "click" => ("click", "Tıklıyor"),
+        "doubleClick" => ("click", "Çift tıklıyor"),
+        "tripleClick" => ("click", "Seçiyor"),
+        "rightClick" => ("click", "Sağ tıklıyor"),
+        "type" | "setValue" => ("type", "Yazıyor"),
+        "scroll" => ("move", "Kaydırıyor"),
+        "dragDrop" => ("drag", "Sürüklüyor"),
+        "hotkey" => ("type", "Kısayol"),
+        "menu" => ("type", "Menü"),
+        "wait" => ("move", "Bekliyor"),
+        _ => ("move", "Gidiyor"),
+    };
+    let label = if name.is_empty() {
+        doing.to_string()
+    } else {
+        format!("{doing}: {}", name.chars().take(40).collect::<String>())
+    };
+    (action, label)
+}
+
+// ---------- the person comes first ----------
+
+/// While the person's hands are on the keyboard or mouse, Wiqo waits; it carries on when they stop.
+const QUIET_FOR: f64 = 1.2;
+/// Our own input can read as theirs for a moment after it lands.
+const OWN_INPUT_MARGIN: f64 = 0.4;
+#[cfg(not(test))]
+const LONGEST_WAIT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const LONGEST_WAIT: Duration = Duration::from_millis(300);
+
+fn last_action() -> &'static Mutex<Option<Instant>> {
+    static LAST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    LAST.get_or_init(Default::default)
+}
+
+/// They touched the keyboard or mouse just now, and it was not our own input landing.
+fn person_is_active(idle: f64, since_ours: f64) -> bool {
+    idle < QUIET_FOR && idle + OWN_INPUT_MARGIN < since_ours
+}
+
+fn wait_for_the_person(engine: &dyn Engine) -> Result<()> {
+    let started = Instant::now();
+    let mut told = false;
+    loop {
+        let Some(idle) = engine.seconds_since_input() else {
+            return Ok(());
+        };
+        let since_ours = last_action()
+            .lock()
+            .ok()
+            .and_then(|last| last.map(|at| at.elapsed().as_secs_f64()))
+            .unwrap_or(f64::INFINITY);
+        if !person_is_active(idle, since_ours) {
+            return Ok(());
+        }
+        if started.elapsed() >= LONGEST_WAIT {
+            return Err(tool_failure(
+                "DESKTOP_PERSON_ACTIVE",
+                "Bilgisayarı sen kullanıyorsun; araya girmedim. Bırakınca devam edebilirim.",
+            ));
+        }
+        if !told {
+            told = true;
+            show_cursor(None, "wait", "Sen kullanıyorsun, bekliyorum");
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+// ---------- Wiqo's own windows are the person's ----------
+
+fn is_wiqo(application: &str) -> bool {
+    let name = fold(application.trim());
+    name == "wiqo" || name == "wiqo-desktop" || name == "wiqo desktop"
+}
+
+fn own_window_refused() -> wiqo_core::wire::WireError {
+    permission(
+        "DESKTOP_SELF_OBSERVATION_UNAVAILABLE",
+        "Wiqo'nun kendi penceresine dokunulmaz: izin kartı orada. Hangi uygulamada çalışılacağını application ile söyle.",
+    )
+}
+
+/// The agent never drives the window that holds its own approval card: it could say yes to itself. A click on a point lands on whatever is in front, so the target
+/// app is brought forward first, and the click is refused if Wiqo is still there.
+fn keep_off_own_windows(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<()> {
+    if is_wiqo(&scene.application) {
+        return Err(own_window_refused());
+    }
+    let by_point = step.target_ref.is_none()
+        && step.source_ref.is_none()
+        && matches!(
+            step.action.as_str(),
+            "click" | "doubleClick" | "tripleClick" | "rightClick" | "scroll" | "dragDrop"
+        );
+    if by_point {
+        engine.bring_to_front(&scene.application);
+        if engine.frontmost().is_some_and(|front| is_wiqo(&front)) {
+            return Err(own_window_refused());
+        }
+    }
+    Ok(())
+}
+
+// ---------- what needs the person's yes ----------
+
+/// A control whose press cannot be taken back, spelled as `fold` leaves it. This is the safety net under the model's judgement, on what the screen really says: a
+/// wrong match only costs one card, a missed one is why the card rule is not the only check.
+const IRREVERSIBLE_WORDS: &[&str] = &[
+    "gonder",
+    "gonderin",
+    "yolla",
+    "send",
+    "sil",
+    "silin",
+    "delete",
+    "remove",
+    "kaldir",
+    "kaldirin",
+    "erase",
+    "buy",
+    "purchase",
+    "ode",
+    "odeme",
+    "odeyin",
+    "pay",
+    "checkout",
+    "yayinla",
+    "publish",
+    "paylas",
+    "share",
+    "transfer",
+    "havale",
+    "eft",
+    "bicimlendir",
+    "format",
+    "sifirla",
+    "reset",
+    "uninstall",
+    "unsubscribe",
+    "onayla",
+    "confirm",
+    "replace",
+    "discard",
+    "kaydetme",
+    "logout",
+];
+const IRREVERSIBLE_PHRASES: &[&str] = &[
+    "satin al",
+    "siparis ver",
+    "place order",
+    "copu bosalt",
+    "empty trash",
+    "cop kutusuna tasi",
+    "move to trash",
+    "oturumu kapat",
+    "cikis yap",
+    "sign out",
+    "log out",
+    "hesabi kapat",
+    "aboneligi iptal",
+    "uzerine yaz",
+    "dont save",
+    "don't save",
+];
+/// Longer than this it is a sentence on the screen, not a control's name.
+const LONGEST_CONTROL_NAME: usize = 40;
+
+fn fold(text: &str) -> String {
+    text.chars()
+        .flat_map(|letter| match letter {
+            'İ' | 'I' | 'ı' => vec!['i'],
+            'ş' | 'Ş' => vec!['s'],
+            'ğ' | 'Ğ' => vec!['g'],
+            'ü' | 'Ü' => vec!['u'],
+            'ö' | 'Ö' => vec!['o'],
+            'ç' | 'Ç' => vec!['c'],
+            other => other.to_lowercase().collect(),
+        })
+        .collect()
+}
+
+fn cannot_be_taken_back(name: &str) -> bool {
+    if name.chars().count() > LONGEST_CONTROL_NAME {
+        return false;
+    }
+    let folded = fold(name);
+    let words: Vec<&str> = folded
+        .split(|letter: char| !letter.is_alphanumeric() && letter != '\'')
+        .filter(|word| !word.is_empty())
+        .collect();
+    let joined = words.join(" ");
+    words.iter().any(|word| IRREVERSIBLE_WORDS.contains(word))
+        || IRREVERSIBLE_PHRASES
+            .iter()
+            .any(|phrase| format!(" {joined} ").contains(&format!(" {phrase} ")))
+}
+
+/// The smallest control under a point: what a click there lands on.
+fn control_at(point: [f64; 2], scene: &Scene) -> Option<&Target> {
+    let [x, y, w, h] = scene.screen;
+    let (px, py) = ((point[0] - x) / w, (point[1] - y) / h);
+    scene
+        .targets
+        .iter()
+        .filter(|target| {
+            let [fx, fy, fw, fh] = target.frame;
+            px >= fx && px <= fx + fw && py >= fy && py <= fy + fh
+        })
+        .min_by(|a, b| {
+            (a.frame[2] * a.frame[3])
+                .partial_cmp(&(b.frame[2] * b.frame[3]))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+/// The command a menu path ends in: "Dosya > Kaydet" is "Kaydet".
+fn menu_item(step: &Request) -> Option<&str> {
+    step.text
+        .as_deref()?
+        .rsplit('>')
+        .next()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+}
+
+/// What a finished step did, in words a person reads. Typed text is not repeated: this line is kept on the server.
+fn done_words(step: &Request, scene: &Scene) -> String {
+    let name = named_target(scene, step.target_ref.as_ref())
+        .or_else(|| named_target(scene, step.source_ref.as_ref()))
+        .map(|target| target.name.chars().take(40).collect::<String>())
+        .filter(|name| !name.is_empty());
+    let on = |verb: &str| match &name {
+        Some(name) => format!("“{name}” {verb}"),
+        None => format!("Ekranda {verb}"),
+    };
+    match step.action.as_str() {
+        "click" | "doubleClick" | "rightClick" => on("tıklandı"),
+        "tripleClick" => on("seçildi"),
+        "type" => "Yazı yazıldı".to_string(),
+        "setValue" => on("değeri ayarlandı"),
+        "scroll" => on("kaydırıldı"),
+        "dragDrop" => on("sürüklendi"),
+        "move" => on("imleç götürüldü"),
+        "menu" => format!(
+            "“{}” menü komutu çalıştırıldı",
+            menu_item(step).unwrap_or_default()
+        ),
+        "hotkey" => format!(
+            "{} kısayolu basıldı",
+            step.keys.as_deref().unwrap_or_default().join("+")
+        ),
+        _ => "Beklendi".to_string(),
+    }
+}
+
+/// Shortcuts that send or delete at once.
+fn irreversible_keys(keys: &[String]) -> bool {
+    let has = |name: &str| keys.iter().any(|key| key.eq_ignore_ascii_case(name));
+    let enter = has("enter") || has("return");
+    let delete = has("delete") || has("backspace");
+    ((has("command") || has("control")) && enter) || ((has("command") || has("shift")) && delete)
+}
+
+/// The sentence on the person's card when a step needs their yes. Nothing has been sent when this is said.
+fn needs_a_yes(step: &Request, scene: &Scene) -> Option<String> {
+    match step.action.as_str() {
+        "click" | "doubleClick" | "tripleClick" => {
+            let target = named_target(scene, step.target_ref.as_ref()).or_else(|| {
+                screen_point(step.normalized_x, step.normalized_y, scene.screen)
+                    .and_then(|point| control_at(point, scene))
+            })?;
+            cannot_be_taken_back(&target.name).then(|| {
+                format!(
+                    "{} uygulamasında “{}” düğmesine basılacak.",
+                    scene.application, target.name
+                )
+            })
+        }
+        "menu" => {
+            let item = menu_item(step)?;
+            cannot_be_taken_back(item).then(|| {
+                format!(
+                    "{} uygulamasında “{item}” menü komutu çalıştırılacak.",
+                    scene.application
+                )
+            })
+        }
+        "hotkey" => step
+            .keys
+            .as_deref()
+            .filter(|keys| irreversible_keys(keys))
+            .map(|keys| {
+                format!(
+                    "{} uygulamasında {} tuşlarına basılacak.",
+                    scene.application,
+                    keys.join("+")
+                )
+            }),
+        _ => None,
     }
 }
 
@@ -601,6 +1272,9 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
             "Masaüstü görevi geçersiz.",
         ));
     }
+    if !request.person {
+        refuse_if_stopped(&request.task_id)?;
+    }
     if request.action != "cancel" {
         stay_awake();
     }
@@ -611,12 +1285,34 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
             }
             Ok(Done::new(
                 "Masaüstü görevi durduruldu.",
-                Some(content(&request, None, &[], true, false, Vec::new())),
+                Some(content(&request, None, true, false, Vec::new())),
             ))
         }
         "observe" => {
+            let named = request
+                .text
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            if !request.person
+                && named
+                    .map(str::to_string)
+                    .or_else(|| engine.frontmost())
+                    .is_some_and(|name| is_wiqo(&name))
+            {
+                return Err(own_window_refused());
+            }
             let observation = observe(engine, request.text.as_deref())?;
+            if !request.person && is_wiqo(&observation.application) {
+                return Err(own_window_refused());
+            }
             remember(&request.task_id, &observation);
+            if !request.person {
+                let at = observation
+                    .window
+                    .map(|window| middle_of(window, observation.screen));
+                show_cursor(at, "look", "Ekrana bakıyor");
+            }
             Ok(Done::new(
                 if observation.targets.is_empty() {
                     format!(
@@ -633,7 +1329,6 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
                 Some(content(
                     &request,
                     Some(&observation),
-                    &[],
                     true,
                     false,
                     Vec::new(),
@@ -657,13 +1352,71 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
 /// Runs the steps in order, and stops at the first one that fails or leaves the result in doubt. After every step the screen is read again, so what the
 /// model is told is what the app shows now, not what the helper hoped for.
 fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Result<Done> {
-    let before = guard_observation(request)?;
+    let before = current_scene(engine, request)?;
+    let start = before.clone();
     let mut previous = before;
+    let mut done = Vec::new();
     let mut evidence = Vec::new();
     let mut latest: Option<Observation> = None;
     let mut failure: Option<wiqo_core::wire::WireError> = None;
     for (index, step) in steps.iter().enumerate() {
-        let verdict = match perform(engine, step, &previous) {
+        // Step by step: the person can stop or take over between any two of them.
+        let cleared = if request.person {
+            Ok(())
+        } else {
+            refuse_if_stopped(&request.task_id)
+                .and_then(|_| keep_off_own_windows(engine, step, &previous))
+                .and_then(|_| wait_for_the_person(engine))
+                .and_then(|_| match needs_a_yes(step, &previous) {
+                    Some(sentence) if !request.card_approved => {
+                        Err(permission("DESKTOP_APPROVAL_REQUIRED", sentence))
+                    }
+                    _ => Ok(()),
+                })
+        };
+        if let Err(error) = cleared {
+            evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": false, "changed": false, "verified": false }));
+            failure = Some(error);
+            break;
+        }
+        let (cursor_action, cursor_label) = cursor_words(step, &previous);
+        show_cursor(aim(step, &previous), cursor_action, &cursor_label);
+        if step.action == "dragDrop" {
+            // The real pointer moves for a drag: the cursor goes with it to where it drops.
+            let end = named_target(&previous, step.destination_ref.as_ref())
+                .map(|target| middle_of(target.frame, previous.screen))
+                .or_else(|| {
+                    screen_point(step.to_normalized_x, step.to_normalized_y, previous.screen)
+                });
+            if let (Some(end), Some(sink)) = (end, CURSOR_SINK.get()) {
+                sink(CursorEvent {
+                    x: Some(end[0]),
+                    y: Some(end[1]),
+                    action: "drag",
+                    label: cursor_label.clone(),
+                });
+            }
+        }
+        let mut acted = perform(engine, step, &previous);
+        // The helper refused a ref that was already out of date, and nothing was sent: the same control, looked up again.
+        if acted
+            .as_ref()
+            .is_err_and(|error| error.code == "DESKTOP_STALE_OBSERVATION")
+        {
+            if let Ok(look) = observe_controls(engine, Some(&previous.application)) {
+                previous = Scene {
+                    targets: look.targets,
+                    application: look.application,
+                    screen: look.screen,
+                    window: look.window,
+                };
+                acted = perform(engine, step, &previous);
+            }
+        }
+        if let Ok(mut last) = last_action().lock() {
+            *last = Some(Instant::now());
+        }
+        let verdict = match acted {
             Ok(answer) => answer,
             Err(error) => {
                 evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": false, "changed": false, "verified": false, "errorCode": error.code }));
@@ -675,21 +1428,26 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
         // Read the same app again: a step is verified when the helper read its effect back, or when its controls visibly changed. (The app is named:
         // the frontmost window may be Wiqo's own, where the person typed the request.)
         // Apps answer asynchronously (a new window takes a moment to appear): read again for up to 1.5 s until something changed.
-        let mut after = observe(engine, Some(&previous.application)).ok();
-        for _ in 0..6 {
-            if after
+        let known = displays(engine);
+        let settling = Instant::now();
+        let mut after = observe_on(engine, Some(&previous.application), &known).ok();
+        while settling.elapsed() < SETTLE_FOR
+            && !after
                 .as_ref()
                 .is_some_and(|after| differs(&previous.targets, &after.targets))
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-            after = observe(engine, Some(&previous.application)).ok();
+        {
+            std::thread::sleep(Duration::from_millis(200));
+            after = observe_on(engine, Some(&previous.application), &known).ok();
         }
         let changed = after
             .as_ref()
             .is_some_and(|after| differs(&previous.targets, &after.targets));
         let verified = delivery == "delivered_verified" || (delivery != "not_delivered" && changed);
+        done.push(done_words(step, &previous));
+        if let Some(after) = after.as_mut() {
+            add_screen_text(engine, after);
+            assign_references(&mut after.targets);
+        }
         evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": true, "changed": changed, "verified": verified }));
         if let Some(after) = after {
             remember(&request.task_id, &after);
@@ -697,6 +1455,7 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
                 targets: after.targets.clone(),
                 application: after.application.clone(),
                 screen: after.screen,
+                window: after.window,
             };
             latest = Some(after);
         }
@@ -714,19 +1473,81 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
         && !evidence.is_empty()
         && evidence.iter().all(|entry| entry["verified"] == true);
     let any_changed = evidence.iter().any(|entry| entry["changed"] == true);
-    let body = content(request, latest.as_ref(), &[], true, any_changed, evidence);
+    let list = latest
+        .as_ref()
+        .filter(|latest| !shows_a_new_screen(&start, latest))
+        .map(|latest| changes_between(&start.targets, &latest.targets));
+    let mut body = content(request, latest.as_ref(), true, any_changed, evidence);
+    if let Some((added, changed, removed)) = list {
+        // The same screen: only what changed goes to the model, which keeps the list it has. A step costs a few lines instead of the whole window.
+        body["value"]["targets"] = json!([]);
+        body["value"]["addedTargets"] = json!(added);
+        body["value"]["changedTargets"] = json!(changed);
+        body["value"]["removedTargetRefs"] = json!(removed);
+    }
     let body = with_verified(body, all_verified);
+    let so_far = done.join(", ");
     match failure {
-        Some(error) => Ok(Done::partial(error, body)),
+        Some(mut error) => {
+            if !so_far.is_empty() {
+                error.message = format!("Yapılan: {so_far}. Sonra: {}", error.message);
+            }
+            Ok(Done::partial(error, body))
+        }
         None => Ok(Done::new(
             if all_verified {
-                "Masaüstü işlemi yapıldı ve ekranda görüldü."
+                format!("{so_far}; ekranda görüldü.")
             } else {
-                "Masaüstü işlemi gönderildi; etkisi ekranda doğrulanamadı."
+                format!("{so_far}; etkisi ekranda doğrulanamadı.")
             },
             Some(body),
         )),
     }
+}
+
+/// Another app, or so much different that the model's list is no use: it gets the whole of the new one.
+fn shows_a_new_screen(before: &Scene, after: &Observation) -> bool {
+    if before.application != after.application {
+        return true;
+    }
+    let (added, changed, removed) = changes_between(&before.targets, &after.targets);
+    let moved = added.len() + changed.len() + removed.len();
+    moved > (before.targets.len() / 2).max(8)
+}
+
+type TargetChanges = (Vec<Value>, Vec<Value>, Vec<String>);
+
+fn changes_between(before: &[Target], after: &[Target]) -> TargetChanges {
+    let was: HashMap<&str, &Target> = before
+        .iter()
+        .map(|target| (target.reference.as_str(), target))
+        .collect();
+    let is: HashSet<&str> = after
+        .iter()
+        .map(|target| target.reference.as_str())
+        .collect();
+    let mut added = Vec::new();
+    let mut changed = Vec::new();
+    for target in after {
+        match was.get(target.reference.as_str()) {
+            None => added.push(target.json()),
+            Some(old)
+                if old.name != target.name
+                    || old.value != target.value
+                    || old.enabled != target.enabled
+                    || old.states != target.states =>
+            {
+                changed.push(target.json())
+            }
+            _ => {}
+        }
+    }
+    let removed = before
+        .iter()
+        .filter(|target| !is.contains(target.reference.as_str()))
+        .map(|target| target.reference.clone())
+        .collect();
+    (added, changed, removed)
 }
 
 fn with_verified(mut body: Value, verified: bool) -> Value {
@@ -735,41 +1556,56 @@ fn with_verified(mut body: Value, verified: bool) -> Value {
 }
 
 /// The step's own rules before anything is sent: an observation exists, is recent, and is the one the model named.
-fn guard_observation(request: &Request) -> Result<Scene> {
-    let map = seen()
-        .lock()
-        .map_err(|_| tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü durumu okunamadı."))?;
-    let prior = map.get(&request.task_id).ok_or_else(|| {
-        tool_failure(
-            "DESKTOP_OBSERVATION_REQUIRED",
-            "Önce masaüstünü gözlemleyip güncel hedefleri alın.",
+/// The screen a step acts on. A look that has grown old, or that the model read before the last one, is simply taken again: the refs survive it, and a control that is
+/// gone is refused by name below. Only with no look at all is the model sent back.
+fn current_scene(engine: &dyn Engine, request: &Request) -> Result<Scene> {
+    let (fresh, scene) = {
+        let map = seen()
+            .lock()
+            .map_err(|_| tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü durumu okunamadı."))?;
+        let prior = map.get(&request.task_id).ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_OBSERVATION_REQUIRED",
+                "Önce masaüstünü gözlemleyip güncel hedefleri alın.",
+            )
+        })?;
+        let same = request
+            .snapshot_id
+            .as_deref()
+            .is_none_or(|named| named == prior.snapshot_id);
+        (
+            same && prior.at.elapsed() <= OBSERVATION_LIFETIME,
+            prior.scene.clone(),
         )
-    })?;
-    if prior.at.elapsed() > OBSERVATION_LIFETIME {
-        return Err(tool_failure(
+    };
+    if fresh {
+        return Ok(scene);
+    }
+    let look = observe(engine, Some(&scene.application)).map_err(|_| {
+        tool_failure(
             "DESKTOP_STALE_OBSERVATION",
             "Masaüstü gözlemi eskidi; işlemden önce yeniden gözlemleyin.",
-        ));
-    }
-    if request
-        .snapshot_id
-        .as_deref()
-        .is_some_and(|named| named != prior.snapshot_id)
-    {
-        return Err(tool_failure(
-            "DESKTOP_STALE_OBSERVATION",
-            "Masaüstü görünümü değişti; işlemden önce yeniden gözlemleyin.",
-        ));
-    }
-    Ok(prior.scene.clone())
+        )
+    })?;
+    remember(&request.task_id, &look);
+    Ok(Scene {
+        targets: look.targets,
+        application: look.application,
+        screen: look.screen,
+        window: look.window,
+    })
 }
 
 fn differs(before: &[Target], after: &[Target]) -> bool {
     before.len() != after.len()
-        || before
-            .iter()
-            .zip(after)
-            .any(|(a, b)| a.role != b.role || a.name != b.name || a.enabled != b.enabled)
+        || before.iter().zip(after).any(|(a, b)| {
+            a.role != b.role
+                || a.name != b.name
+                || a.enabled != b.enabled
+                || a.value != b.value
+                || a.states != b.states
+                || a.focused != b.focused
+        })
 }
 
 /// One step as helper commands. Every ref must be one the model saw in the latest observation; it is turned back into the helper's own ref here.
@@ -782,39 +1618,26 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
                 "Bu işlem için bir hedef gerekiyor.",
             )
         })?;
-        scene
-            .targets
-            .iter()
-            .find(|target| &target.reference == reference)
-            .ok_or_else(|| {
-                tool_failure(
-                    "DESKTOP_TARGET_NOT_FOUND",
-                    format!("{reference} hedefi güncel görünümde yok."),
-                )
-            })
-    };
-    // A point on screen, from the model's 0-1 coordinates: the last resort when a control has no ref.
-    let point = || -> Option<String> {
-        let (x, y) = (step.normalized_x?, step.normalized_y?);
-        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| {
-            format!(
-                "{},{}",
-                (x * scene.screen[0]).round(),
-                (y * scene.screen[1]).round()
+        named_target(scene, Some(reference)).ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_TARGET_NOT_FOUND",
+                format!("{reference} hedefi güncel görünümde yok."),
             )
         })
     };
-    let mouse = |at: String, count: u8, button: &str| -> Vec<String> {
-        vec![
-            "mouse-click".into(),
-            "--xy".into(),
-            at,
+    // A point on screen, from the model's 0-1 coordinates: the last resort when a control has no ref.
+    let point = || screen_point(step.normalized_x, step.normalized_y, scene.screen);
+    let mouse = |at: [f64; 2], count: u8, button: &str| -> Vec<String> {
+        let mut args = vec!["mouse-click".to_string()];
+        args.extend(coordinates("--xy", at));
+        args.extend([
             "--count".into(),
             count.to_string(),
             "--button".into(),
             button.into(),
             "--headed".into(),
-        ]
+        ]);
+        args
     };
     let click = |command: &str, count: u8, button: &str| -> Result<Vec<String>> {
         if step.target_ref.is_some() {
@@ -822,15 +1645,14 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
             refuse_secure(target)?;
             // A word read from the screen has no helper ref: the click lands on its middle.
             if target.helper.is_empty() {
-                let [x, y, w, h] = target.frame;
-                let at = format!(
-                    "{},{}",
-                    ((x + w / 2.0) * scene.screen[0]).round(),
-                    ((y + h / 2.0) * scene.screen[1]).round()
-                );
-                return Ok(mouse(at, count, button));
+                return Ok(mouse(middle_of(target.frame, scene.screen), count, button));
             }
             return Ok(match count {
+                3 => vec![
+                    "triple-click".into(),
+                    target.helper.clone(),
+                    "--headed".into(),
+                ],
                 2 => vec![
                     "double-click".into(),
                     target.helper.clone(),
@@ -847,22 +1669,67 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
         })?;
         Ok(mouse(at, count, button))
     };
+    // One end of a drag: a control the helper knows by ref, otherwise a point (a word read from the screen, a canvas, a slider's track).
+    let drag_end = |flag: &str,
+                    reference: Option<&String>,
+                    x: Option<f64>,
+                    y: Option<f64>|
+     -> Result<Vec<String>> {
+        if reference.is_some() {
+            let target = find(reference)?;
+            refuse_secure(target)?;
+            if !target.helper.is_empty() {
+                return Ok(vec![flag.to_string(), target.helper.clone()]);
+            }
+            return Ok(coordinates(
+                &format!("{flag}-xy"),
+                middle_of(target.frame, scene.screen),
+            ));
+        }
+        let at = screen_point(x, y, scene.screen).ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_TARGET_REQUIRED",
+                "Sürüklemenin iki ucu için ref ya da 0-1 arası koordinat gerekiyor.",
+            )
+        })?;
+        Ok(coordinates(&format!("{flag}-xy"), at))
+    };
     let args: Vec<String> = match step.action.as_str() {
         "click" => click("click", 1, "left")?,
         "doubleClick" => click("click", 2, "left")?,
+        "tripleClick" => click("click", 3, "left")?,
         "rightClick" => click("right-click", 1, "right")?,
         "move" => {
-            let at = point().ok_or_else(|| {
-                tool_failure(
-                    "DESKTOP_TARGET_REQUIRED",
-                    "İmleç için 0-1 arası koordinat gerekiyor.",
-                )
-            })?;
-            vec!["mouse-move".into(), "--xy".into(), at, "--headed".into()]
+            let at = step
+                .target_ref
+                .is_some()
+                .then(|| find(step.target_ref.as_ref()))
+                .transpose()?
+                .map(|target| middle_of(target.frame, scene.screen))
+                .or_else(point)
+                .ok_or_else(|| {
+                    tool_failure(
+                        "DESKTOP_TARGET_REQUIRED",
+                        "İmleç için bir hedef ya da 0-1 arası koordinat gerekiyor.",
+                    )
+                })?;
+            let mut args = vec!["mouse-move".to_string()];
+            args.extend(coordinates("--xy", at));
+            args.push("--headed".into());
+            args
         }
         "type" => return type_text(engine, step, scene),
-        "scroll" => {
+        "setValue" => {
             let target = find(step.target_ref.as_ref())?;
+            refuse_secure(target)?;
+            let value = step
+                .text
+                .clone()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak değer yok."))?;
+            vec!["set-value".into(), target.helper.clone(), value]
+        }
+        "scroll" => {
             let direction = step.direction.clone().unwrap_or_else(|| "down".into());
             if !["up", "down", "left", "right"].contains(&direction.as_str()) {
                 return Err(tool_failure(
@@ -870,14 +1737,43 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
                     "Kaydırma yönü geçersiz.",
                 ));
             }
-            vec![
-                "scroll".into(),
-                target.helper.clone(),
-                "--direction".into(),
-                direction,
-                "--amount".into(),
-                step.amount.unwrap_or(3).clamp(1, 20).to_string(),
-            ]
+            let amount = step.amount.unwrap_or(3).clamp(1, 20);
+            let target = step
+                .target_ref
+                .is_some()
+                .then(|| find(step.target_ref.as_ref()))
+                .transpose()?;
+            match target.filter(|target| !target.helper.is_empty()) {
+                Some(target) => vec![
+                    "scroll".into(),
+                    target.helper.clone(),
+                    "--direction".into(),
+                    direction,
+                    "--amount".into(),
+                    amount.to_string(),
+                ],
+                // No control to name (a web page, a canvas, a word read from the screen): the wheel, where the step aims.
+                None => {
+                    let at = aim(step, scene).unwrap_or_else(|| {
+                        middle_of(scene.window.unwrap_or([0.0, 0.0, 1.0, 1.0]), scene.screen)
+                    });
+                    let lines = amount as i64;
+                    let (dx, dy) = match direction.as_str() {
+                        "up" => (0, lines),
+                        "down" => (0, -lines),
+                        "right" => (lines, 0),
+                        _ => (-lines, 0),
+                    };
+                    vec![
+                        "mouse-wheel".into(),
+                        format!("--x={}", at[0].round()),
+                        format!("--y={}", at[1].round()),
+                        format!("--dx={dx}"),
+                        format!("--dy={dy}"),
+                        "--headed".into(),
+                    ]
+                }
+            }
         }
         "hotkey" => {
             let keys = step
@@ -893,23 +1789,39 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
             return press(engine, &combo, &scene.application);
         }
         "dragDrop" => {
-            let (from, to) = (
-                find(step.source_ref.as_ref())?,
-                find(step.destination_ref.as_ref())?,
-            );
-            vec![
-                "drag".into(),
-                "--from".into(),
-                from.helper.clone(),
-                "--to".into(),
-                to.helper.clone(),
-                "--headed".into(),
-            ]
+            let mut args = vec!["drag".to_string()];
+            args.extend(drag_end(
+                "--from",
+                step.source_ref.as_ref(),
+                step.normalized_x,
+                step.normalized_y,
+            )?);
+            args.extend(drag_end(
+                "--to",
+                step.destination_ref.as_ref(),
+                step.to_normalized_x,
+                step.to_normalized_y,
+            )?);
+            args.extend(["--duration".into(), "350".into(), "--headed".into()]);
+            args
         }
-        "wait" => vec![
-            "wait".into(),
-            step.amount.unwrap_or(500).clamp(50, 5000).to_string(),
-        ],
+        "menu" => return run_menu(engine, step, scene),
+        // Until the words appear, or for a set time.
+        "wait" => match step.text.as_deref().filter(|text| !text.is_empty()) {
+            Some(text) => vec![
+                "wait".into(),
+                "--text".into(),
+                text.into(),
+                "--app".into(),
+                scene.application.clone(),
+                "--timeout".into(),
+                step.amount.unwrap_or(5000).clamp(50, 15000).to_string(),
+            ],
+            None => vec![
+                "wait".into(),
+                step.amount.unwrap_or(500).clamp(50, 5000).to_string(),
+            ],
+        },
         _ => {
             return Err(tool_failure(
                 "DESKTOP_ACTION_UNSUPPORTED",
@@ -918,6 +1830,64 @@ fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer>
         }
     };
     call(engine, &args)
+}
+
+/// A command from the app's menu bar: how an expert reaches what has no button on screen. It works in any app and needs no look at the window.
+fn run_menu(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer> {
+    let item = menu_item(step)
+        .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Menü komutunun adı yok."))?;
+    engine.bring_to_front(&scene.application);
+    let find = |exact: bool| {
+        let mut args = vec![
+            "find".to_string(),
+            "--app".into(),
+            scene.application.clone(),
+            "--surface".into(),
+            "menubar".into(),
+            "--role".into(),
+            "menuitem".into(),
+            "--name".into(),
+            item.to_string(),
+            "--first".into(),
+        ];
+        if exact {
+            args.push("--exact".into());
+        }
+        engine.call(&args).ok().filter(|answer| answer.ok)
+    };
+    let found = find(true).or_else(|| find(false)).ok_or_else(|| {
+        tool_failure(
+            "DESKTOP_TARGET_NOT_FOUND",
+            format!(
+                "{} menüsünde “{item}” yok; menü adları uygulamanın dilinde olur.",
+                scene.application
+            ),
+        )
+    })?;
+    let matched = &found.data["match"];
+    let reference = matched["ref_id"]
+        .as_str()
+        .ok_or_else(|| tool_failure("DESKTOP_TARGET_NOT_FOUND", format!("“{item}” bulunamadı.")))?;
+    let disabled = matched["states"]
+        .as_array()
+        .is_some_and(|states| states.iter().any(|state| state == "disabled"));
+    if disabled {
+        return Err(tool_failure(
+            "DESKTOP_TARGET_NOT_FOUND",
+            format!("“{item}” şu an kullanılamıyor (gri)."),
+        ));
+    }
+    call(engine, &["click".into(), reference.to_string()])
+}
+
+/// A point as the helper takes it; a negative one (a display left of the primary) must be written with `=`.
+fn coordinates(flag: &str, at: [f64; 2]) -> Vec<String> {
+    let value = format!("{},{}", at[0].round(), at[1].round());
+    if at[0] < 0.0 || at[1] < 0.0 {
+        vec![format!("{flag}={value}")]
+    } else {
+        vec![flag.to_string(), value]
+    }
 }
 
 /// Keys as a person presses them: the app is brought to the front first (it may have no window yet, like TextEdit with no document), and the keys
@@ -973,16 +1943,10 @@ fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answe
     }
     // A field read from the screen's text: click into it the way a person would, then paste.
     if let Some(target) = target.filter(|target| target.helper.is_empty()) {
-        let [x, y, w, h] = target.frame;
-        let at = format!(
-            "{},{}",
-            ((x + w / 2.0) * scene.screen[0]).round(),
-            ((y + h / 2.0) * scene.screen[1]).round()
-        );
-        call(
-            engine,
-            &["mouse-click".into(), "--xy".into(), at, "--headed".into()],
-        )?;
+        let mut args = vec!["mouse-click".to_string()];
+        args.extend(coordinates("--xy", middle_of(target.frame, scene.screen)));
+        args.push("--headed".into());
+        call(engine, &args)?;
         return paste(engine, &text, &scene.application);
     }
     if let Some(target) = target {
@@ -1010,6 +1974,11 @@ fn paste(engine: &dyn Engine, text: &str, application: &str) -> Result<Answer> {
     let mut clipboard = arboard::Clipboard::new()
         .map_err(|_| tool_failure("DESKTOP_INPUT_UNAVAILABLE", "Pano kullanılamıyor."))?;
     let saved = clipboard.get_text().ok();
+    // Text or a picture goes back afterwards; other kinds (files, rich text) cannot be read through this and are lost to the paste.
+    let saved_picture = saved
+        .is_none()
+        .then(|| clipboard.get_image().ok())
+        .flatten();
     clipboard
         .set_text(text.to_string())
         .map_err(|_| tool_failure("DESKTOP_INPUT_UNAVAILABLE", "Pano kullanılamıyor."))?;
@@ -1023,6 +1992,8 @@ fn paste(engine: &dyn Engine, text: &str, application: &str) -> Result<Answer> {
     std::thread::sleep(Duration::from_millis(250));
     if let Some(saved) = saved {
         let _ = clipboard.set_text(saved);
+    } else if let Some(picture) = saved_picture {
+        let _ = clipboard.set_image(picture);
     }
     pasted
 }
@@ -1040,7 +2011,6 @@ fn refuse_secure(target: &Target) -> Result<()> {
 fn content(
     request: &Request,
     observation: Option<&Observation>,
-    removed: &[String],
     access: bool,
     changed: bool,
     evidence: Vec<Value>,
@@ -1059,7 +2029,7 @@ fn content(
             "targets": targets,
             "addedTargets": [],
             "changedTargets": [],
-            "removedTargetRefs": removed,
+            "removedTargetRefs": [],
             "accessGranted": access,
             "changed": changed,
             "verified": true,
@@ -1170,7 +2140,7 @@ mod tests {
             &request(
                 "t-none",
                 "click",
-                json!({ "targetRef": contract_ref("@s2:e1") }),
+                json!({ "targetRef": contract_ref("button|7|0") }),
             ),
         ));
         assert_eq!(none.1.as_deref(), Some("DESKTOP_OBSERVATION_REQUIRED"));
@@ -1180,16 +2150,18 @@ mod tests {
             &request(
                 "t-snap",
                 "click",
-                json!({ "targetRef": contract_ref("@s2:e1"), "snapshotId": "other" }),
+                json!({ "targetRef": contract_ref("button|7|0"), "snapshotId": "other" }),
             ),
         ));
-        assert_eq!(wrong.1.as_deref(), Some("DESKTOP_STALE_OBSERVATION"));
+        // A look the model read before the last one is taken again, not refused: the ref still names the same control.
+        assert_ne!(wrong.1.as_deref(), Some("DESKTOP_STALE_OBSERVATION"));
+        assert_ne!(wrong.1.as_deref(), Some("DESKTOP_TARGET_NOT_FOUND"));
         let unseen = result(control(
             engine.as_ref(),
             &request(
                 "t-snap",
                 "click",
-                json!({ "targetRef": contract_ref("@s2:e99") }),
+                json!({ "targetRef": contract_ref("button|yok|0") }),
             ),
         ));
         assert_eq!(unseen.1.as_deref(), Some("DESKTOP_TARGET_NOT_FOUND"));
@@ -1212,7 +2184,7 @@ mod tests {
             &request(
                 "t-click",
                 "click",
-                json!({ "targetRef": contract_ref("@s3:e1") }),
+                json!({ "targetRef": contract_ref("button|7|0") }),
             ),
         ));
         assert_eq!(code, None);
@@ -1241,7 +2213,7 @@ mod tests {
             &request(
                 "t-quiet",
                 "click",
-                json!({ "targetRef": contract_ref("@s5:e1") }),
+                json!({ "targetRef": contract_ref("button|7|0") }),
             ),
         ));
         assert_eq!(code, None);
@@ -1273,7 +2245,7 @@ mod tests {
             &request(
                 "t-secure",
                 "type",
-                json!({ "targetRef": contract_ref("@s6:e2"), "text": "x" }),
+                json!({ "targetRef": contract_ref("textfield|Parola|0"), "text": "x" }),
             ),
         ));
         assert_eq!(typed.1.as_deref(), Some("DESKTOP_SECURE_FIELD_BLOCKED"));
@@ -1306,7 +2278,7 @@ mod tests {
             (vec!["snapshot"], screen("s7", "7")),
         ]);
         control(engine.as_ref(), &request("t-steps", "observe", json!({}))).unwrap();
-        let steps = json!({ "steps": [{ "action": "click", "targetRef": contract_ref("@s7:e1") }, { "action": "click", "targetRef": contract_ref("@s7:e1") }] });
+        let steps = json!({ "steps": [{ "action": "click", "targetRef": contract_ref("button|7|0") }, { "action": "click", "targetRef": contract_ref("button|7|0") }] });
         let (data, code) = result(control(
             engine.as_ref(),
             &request("t-steps", "runSteps", steps),
@@ -1371,7 +2343,8 @@ mod tests {
         ));
         assert_eq!(code, None);
         assert_eq!(data["value"]["verified"], true);
-        assert_eq!(data["value"]["targets"][0]["name"], "merhaba");
+        // The same screen: only what changed comes back, the field with its new text.
+        assert_eq!(data["value"]["changedTargets"][0]["name"], "merhaba");
     }
 
     #[test]
@@ -1410,6 +2383,9 @@ mod tests {
             enabled: true,
             secure: false,
             focused: false,
+            value: String::new(),
+            states: String::new(),
+            identity: name.to_string(),
         };
         let ranked = ranked(vec![
             target("treeitem", "Desktop"),
@@ -1420,6 +2396,412 @@ mod tests {
         ]);
         let names: Vec<&str> = ranked.iter().map(|target| target.name.as_str()).collect();
         assert_eq!(names, ["Yeni Belge", "Ara", "Desktop"]);
+    }
+
+    fn acting_scene(names: &[&str]) -> Scene {
+        Scene {
+            targets: names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| Target {
+                    reference: format!("d-{index}"),
+                    helper: format!("@s:e{index}"),
+                    role: "button".into(),
+                    name: (*name).into(),
+                    frame: [0.1 * index as f64, 0.1, 0.05, 0.05],
+                    actions: vec!["Click".into()],
+                    enabled: true,
+                    secure: false,
+                    focused: false,
+                    value: String::new(),
+                    states: String::new(),
+                    identity: (*name).into(),
+                })
+                .collect(),
+            application: "Mail".into(),
+            screen: [1000.0, 100.0, 2000.0, 1000.0],
+            window: Some([0.0, 0.0, 0.5, 0.5]),
+        }
+    }
+
+    fn step(value: Value) -> Request {
+        serde_json::from_value(value).unwrap()
+    }
+
+    /// The helper's arguments for one step, as one line.
+    fn sent(step: &Request, scene: &Scene) -> String {
+        struct Echo(Mutex<String>);
+        impl Engine for Echo {
+            fn call(&self, args: &[String]) -> std::result::Result<Answer, String> {
+                *self.0.lock().unwrap() = args.join(" ");
+                Ok(Answer {
+                    ok: true,
+                    data: json!({}),
+                    code: String::new(),
+                    message: String::new(),
+                    delivery: None,
+                })
+            }
+        }
+        let echo = Echo(Mutex::new(String::new()));
+        perform(&echo, step, scene)
+            .map_err(|error| error.code)
+            .unwrap();
+        let line = echo.0.lock().unwrap().clone();
+        line
+    }
+
+    #[test]
+    fn a_button_that_cannot_be_taken_back_needs_a_yes_whatever_the_language_or_the_way_to_it() {
+        let scene = acting_scene(&["Gönder", "Kaydet", "Satın Al", "Silindir çiz", "Delete"]);
+        let click = |target: &str| step(json!({ "action": "click", "targetRef": target }));
+        assert!(needs_a_yes(&click("d-0"), &scene)
+            .unwrap()
+            .contains("“Gönder”"));
+        assert!(
+            needs_a_yes(&click("d-1"), &scene).is_none(),
+            "saving is not"
+        );
+        assert!(needs_a_yes(&click("d-2"), &scene).is_some());
+        assert!(
+            needs_a_yes(&click("d-3"), &scene).is_none(),
+            "a word that only starts the same"
+        );
+        assert!(needs_a_yes(&click("d-4"), &scene).is_some());
+        // The same button by its point on the screen.
+        let by_point = step(json!({ "action": "click", "normalizedX": 0.02, "normalizedY": 0.12 }));
+        assert!(needs_a_yes(&by_point, &scene).is_some());
+        let keys = |keys: Value| step(json!({ "action": "hotkey", "keys": keys }));
+        assert!(needs_a_yes(&keys(json!(["command", "enter"])), &scene).is_some());
+        assert!(needs_a_yes(&keys(json!(["command", "delete"])), &scene).is_some());
+        assert!(needs_a_yes(&keys(json!(["command", "s"])), &scene).is_none());
+        assert!(needs_a_yes(&keys(json!(["enter"])), &scene).is_none());
+    }
+
+    #[test]
+    fn the_refusal_comes_before_anything_is_sent_and_a_signed_yes_or_the_persons_own_tap_passes() {
+        let snapshot = "s-gate";
+        let rules = || {
+            Script::new(vec![
+                displays(),
+                (
+                    vec!["list-surfaces"],
+                    json!({ "ok": true, "data": { "surfaces": [] } }),
+                ),
+                (vec!["snapshot"], screen(snapshot, "Gönder")),
+                (
+                    vec!["click"],
+                    json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } }),
+                ),
+            ])
+        };
+        for (task, extra, refused) in [
+            ("t-gate-model", json!({}), true),
+            ("t-gate-card", json!({ "cardApproved": true }), false),
+            ("t-gate-person", json!({ "person": true }), false),
+        ] {
+            let engine = rules();
+            let (data, _) = result(control(
+                engine.as_ref(),
+                &request(task, "observe", json!({ "text": "Mail" })),
+            ));
+            let target = data["value"]["targets"][0]["ref"].clone();
+            let mut extra = extra;
+            extra["targetRef"] = target;
+            let (_, code) = result(control(engine.as_ref(), &request(task, "click", extra)));
+            assert_eq!(
+                code.as_deref() == Some("DESKTOP_APPROVAL_REQUIRED"),
+                refused,
+                "{task}: {code:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stopped_task_does_nothing_more_and_a_new_one_runs() {
+        let engine = Script::new(vec![
+            displays(),
+            (
+                vec!["list-surfaces"],
+                json!({ "ok": true, "data": { "surfaces": [] } }),
+            ),
+            (vec!["snapshot"], screen("s-stop", "Tamam")),
+        ]);
+        let (_, code) = result(control(
+            engine.as_ref(),
+            &request("t-stopped", "observe", json!({ "text": "Mail" })),
+        ));
+        assert_eq!(code, None);
+        stop_tasks(|task| task == "t-stopped");
+        let (_, code) = result(control(
+            engine.as_ref(),
+            &request("t-stopped", "observe", json!({ "text": "Mail" })),
+        ));
+        assert_eq!(code.as_deref(), Some("DESKTOP_STOPPED_BY_PERSON"));
+        let (_, code) = result(control(
+            engine.as_ref(),
+            &request("t-after-stop", "observe", json!({ "text": "Mail" })),
+        ));
+        assert_eq!(code, None);
+    }
+
+    #[test]
+    fn the_person_is_active_only_when_the_input_is_recent_and_not_our_own() {
+        assert!(
+            person_is_active(0.1, f64::INFINITY),
+            "their hand, before we did anything"
+        );
+        assert!(
+            person_is_active(0.2, 5.0),
+            "their hand, long after our last step"
+        );
+        assert!(!person_is_active(0.2, 0.3), "our own input landing");
+        assert!(!person_is_active(5.0, 9.0), "they stopped");
+    }
+
+    #[test]
+    fn with_nobody_at_the_computer_it_goes_on_at_once() {
+        struct Away;
+        impl Engine for Away {
+            fn call(&self, _: &[String]) -> std::result::Result<Answer, String> {
+                Err("unused".into())
+            }
+            fn seconds_since_input(&self) -> Option<f64> {
+                Some(5.0)
+            }
+        }
+        assert!(wait_for_the_person(&Away).is_ok());
+    }
+
+    #[test]
+    fn an_open_menu_comes_first_and_the_window_is_on_the_display_that_holds_it() {
+        let engine = Script::new(vec![
+            (
+                vec!["list-displays"],
+                json!({ "ok": true, "data": [
+                    { "bounds": { "x": 0.0, "y": 0.0, "width": 1000.0, "height": 500.0 }, "is_primary": true },
+                    { "bounds": { "x": 1000.0, "y": 0.0, "width": 2000.0, "height": 1000.0 }, "is_primary": false }
+                ] }),
+            ),
+            (
+                vec!["list-surfaces"],
+                json!({ "ok": true, "data": { "surfaces": [{ "kind": "menu" }, { "kind": "window" }] } }),
+            ),
+            (
+                vec!["snapshot", "--surface", "menu"],
+                json!({ "ok": true, "data": { "snapshot_id": "s-menu", "tree": { "children": [
+                    { "ref_id": "@s-menu:e1", "role": "menuitem", "name": "Kopyala", "available_actions": ["Click"],
+                      "bounds": { "x": 1200.0, "y": 100.0, "width": 100.0, "height": 20.0 } }
+                ] } } }),
+            ),
+            (
+                vec!["snapshot", "--app"],
+                json!({ "ok": true, "data": { "snapshot_id": "s-win", "app": "Notlar", "tree": {
+                    "bounds": { "x": 1100.0, "y": 50.0, "width": 800.0, "height": 600.0 },
+                    "children": [
+                        { "ref_id": "@s-win:e1", "role": "button", "name": "Yeni", "available_actions": ["Click"],
+                          "bounds": { "x": 1200.0, "y": 60.0, "width": 40.0, "height": 20.0 } }
+                    ] } } }),
+            ),
+        ]);
+        let observation = observe_controls(engine.as_ref(), Some("Notlar")).unwrap();
+        assert_eq!(observation.display, 1);
+        assert_eq!(observation.targets[0].name, "Kopyala");
+        assert_eq!(observation.targets[1].name, "Yeni");
+        assert_eq!(
+            observation.targets[1].frame[0], 0.1,
+            "a fraction of its own display"
+        );
+    }
+
+    #[test]
+    fn the_hand_on_the_mouse_reaches_what_a_ref_cannot() {
+        let mut scene = acting_scene(&["Kaydırıcı"]);
+        scene.targets.push(Target {
+            helper: String::new(),
+            reference: "d-word".into(),
+            name: "Rapor".into(),
+            frame: [0.5, 0.5, 0.1, 0.1],
+            ..scene.targets[0].clone()
+        });
+        // A drag between two points, and from a word on the screen to a control.
+        let line = sent(
+            &step(
+                json!({ "action": "dragDrop", "normalizedX": 0.0, "normalizedY": 0.0, "toNormalizedX": 0.5, "toNormalizedY": 0.5 }),
+            ),
+            &scene,
+        );
+        assert!(
+            line.contains("--from-xy 1000,100")
+                && line.contains("--to-xy 2000,600")
+                && line.contains("--headed"),
+            "{line}"
+        );
+        let line = sent(
+            &step(json!({ "action": "dragDrop", "sourceRef": "d-word", "destinationRef": "d-0" })),
+            &scene,
+        );
+        assert!(
+            line.contains("--from-xy 2100,650") && line.contains("--to @s:e0"),
+            "{line}"
+        );
+        // A scroll with no control is the wheel over the window, in any direction.
+        let line = sent(
+            &step(json!({ "action": "scroll", "direction": "left", "amount": 2 })),
+            &scene,
+        );
+        assert!(
+            line.starts_with("mouse-wheel")
+                && line.contains("--dx=-2")
+                && line.contains("--x=1500")
+                && line.contains("--y=350"),
+            "{line}"
+        );
+        let line = sent(
+            &step(json!({ "action": "scroll", "targetRef": "d-word", "direction": "down" })),
+            &scene,
+        );
+        assert!(
+            line.starts_with("mouse-wheel") && line.contains("--dy=-3"),
+            "{line}"
+        );
+        assert!(sent(
+            &step(json!({ "action": "tripleClick", "targetRef": "d-0" })),
+            &scene
+        )
+        .starts_with("triple-click @s:e0"));
+        assert!(sent(
+            &step(json!({ "action": "setValue", "targetRef": "d-0", "text": "75" })),
+            &scene
+        )
+        .starts_with("set-value @s:e0 75"));
+    }
+
+    #[test]
+    fn the_agent_cannot_reach_its_own_approval_card() {
+        struct WiqoInFront;
+        impl Engine for WiqoInFront {
+            fn call(&self, args: &[String]) -> std::result::Result<Answer, String> {
+                Err(format!("nothing should reach the helper: {args:?}"))
+            }
+            fn frontmost(&self) -> Option<String> {
+                Some("Wiqo".into())
+            }
+        }
+        // Looking at it, by name or because it is in front.
+        for extra in [json!({ "text": "wiqo-desktop" }), json!({})] {
+            let (_, code) = result(control(&WiqoInFront, &request("t-self", "observe", extra)));
+            assert_eq!(
+                code.as_deref(),
+                Some("DESKTOP_SELF_OBSERVATION_UNAVAILABLE")
+            );
+        }
+        // A click on a point while it stays in front, whichever app was observed.
+        let scene = acting_scene(&["Yeni"]);
+        let by_point = step(json!({ "action": "click", "normalizedX": 0.5, "normalizedY": 0.5 }));
+        assert!(keep_off_own_windows(&WiqoInFront, &by_point, &scene).is_err());
+        let by_ref = step(json!({ "action": "click", "targetRef": "d-0" }));
+        assert!(
+            keep_off_own_windows(&WiqoInFront, &by_ref, &scene).is_ok(),
+            "a named control of the other app is that app's"
+        );
+        let mut own = acting_scene(&["İzin ver"]);
+        own.application = "Wiqo".into();
+        assert!(keep_off_own_windows(&WiqoInFront, &by_ref, &own).is_err());
+    }
+
+    #[test]
+    fn a_ref_stays_the_same_across_looks_and_while_a_field_fills_up() {
+        let look = |snapshot: &str, field: &str| {
+            let mut out = Vec::new();
+            collect(
+                &json!({ "children": [
+                    { "ref_id": format!("@{snapshot}:e1"), "role": "button", "name": "Tamam", "available_actions": ["Click"], "bounds": { "x": 1.0, "y": 1.0, "width": 9.0, "height": 9.0 } },
+                    { "ref_id": format!("@{snapshot}:e2"), "role": "button", "name": "Tamam", "available_actions": ["Click"], "bounds": { "x": 20.0, "y": 1.0, "width": 9.0, "height": 9.0 } },
+                    { "ref_id": format!("@{snapshot}:e3"), "role": "textarea", "value": field, "available_actions": ["Click"], "bounds": { "x": 1.0, "y": 20.0, "width": 9.0, "height": 9.0 } }
+                ] }),
+                [0.0, 0.0, 100.0, 100.0],
+                &mut out,
+            );
+            assign_references(&mut out);
+            out
+        };
+        let (first, second) = (look("s1", ""), look("s2", "merhaba"));
+        assert_ne!(
+            first[0].reference, first[1].reference,
+            "two of the same are two refs"
+        );
+        for (a, b) in first.iter().zip(&second) {
+            assert_eq!(a.reference, b.reference);
+        }
+        let (added, changed, removed) = changes_between(&first, &second);
+        assert!(added.is_empty() && removed.is_empty());
+        assert_eq!(changed.len(), 1, "only the field that filled up");
+    }
+
+    #[test]
+    fn a_menu_command_is_found_clicked_and_refused_when_grey_or_final() {
+        let scene = acting_scene(&[]);
+        let engine = Script::new(vec![
+            (
+                vec!["find", "--surface menubar", "Kaydet"],
+                json!({ "ok": true, "data": { "match": { "ref_id": "@m:e1", "role": "menuitem", "states": [] } } }),
+            ),
+            (vec!["click @m:e1"], json!({ "ok": true, "data": {} })),
+            (
+                vec!["find", "--surface menubar", "Yazdır"],
+                json!({ "ok": true, "data": { "match": { "ref_id": "@m:e2", "role": "menuitem", "states": ["disabled"] } } }),
+            ),
+        ]);
+        let menu = |path: &str| step(json!({ "action": "menu", "text": path }));
+        assert!(perform(engine.as_ref(), &menu("Dosya > Kaydet"), &scene).is_ok());
+        let grey = perform(engine.as_ref(), &menu("Dosya > Yazdır"), &scene)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(grey.code, "DESKTOP_TARGET_NOT_FOUND");
+        assert!(
+            needs_a_yes(&menu("Dosya > Çöp Kutusunu Boşalt"), &scene).is_none(),
+            "the list is by whole phrase"
+        );
+        assert!(needs_a_yes(&menu("Posta > Gönder"), &scene).is_some());
+    }
+
+    #[test]
+    fn a_step_says_what_it_did_and_never_what_was_typed() {
+        let scene = acting_scene(&["Yeni"]);
+        assert_eq!(
+            done_words(
+                &step(json!({ "action": "click", "targetRef": "d-0" })),
+                &scene
+            ),
+            "“Yeni” tıklandı"
+        );
+        assert_eq!(
+            done_words(
+                &step(json!({ "action": "type", "text": "gizli not" })),
+                &scene
+            ),
+            "Yazı yazıldı"
+        );
+        assert_eq!(
+            done_words(
+                &step(json!({ "action": "hotkey", "keys": ["command", "n"] })),
+                &scene
+            ),
+            "command+n kısayolu basıldı"
+        );
+    }
+
+    #[test]
+    fn a_change_in_a_value_or_a_state_counts_as_an_effect() {
+        let before = acting_scene(&["Ses"]).targets;
+        let mut after = before.clone();
+        after[0].value = "75".into();
+        assert!(differs(&before, &after));
+        let mut after = before.clone();
+        after[0].states = "checked".into();
+        assert!(differs(&before, &after));
+        assert!(!differs(&before, &before.clone()));
     }
 
     /// Against the real helper on this computer: `WIQO_AGENT_DESKTOP=<path> WIQO_LIVE_APP=<app> cargo test live -- --ignored`.

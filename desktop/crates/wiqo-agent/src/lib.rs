@@ -1,6 +1,8 @@
 //! One Wiqo desktop, ready to use from a window or a terminal: it opens its state, pairs with a phone, keeps the server connection, and tells what happens.
 //! The app (Tauri) and the `wiqo-agent` command are two faces of this same object; neither has logic of its own.
 
+pub use wiqo_ops::{set_cursor_sink, CursorEvent};
+
 pub mod chat;
 pub mod diagnostics;
 pub mod location;
@@ -577,6 +579,7 @@ impl Desktop {
 
     /// "Durdur": what this computer is doing for the server's agent stops — background terminal jobs at once, and the task grant is withdrawn.
     pub fn stop_work(&self) {
+        wiqo_ops::stop_desktop_control();
         if let Some(terminal) = self.runtime.engine.terminal() {
             terminal.cancel_all();
         }

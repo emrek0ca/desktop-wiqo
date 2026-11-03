@@ -5,6 +5,8 @@
   const { listen } = window.__TAURI__.event;
   const NAMES = window.WIQO_OPERATIONS || {};
   const questions = [];
+  // A card that has just appeared takes no "yes" for a moment: a click or an Enter meant for something else must not answer it.
+  const ARMED_AFTER_MS = 600;
   let dock = null;
   let timer = null;
 
@@ -31,6 +33,7 @@
     dock.hidden = !question;
     clearInterval(timer);
     if (!question) return;
+    question.shownAt ??= Date.now();
     dock.querySelector(".ask-what").textContent = question.title || NAMES[question.kind] || question.kind;
     dock.querySelector(".ask-detail").textContent = question.detail || "";
     const tick = () => {
@@ -42,6 +45,7 @@
   }
 
   function answer(allow) {
+    if (allow && questions[0] && Date.now() - (questions[0].shownAt ?? 0) < ARMED_AFTER_MS) return;
     const question = questions.shift();
     if (question?.confirmation) settle(question, allow);
     else if (question) invoke("answer_approval", { id: question.id, allow });

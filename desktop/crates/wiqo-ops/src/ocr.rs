@@ -21,7 +21,8 @@ pub(crate) fn read(png: &std::path::Path) -> Vec<Word> {
         return Vec::new();
     };
     let request = VNRecognizeTextRequest::new();
-    request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
+    // Fast, not Accurate: Accurate took 46 s on a whole screen, and every action waited for it.
+    request.setRecognitionLevel(VNRequestTextRecognitionLevel::Fast);
     request.setUsesLanguageCorrection(true);
     request.setRecognitionLanguages(&NSArray::from_retained_slice(&[
         NSString::from_str("tr-TR"),

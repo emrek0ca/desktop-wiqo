@@ -738,6 +738,82 @@ fn show_panel(handle: &AppHandle, focus: bool) {
     }
 }
 
+const CURSOR: &str = "cursor";
+/// Stops whatever Wiqo is doing on the screen, from anywhere: ⌃⌥Esc, Ctrl+Alt+Esc.
+const STOP_SHORTCUT: &str = "ctrl+alt+Escape";
+
+/// Wiqo's own cursor: a window the size of the display, on top of everything, that clicks pass through and that screenshots leave out, so it never lands in what
+/// Wiqo reads from the screen. It moves to the display the action is on.
+fn cursor_window(handle: &AppHandle) -> Option<tauri::WebviewWindow> {
+    if let Some(window) = handle.get_webview_window(CURSOR) {
+        return Some(window);
+    }
+    let window = tauri::WebviewWindowBuilder::new(
+        handle,
+        CURSOR,
+        tauri::WebviewUrl::App("cursor.html".into()),
+    )
+    .title("Wiqo")
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .always_on_top(true)
+    .visible_on_all_workspaces(true)
+    .content_protected(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .focusable(false)
+    .focused(false)
+    .visible(false)
+    .build()
+    .ok()?;
+    let _ = window.set_ignore_cursor_events(true);
+    Some(window)
+}
+
+/// Points as the helper gives them to what the window draws in: logical points on macOS, physical pixels on Windows.
+fn show_cursor(handle: &AppHandle, event: wiqo_agent::CursorEvent) {
+    let Some(window) = cursor_window(handle) else {
+        return;
+    };
+    let mut payload = serde_json::json!({ "action": event.action, "label": event.label });
+    if let (Some(x), Some(y)) = (event.x, event.y) {
+        let monitors = window.available_monitors().unwrap_or_default();
+        let unit = |monitor: &tauri::Monitor| {
+            if cfg!(windows) {
+                1.0
+            } else {
+                monitor.scale_factor()
+            }
+        };
+        let holds = |monitor: &&tauri::Monitor| {
+            let (position, size) = (monitor.position(), monitor.size());
+            let (px, py) = (x * unit(monitor), y * unit(monitor));
+            px >= position.x as f64
+                && px < position.x as f64 + size.width as f64
+                && py >= position.y as f64
+                && py < position.y as f64 + size.height as f64
+        };
+        let Some(monitor) = monitors.iter().find(holds).or_else(|| monitors.first()) else {
+            return;
+        };
+        let _ = window.set_position(*monitor.position());
+        let _ = window.set_size(*monitor.size());
+        let scale = monitor.scale_factor();
+        payload["x"] = ((x * unit(monitor) - monitor.position().x as f64) / scale).into();
+        payload["y"] = ((y * unit(monitor) - monitor.position().y as f64) / scale).into();
+    }
+    let _ = window.show();
+    let _ = window.emit_to(CURSOR, "wiqo-cursor", payload);
+}
+
+#[tauri::command]
+fn hide_cursor(handle: AppHandle) {
+    if let Some(window) = handle.get_webview_window(CURSOR) {
+        let _ = window.hide();
+    }
+}
+
 #[tauri::command]
 fn stop_work(app: State<'_, App>) {
     app.desktop.stop_work();
@@ -878,6 +954,15 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|handle, _, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        handle.state::<App>().desktop.stop_work();
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -947,6 +1032,7 @@ fn main() {
             set_reads_without_phone,
             working,
             hide_panel,
+            hide_cursor,
             pending_approvals,
             show_main_window,
             report_problem,
@@ -956,6 +1042,13 @@ fn main() {
             restart_app
         ])
         .setup(move |app| {
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                // Another app may already hold it; the window's own "İşi durdur" still works, and so does touching the mouse.
+                let _ = app.global_shortcut().register(STOP_SHORTCUT);
+            }
+            let cursor_handle = app.handle().clone();
+            wiqo_agent::set_cursor_sink(Box::new(move |event| show_cursor(&cursor_handle, event)));
             tray(app.handle())?;
             login_item::first_launch(app.handle());
             desktop.watch_permissions();

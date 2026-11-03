@@ -417,6 +417,21 @@
       "effect": "none",
       "recovery": "stop"
     },
+    "DESKTOP_APPROVAL_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "DESKTOP_PERSON_ACTIVE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "retry_once"
+    },
+    "DESKTOP_STOPPED_BY_PERSON": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
     "DESKTOP_HOTKEY_BLOCKED": {
       "blocked": true,
       "effect": "none",

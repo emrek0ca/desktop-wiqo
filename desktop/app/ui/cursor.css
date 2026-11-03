@@ -1,0 +1,15 @@
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; pointer-events: none; }
+
+#cursor { position: fixed; left: 0; top: 0; transition: transform 260ms cubic-bezier(.22, .9, .3, 1), opacity 300ms; will-change: transform; font: 500 12px/1.3 -apple-system, "Segoe UI", sans-serif; }
+#cursor.dragging { transition-duration: 400ms; }
+#cursor.leaving { opacity: 0; }
+#cursor svg { position: absolute; left: -3px; top: -3px; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); }
+#cursor path { fill: #6d4aff; stroke: #fff; stroke-width: 2; stroke-linejoin: round; }
+
+#ripple { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%; border: 2px solid #6d4aff; opacity: 0; }
+#ripple.on { animation: ripple 420ms ease-out; }
+@keyframes ripple { from { transform: scale(.3); opacity: .9; } to { transform: scale(1.3); opacity: 0; } }
+
+#label { position: absolute; left: 22px; top: 22px; display: flex; gap: 8px; align-items: center; max-width: 320px; padding: 4px 9px; white-space: nowrap; color: #fff; background: #6d4aff; border-radius: 9px; box-shadow: 0 2px 8px rgba(0, 0, 0, .3); }
+#words { overflow: hidden; text-overflow: ellipsis; }
+#stop { font: inherit; font-size: 10px; opacity: .8; }
