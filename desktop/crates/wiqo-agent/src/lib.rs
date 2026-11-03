@@ -110,6 +110,7 @@ pub enum Event {
         id: String,
     },
     /// One event of a chat answer (`turn` is the message it belongs to): the server's own SSE events, plus `task`, `step_update` and `turnEnd`.
+    RunSync { account: String, event: serde_json::Value },
     Chat {
         turn: String,
         event: serde_json::Value,
@@ -532,6 +533,8 @@ impl Desktop {
         }))
     }
 
+    pub async fn watch_runs(&self) { self.chat.watch_runs(&self.shared.events).await; }
+
     pub fn events(&self) -> broadcast::Receiver<Event> {
         self.shared.events.subscribe()
     }
@@ -545,7 +548,20 @@ impl Desktop {
     }
 
     /// Starts the server connection in the background (once; a second call does nothing while it runs).
+    /// Reuses device credentials, or repairs only a first, interrupted account link.
+    pub async fn restore_connection(self: &Arc<Self>) {
+        if self.runtime.engine.settings().snapshot().connection_stopped { return; }
+        if self.is_paired() { self.connect(); return; }
+        if self.chat.token_for_device().is_none() { return; }
+        self.shared.state(&ConnectionState::Connecting);
+        let owner = self.chat.token_for_device();
+        if self.link_device_mode(true).await.is_err() && self.chat.token_for_device() == owner && !self.is_paired() {
+            self.shared.state(&ConnectionState::NotPaired);
+        }
+    }
+
     pub fn connect(self: &Arc<Self>) {
+        let _ = self.runtime.engine.settings().update(|data| data.connection_stopped = false);
         let mut relay = self.relay.lock().expect("relay lock");
         if relay.as_ref().is_some_and(|(task, _)| !task.is_finished()) || !self.is_paired() {
             return;
@@ -559,6 +575,7 @@ impl Desktop {
 
     /// Stops the connection: no command reaches this computer until `connect` again.
     pub fn disconnect(&self) {
+        let _ = self.runtime.engine.settings().update(|data| data.connection_stopped = true);
         if let Some((task, _)) = self.relay.lock().expect("relay lock").take() {
             task.abort();
         }
@@ -744,14 +761,19 @@ impl Desktop {
 
     /// The account's session becomes this computer's device session (`/device-sessions/bootstrap`), then the connection starts.
     async fn link_device(self: &Arc<Self>) -> Result<()> {
+        self.link_device_mode(false).await
+    }
+
+    async fn link_device_mode(self: &Arc<Self>, restore_only: bool) -> Result<()> {
         let token = self
             .chat
             .token_for_device()
             .ok_or_else(|| anyhow::anyhow!("Önce giriş yap."))?;
         let tokens = Api::new(&self.server)
-            .bootstrap(&token, &self.runtime.identity.device_id)
+            .bootstrap(&token, &self.runtime.identity.device_id, restore_only)
             .await
             .map_err(|error| anyhow::anyhow!("Bu bilgisayar hesabına bağlanamadı: {error}"))?;
+        if self.chat.token_for_device().as_deref() != Some(token.as_str()) { bail!("Hesap değişti; eski cihaz bağlantısı uygulanmadı."); }
         self.runtime.credentials.set(Credentials {
             api_base: self.server.clone(),
             access_token: tokens.access_token,

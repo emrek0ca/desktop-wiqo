@@ -1073,9 +1073,11 @@ fn main() {
             // Everything the runtime reports goes to the window as one `wiqo` event stream.
             let handle = app.handle().clone();
             let mut events = desktop.events();
+            let sync = desktop.clone();
+            tauri::async_runtime::spawn(async move { sync.watch_runs().await; });
             let connected = desktop.clone();
             tauri::async_runtime::spawn(async move {
-                connected.connect();
+                connected.restore_connection().await;
                 loop {
                     match events.recv().await {
                         Ok(event) => {

@@ -32,6 +32,7 @@ pub struct Chat {
     account: Mutex<Option<Account>>,
     http: reqwest::Client,
     stop: AtomicBool,
+    account_changed: tokio::sync::Notify,
     verifier: Mutex<Option<String>>,
 }
 
@@ -60,9 +61,11 @@ impl Chat {
             account: Mutex::new(account),
             http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(15))
+                .user_agent(concat!("wiqo-desktop/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .unwrap_or_default(),
             stop: AtomicBool::new(false),
+            account_changed: tokio::sync::Notify::new(),
             verifier: Mutex::new(None),
         }
     }
@@ -84,7 +87,9 @@ impl Chat {
             .ok_or_else(|| anyhow!("Önce Wiqo hesabınla giriş yap."))
     }
 
-    fn store(&self, account: Option<Account>) -> Result<()> {
+    fn store(&self, account: Option<Account>, expected_token: Option<&str>) -> Result<()> {
+        let mut current = self.account.lock().expect("account lock");
+        if expected_token.is_some() && current.as_ref().map(|item| item.token.as_str()) != expected_token { return Ok(()); }
         if self.vault.enabled() {
             self.vault
                 .update(|secrets| secrets.account = account.clone())?;
@@ -96,7 +101,8 @@ impl Chat {
                 }
             }
         }
-        *self.account.lock().expect("account lock") = account;
+        *current = account;
+        self.account_changed.notify_waiters();
         Ok(())
     }
 
@@ -124,7 +130,7 @@ impl Chat {
         let status = response.status();
         let value: Value = response.json().await.unwrap_or(Value::Null);
         if status.as_u16() == 401 && token.is_some() {
-            let _ = self.store(None);
+            let _ = self.store(None, token);
             bail!("Oturumun sona erdi; yeniden giriş yap.");
         }
         if !status.is_success() {
@@ -155,7 +161,7 @@ impl Chat {
         self.store(Some(Account {
             email: email.clone(),
             token,
-        }))?;
+        }), None)?;
         Ok(email)
     }
 
@@ -179,7 +185,7 @@ impl Chat {
         self.store(Some(Account {
             email: email.clone(),
             token,
-        }))?;
+        }), None)?;
         Ok(email)
     }
 
@@ -295,7 +301,7 @@ impl Chat {
         self.store(Some(Account {
             email: email.clone(),
             token,
-        }))?;
+        }), None)?;
         Ok(email)
     }
 
@@ -407,7 +413,7 @@ impl Chat {
     }
 
     pub fn sign_out(&self) -> Result<()> {
-        self.store(None)
+        self.store(None, None)
     }
 
     pub async fn conversations(&self) -> Result<Value> {
@@ -569,7 +575,7 @@ impl Chat {
             .await
             .map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
         if response.status().as_u16() == 401 {
-            let _ = self.store(None);
+            let _ = self.store(None, Some(&token));
             bail!("Oturumun sona erdi; yeniden giriş yap.");
         }
         if !response.status().is_success() {
@@ -804,6 +810,9 @@ impl Chat {
             if steps.is_empty() || answer["type"] == "error" {
                 return Ok(());
             }
+            if answer["deviceConnectivity"]["deviceId"].as_str().is_some_and(|target| !target.eq_ignore_ascii_case(device_id)) {
+                bail!("Bu görevin hedefi başka bir PC; adımlar bu bilgisayarda çalıştırılmadı.");
+            }
             let mut results = Vec::new();
             let mut uncertain = false;
             for step in &steps {
@@ -852,6 +861,46 @@ impl Chat {
         Ok(())
     }
 
+    /// Read-only observer: only the existing relay or originating request executes actions.
+    pub async fn watch_runs(&self, events: &broadcast::Sender<Event>) {
+        let mut delay = 1;
+        loop {
+            let changed = self.account_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let account = self.account.lock().expect("account lock").clone();
+            let Some(account) = account else { changed.await; continue; };
+            let token = account.token;
+            let request = self.http.get(format!("{}/runs/events", self.server))
+                .bearer_auth(&token).timeout(Duration::from_secs(15 * 60));
+            let result = tokio::select! { result = request.send() => result, _ = &mut changed => continue };
+            if let Ok(response) = result {
+                if response.status().as_u16() == 401 && self.token().ok().as_deref() == Some(token.as_str()) { let _ = self.store(None, Some(&token)); }
+                if response.status().is_success() {
+                    let mut bytes = response.bytes_stream();
+                    let mut buffer = Vec::new();
+                    loop {
+                        let next = tokio::select! { chunk = bytes.next() => chunk, _ = &mut changed => break };
+                        let Some(chunk) = next else { break; };
+                        if self.token().ok().as_deref() != Some(token.as_str()) { break; }
+                        let Ok(chunk) = chunk else { break; };
+                        buffer.extend_from_slice(&chunk);
+                        if buffer.len() > 2_000_000 { break; }
+                        while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                            let line: Vec<u8> = buffer.drain(..=end).collect();
+                            if let Some(event) = parse_event_line(&String::from_utf8_lossy(&line)) {
+                                delay = 1;
+                                let _ = events.send(Event::RunSync { account: account.email.clone(), event });
+                            }
+                        }
+                    }
+                }
+            }
+            tokio::select! { _ = tokio::time::sleep(Duration::from_secs(delay)) => {}, _ = &mut changed => continue }
+            delay = (delay * 2).min(30);
+        }
+    }
+
     /// Streams one request's events; when the stream breaks before its end, follows the request on the server instead.
     async fn stream(&self, token: &str, body: &Value, emit: &impl Fn(Value)) -> Result<Value> {
         let request_id = body["requestId"].as_str().unwrap_or("").to_string();
@@ -866,7 +915,7 @@ impl Chat {
             .await
             .map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
         if response.status().as_u16() == 401 {
-            let _ = self.store(None);
+            let _ = self.store(None, Some(token));
             bail!("Oturumun sona erdi; yeniden giriş yap.");
         }
         if !response.status().is_success() {
@@ -1066,7 +1115,7 @@ fn device_context(engine: &Engine, device_id: &str) -> Value {
         .map(|name| json!(name.chars().take(80).collect::<String>()))
         .collect();
     let capabilities: Vec<String> = engine.capabilities().into_iter().take(300).collect();
-    json!({ "deviceId": device_id, "availableApps": apps, "availableCapabilities": capabilities, "applicationTargets": targets, "authorities": authorities })
+    json!({ "surface": "desktop", "sourceDeviceId": device_id, "deviceId": device_id, "availableApps": apps, "availableCapabilities": capabilities, "applicationTargets": targets, "authorities": authorities })
 }
 
 /// Runs one step of the answer here and describes the result the way the server reads `deviceResults`.
@@ -1182,6 +1231,40 @@ mod tests {
     }
 
     #[test]
+    fn an_old_requests_unauthorized_reply_cannot_sign_out_the_new_account() {
+        let dir = DataDir::new(std::env::temp_dir().join(format!("wiqo-auth-race-{}", Uuid::new_v4()))).unwrap();
+        let chat = Chat::new("http://127.0.0.1:1", Arc::new(Vault::new(false)), &dir);
+        chat.store(Some(Account { email: "new@test.invalid".into(), token: "new-test-token".into() }), None).unwrap();
+        chat.store(None, Some("old-test-token")).unwrap();
+        assert_eq!(chat.email().as_deref(), Some("new@test.invalid"));
+        chat.store(None, Some("new-test-token")).unwrap();
+        assert!(chat.email().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_remote_tasks_steps_are_not_run_on_the_writing_computer() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = [0u8; 4096];
+            stream.read(&mut request).unwrap();
+            let body = format!("data: {}\n\n", json!({ "type": "done", "steps": [{ "id": Uuid::new_v4(), "type": "openURL" }], "deviceConnectivity": { "deviceId": "OTHER-PC" } }));
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let dir = DataDir::new(std::env::temp_dir().join(format!("wiqo-target-test-{}", Uuid::new_v4()))).unwrap();
+        let chat = Chat::new(&format!("http://{address}"), Arc::new(Vault::new(false)), &dir);
+        chat.store(Some(Account { email: "test@test.invalid".into(), token: "test-only-token".into() }), None).unwrap();
+        let engine = Engine::new(wiqo_contract::Platform::current(), Arc::new(wiqo_core::storage::Settings::open(&dir)), Arc::new(wiqo_core::ledger::Ledger::open(&dir)), wiqo_core::engine::Services::temporary());
+        let (events, _) = broadcast::channel(16);
+        let result = chat.send(&engine, "THIS-PC", &events, "turn", "conversation", json!([]), "Test", None, json!([])).await;
+        assert!(result.unwrap_err().to_string().contains("başka bir PC"));
+        server.join().unwrap();
+    }
+
+    #[test]
     fn only_plain_ids_can_be_put_in_a_path() {
         assert!(check_id("agent-dm-12").is_ok());
         assert!(check_id("agent-group-6f1c0c52-3c1e-4b0e-8d6e-0f3a2b1c9d7e").is_ok());
@@ -1205,6 +1288,8 @@ mod tests {
         );
         wiqo_ops::register_all(&mut engine).unwrap();
         let context = device_context(&engine, "ABC");
+        assert_eq!(context["surface"], "desktop");
+        assert_eq!(context["sourceDeviceId"], context["deviceId"]);
         for target in context["applicationTargets"].as_array().unwrap() {
             for key in target.as_object().unwrap().keys() {
                 assert!(

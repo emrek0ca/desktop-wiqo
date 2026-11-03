@@ -263,6 +263,8 @@ impl PairedPhones {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
+    #[serde(default)]
+    pub connection_stopped: bool,
     /// The owner allows the server's PC agent to run commands here without a phone confirmation each time. Off until the owner turns it on.
     #[serde(default)]
     pub full_access: bool,
@@ -281,7 +283,7 @@ fn on() -> bool {
 impl Default for SettingsData {
     fn default() -> Self {
         SettingsData {
-            full_access: false,
+            connection_stopped: false,            full_access: false,
             disabled_capabilities: BTreeSet::new(),
             reads_without_phone: true,
         }
@@ -379,6 +381,7 @@ mod tests {
         settings
             .update(|data| {
                 data.full_access = true;
+                data.connection_stopped = true;
                 data.disabled_capabilities
                     .insert("device.files.delete".into());
             })
@@ -391,6 +394,7 @@ mod tests {
         assert!(PairedPhones::open(&dir).list().is_empty());
         let settings = Settings::open(&dir);
         assert!(settings.full_access());
+        assert!(settings.snapshot().connection_stopped);
         assert!(!settings.capability_enabled("device.files.delete"));
         assert!(settings.capability_enabled("device.files.read"));
     }

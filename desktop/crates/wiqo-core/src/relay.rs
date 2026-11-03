@@ -421,7 +421,13 @@ impl Relay {
             .api
             .refresh(&self.runtime.identity.device_id, &credentials.refresh_token)
             .await
-            .map_err(|error| format!("token refresh: {error}"))?;
+            .map_err(|error| {
+                if error.is_unauthorized() {
+                    let _ = self.runtime.engine.settings().update(|data| data.connection_stopped = true);
+                    let _ = store.clear();
+                }
+                format!("token refresh: {error}")
+            })?;
         let updated = Credentials {
             api_base: credentials.api_base,
             access_token: tokens.access_token.clone(),

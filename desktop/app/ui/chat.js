@@ -14,6 +14,12 @@
   let members = new Map();
   let turn = null;
   let task = null;
+  let remoteTask = null;
+  let latestSync = null;
+  let syncAccount = null;
+  let accountGeneration = 0;
+  let remoteAgent = null;
+  let syncHistoryKey = "";
   let pending = [];
   let renderQueued = false;
 
@@ -88,11 +94,17 @@
 
   const isGroup = () => conversation.startsWith("agent-group-");
 
-  async function open(id) {
+  async function open(id, refresh = false) {
+    if (turn && refresh) return;
     if (turn) return toast("Çalışan cevap bitmeden sohbet değişmez; önce Durdur.", "bad");
-    conversation = id;
-    messages = [];
-    window.showSection("chat");
+    const owner = syncAccount;
+    if (!refresh) {
+      conversation = id;
+      messages = [];
+      remoteTask = null;
+      remoteAgent = null;
+      window.showSection("chat");
+    }
     render();
     renderList();
     members = new Map();
@@ -104,24 +116,32 @@
     }
     try {
       const value = await invoke("chat_messages", { conversation: id });
+      if (conversation !== id || owner !== syncAccount || (refresh && turn)) return;
+      const transient = messages.filter(message => !message.serverId);
       messages = (value.messages || []).map((item) => ({
         role: item.role === "user" ? "user" : "assistant",
+        serverId: item.id, taskId: item.taskId,
         text: item.role !== "user" && item.agentId && members.has(item.agentId) ? `**${members.get(item.agentId)}**\n\n${item.content || ""}` : item.content || "",
         widgets: item.widgets || [],
         artifacts: item.artifacts || [],
         steps: [],
         confirmations: [],
       }));
+      for (const message of transient) {
+        if (message.taskId && !messages.some(saved => saved.taskId === message.taskId && saved.role === message.role)) messages.push(message);
+      }
     } catch (error) {
       toast(String(error), "bad");
     }
     render(true);
     setTitle();
+    if (latestSync) applyRunSync(latestSync, false);
   }
 
   function fresh() {
     if (turn) return toast("Çalışan cevap bitmeden yeni sohbet açılmaz; önce Durdur.", "bad");
     conversation = uuid();
+    remoteTask = null;
     messages = [];
     window.showSection("chat");
     render(true);
@@ -438,8 +458,8 @@
     rows.forEach((row, position) => { if (box.children[position] !== row) box.insertBefore(row, box.children[position] ?? null); });
     while (box.children.length > rows.length) box.lastElementChild.remove();
     $("chat-empty").hidden = messages.length > 0;
-    $("chat-send").hidden = turn !== null;
-    $("chat-stop").hidden = turn === null;
+    $("chat-send").hidden = turn !== null || remoteTask !== null || remoteAgent !== null;
+    $("chat-stop").hidden = turn === null && remoteTask === null && remoteAgent === null;
     if (atBottom) scroller.scrollTop = scroller.scrollHeight;
     renderSide();
   }
@@ -491,7 +511,7 @@
 
   async function send(text, answer) {
     const message = String(text || "").trim();
-    if ((!message && !pending.length) || turn) return;
+    if ((!message && !pending.length) || turn || remoteTask || remoteAgent) return;
     window.showSection("chat");
     if (isGroup()) return sendGroup(message);
     const history = messages.slice(-16).map((item) => ({ role: item.role, content: String(item.text).slice(0, 4000) }));
@@ -533,8 +553,67 @@
   let groupLive = new Map();
   const groupMessage = (agentId, text) => ({ role: "assistant", agentId, text: `**${members.get(agentId) || "Ajan"}**\n\n${text}`, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [] });
 
+  function applyRunSync(sync, hydrate = true) {
+    if (sync.type !== "snapshot") return;
+    latestSync = sync;
+    if (Array.isArray(sync.conversations)) { conversations = sync.conversations; renderList(); }
+    const rows = (sync.requests || []).filter(row => row.conversationId === conversation);
+    const summary = (sync.conversations || []).find(item => item.id === conversation);
+    const historyKey = JSON.stringify([conversation, summary?.updatedAt, summary?.turnCount, rows.map(row => [row.requestId, row.status])]);
+    if (hydrate && !turn && summary && historyKey !== syncHistoryKey) { syncHistoryKey = historyKey; open(conversation, true); }
+    remoteTask = null;
+    remoteAgent = null;
+    for (const row of rows.slice().reverse()) {
+      if (turn && row.taskId === task) {
+        if (row.cancelled) invoke("chat_cancel", { task, conversation });
+        continue;
+      }
+      const response = row.response || {};
+      const active = !row.cancelled && ["running", "awaiting_backend_confirmation", "awaiting_weather_location"].includes(row.status);
+      let reply = messages.find(message => message.role === "assistant" && (message.requestId === row.requestId || message.taskId === row.taskId));
+      if (!reply) {
+        if (!active) continue;
+        messages.push({ role: "user", text: row.goal || "Görev", taskId: row.taskId });
+        reply = { role: "assistant", text: "", taskId: row.taskId, requestId: row.requestId, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [], trace: newTrace() };
+        messages.push(reply);
+      }
+      if ((reply.revision || 0) > row.revision || (reply.cancelled && !row.cancelled)) continue;
+      reply.revision = row.revision;
+      reply.error = row.status === "failed";
+      reply.trace ||= newTrace();
+      reply.requestId = row.requestId;
+      reply.taskId = row.taskId;
+      reply.cancelled = row.cancelled;
+      if (typeof response.reply === "string" && (!response.truncated || !reply.text)) reply.text = response.reply;
+      if (response.widgets) reply.widgets = response.widgets;
+      if (response.artifacts) reply.artifacts = response.artifacts;
+      if (response.steps) reply.steps = response.steps;
+      reply.confirmations = active ? response.backendConfirmations || [] : [];
+      if (response.agentTask) {
+        reply.tasks = [{ ...response.agentTask, type: "agent_task" }];
+        if (response.agentTask.status === "running") remoteAgent = response.agentTask.id;
+      }
+      if (active) remoteTask = row.taskId;
+      else {
+        finishTrace(reply.trace, row.status === "failed");
+        if (row.cancelled) reply.note = "Görev durduruldu.";
+      }
+    }
+    render();
+  }
+
   listen("wiqo", (event) => {
     const payload = event.payload;
+    if (payload.type === "runSync") {
+      if (payload.account !== syncAccount) return;
+      const sync = payload.event;
+      if (sync.type === "snapshot") applyRunSync(sync);
+      else if (sync.type === "copilot" && sync.conversationId === conversation && !(turn && sync.taskId === task)) {
+        const reply = messages.find(message => message.role === "assistant" && message.requestId === sync.requestId);
+        if (reply && !reply.cancelled) applyChatEvent(reply, sync.event, false);
+      }
+      return;
+    }
     if (payload.type === "thread" && turn && payload.turn === turn && payload.thread === conversation) {
       const data = payload.event;
       switch (data.type) {
@@ -569,10 +648,14 @@
     }
     if (payload.type !== "chat" || payload.turn !== turn) return;
     const reply = messages[messages.length - 1];
-    const data = payload.event;
+    applyChatEvent(reply, payload.event, true);
+  });
+
+  function applyChatEvent(reply, data, local) {
     switch (data.type) {
       case "task":
-        task = data.taskId;
+        reply.taskId = data.taskId;
+        if (local) task = data.taskId;
         break;
       case "activity":
         if (data.activity) apply(reply.trace, data.activity);
@@ -585,7 +668,8 @@
         break;
       case "location_required":
         note(reply.trace, "Konum gerekiyor");
-        locate(reply, data.requestId, data.prompt);
+        if (local) locate(reply, data.requestId, data.prompt);
+        else reply.location = { requestId: data.requestId, prompt: data.prompt || "Hangi şehir için bakayım?", state: "ask" };
         break;
       case "delta":
         reply.text += data.text || "";
@@ -632,13 +716,13 @@
           reply.note = data.error;
         }
         finishTrace(reply.trace, Boolean(reply.error));
-        turn = null;
-        task = null;
+        if (local) { turn = null; task = null; }
         loadConversations();
+        if (latestSync) applyRunSync(latestSync);
         break;
     }
     render();
-  });
+  }
 
   // ----- composer -----
 
@@ -666,7 +750,8 @@
     if (reply?.trace) note(reply.trace, "Durduruluyor");
     render();
     if (isGroup()) await invoke("thread_stop", { thread: conversation });
-    else if (task) await invoke("chat_cancel", { task, conversation });
+    else if (remoteAgent) await invoke("work_cancel", { task: remoteAgent });
+    else if (task || remoteTask) await invoke("chat_cancel", { task: task || remoteTask, conversation });
   };
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && turn && task) $("chat-stop").click();
@@ -712,10 +797,16 @@
     renderList();
     setTitle();
   });
-  window.addEventListener("wiqo-signed-in", loadConversations);
-  invoke("chat_account").then((email) => {
+  async function refreshAccount() {
+    const generation = ++accountGeneration;
+    const email = await invoke("chat_account");
+    if (generation !== accountGeneration) return;
+    syncAccount = email;
     if (email) loadConversations();
-  });
+  }
+  window.addEventListener("wiqo-signed-in", refreshAccount);
+  window.addEventListener("wiqo-signed-out", () => { accountGeneration++; syncAccount = null; syncHistoryKey = ""; latestSync = null; remoteTask = null; remoteAgent = null; turn = null; task = null; messages = []; conversations = []; render(); renderList(); });
+  refreshAccount();
   render(true);
   // The Ajanlar page opens a teammate's direct chat here: it is Wiqo's own chat, the server resolves the agent from the conversation id.
   window.WiqoChat = { open };

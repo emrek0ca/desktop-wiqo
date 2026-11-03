@@ -147,12 +147,13 @@ impl Api {
         &self,
         account_token: &str,
         device_id: &str,
+        restore_only: bool,
     ) -> Result<Tokens, ApiError> {
         let response = self
             .http
             .post(format!("{}/device-sessions/bootstrap", self.base))
             .bearer_auth(account_token)
-            .json(&json!({ "deviceId": device_id }))
+            .json(&json!({ "deviceId": device_id, "restoreOnly": restore_only }))
             .send()
             .await?;
         Self::parse(response).await
