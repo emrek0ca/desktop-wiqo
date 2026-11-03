@@ -93,13 +93,13 @@ async fn remove_phone(app: State<'_, App>, pairing_id: String) -> Reply<Snapshot
 }
 
 #[tauri::command]
-fn set_connected(app: State<'_, App>, on: bool) -> Snapshot {
+async fn set_connected(app: State<'_, App>, on: bool) -> Reply<Snapshot> {
     if on {
         app.desktop.connect();
     } else {
         app.desktop.disconnect();
     }
-    app.desktop.snapshot()
+    Ok(app.desktop.snapshot())
 }
 
 #[tauri::command]
@@ -868,7 +868,7 @@ fn tray(handle: &AppHandle) -> tauri::Result<()> {
                     desktop.disconnect();
                     let _ = pause_item.set_text("Bağlantıyı başlat");
                 } else {
-                    desktop.connect();
+                    tauri::async_runtime::spawn(async move { desktop.connect(); });
                     let _ = pause_item.set_text("Bağlantıyı durdur");
                 }
                 let _ = app.emit("wiqo", Event::Phones);
