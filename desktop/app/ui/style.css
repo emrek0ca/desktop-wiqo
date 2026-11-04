@@ -829,3 +829,78 @@ input, textarea, select { border-radius: var(--r-sm); }
 #t-send[hidden], #t-stop[hidden] { display: none; }
 .thread-composer .primary { flex: none; }
 @media (max-width: 1100px) { .thread-side { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; box-shadow: -12px 0 32px rgba(0,0,0,.12); } .threads-panel { position: relative; } }
+
+/* ---- Cloud page, glass sides, soft depth, sliding pills (the web components of easyui.site, in this app's one-ink language) ---- */
+:root {
+  --cloud-base: #f2f4f8; --cloud-a: rgba(255,255,255,.95); --cloud-b: rgba(214,226,246,.8); --cloud-c: rgba(246,236,226,.75);
+  --glass: rgba(255,255,255,.55); --lift: 0 1px 2px rgba(17,24,39,.04), 0 6px 18px rgba(17,24,39,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cloud-base: #0b0b0e; --cloud-a: rgba(34,38,52,.55); --cloud-b: rgba(22,32,48,.6); --cloud-c: rgba(34,28,34,.5);
+    --glass: rgba(17,17,20,.55); --lift: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+  }
+}
+/* Not flat white: a pale wash with four soft clouds that stays put while the content scrolls over it. */
+body {
+  background:
+    radial-gradient(60vw 50vh at 8% 4%, var(--cloud-a), transparent 70%),
+    radial-gradient(55vw 55vh at 96% 22%, var(--cloud-b), transparent 70%),
+    radial-gradient(60vw 50vh at 10% 96%, var(--cloud-c), transparent 70%),
+    radial-gradient(50vw 45vh at 88% 92%, var(--cloud-a), transparent 70%),
+    var(--cloud-base);
+  background-attachment: fixed;
+}
+.left, .right { background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(1.2); backdrop-filter: blur(24px) saturate(1.2); }
+.center { background: transparent; box-shadow: none; border-radius: 0; }
+.thread-side { background: var(--glass); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+/* White surfaces lift off the cloud with a hairline and a whisper of shadow. */
+.card, .side-card, .w-card, .place-card, .idea, .modal-card, .composer, .composer-card, .new-chat { box-shadow: var(--lift); }
+.t-row { border: 1px solid transparent; border-radius: 16px; padding: 10px; transition: background .15s, border-color .15s, box-shadow .15s; }
+.t-row:hover, .t-row.active { background: var(--canvas); border-color: var(--line); box-shadow: var(--lift); }
+
+/* Pill navigation: the active pill is one element that slides between the items (position set from app.js). */
+.tabs, .left-nav { position: relative; }
+.pill-slider { position: absolute; top: 0; left: 0; height: 0; width: 0; border-radius: 999px; background: var(--canvas); box-shadow: var(--lift); border: 1px solid var(--line-soft); pointer-events: none; transition: transform .28s cubic-bezier(.3,.8,.3,1), width .28s cubic-bezier(.3,.8,.3,1), height .28s; z-index: 0; }
+.tabs > button, .left-nav > button { position: relative; z-index: 1; }
+.tabs.sliding button.active, .left-nav.sliding .nav.active { background: transparent; }
+.tabs.sliding button:hover:not(.active), .left-nav.sliding .nav:hover:not(.active) { background: transparent; color: var(--ink); }
+
+/* Avatar stack: the hovered face rises and grows. */
+.t-stack .t-avatar { transition: transform .18s cubic-bezier(.3,.8,.3,1); position: relative; }
+.t-stack .t-avatar:hover { transform: translateY(-3px) scale(1.12); z-index: 2; }
+
+/* Agent thread: roomier bubbles, soft cards for the work bar. */
+.thread-head { padding: 14px 24px; background: var(--glass); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.thread-scroll { padding: 26px 24px 10px; }
+.thread-messages { gap: 16px; max-width: 800px; }
+.t-bubble { background: var(--canvas); border: 1px solid var(--line-soft); box-shadow: var(--lift); border-radius: 20px; padding: 10px 16px; line-height: 1.55; }
+.t-bubble.user { border-color: var(--ink); }
+.t-line { animation: rise .22s ease; }
+.thread-composer { max-width: 836px; padding: 12px 24px 20px; }
+.thread-composer textarea { border-radius: 24px; padding: 11px 18px; box-shadow: var(--lift); }
+.thread-mentions { max-width: 836px; padding: 6px 24px 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.thread-mentions::-webkit-scrollbar { display: none; }
+.t-chip { flex: none; padding: 5px 12px 5px 6px; font-size: 12.5px; background: var(--canvas); box-shadow: var(--lift); transition: transform .12s, background .12s; }
+.t-chip:active { transform: scale(.96); }
+.t-chip.quiet { background: transparent; box-shadow: none; padding: 5px 12px; }
+.thread-work { flex-direction: column; align-items: stretch; margin: 10px 24px 0; padding: 12px 14px; background: var(--canvas); border: 1px solid var(--line); box-shadow: var(--lift); border-radius: 18px; gap: 10px; }
+.t-work-bar { display: flex; align-items: center; gap: 8px; }
+.t-fold { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; color: var(--text3); border-radius: 50%; flex: none; }
+.t-fold:hover { background: var(--fill); color: var(--ink); }
+.t-fold .sf { display: inline-block; transition: transform .2s; }
+.thread-work.folded .t-fold .sf { transform: rotate(-90deg); }
+.t-work-steps { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.thread-work.folded .t-work-steps { display: none; }
+.t-work-steps .t-step { animation: rise .2s ease both; font-size: 12.5px; }
+.t-work-steps .t-step:nth-child(2) { animation-delay: .04s; } .t-work-steps .t-step:nth-child(3) { animation-delay: .08s; } .t-work-steps .t-step:nth-child(4) { animation-delay: .12s; } .t-work-steps .t-step:nth-child(n+5) { animation-delay: .16s; }
+.t-step-dot { display: grid; place-items: center; }
+.t-step-dot.pending { color: var(--text3); }
+.agent-track { height: 4px; border-radius: 999px; background: var(--fill); overflow: hidden; }
+.agent-track > div { height: 100%; background: var(--ink); border-radius: 999px; transition: width .4s ease; }
+
+/* Google Workspace item card */
+.w-workspace .w-preview { background: var(--fill); border-radius: var(--r-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; }
+.w-workspace .w-preview-line { color: var(--text2); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.w-workspace .w-facts { display: grid; grid-template-columns: 88px 1fr; gap: 6px 12px; font-size: 12.5px; }
+.w-workspace .w-fact-value { user-select: text; }

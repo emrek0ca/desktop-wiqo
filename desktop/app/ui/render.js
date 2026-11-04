@@ -635,6 +635,32 @@
     return listCard(widget.title || "Liste", rows, { subtitle, icon: ICONS[widget.domain] || "list.bullet" });
   }
 
+  // One Google Workspace item (document, spreadsheet, slide deck, form, event, folder, task, mail draft) that was made, opened or changed: the app and what
+  // happened, a few preview lines and facts, and the buttons that open it in its own app (an event's Meet link is one).
+  const WORKSPACE_ACTION = { created: "Oluşturuldu", opened: "Açıldı", updated: "Güncellendi", shared: "Paylaşıldı", scheduled: "Planlandı", completed: "Tamamlandı", drafted: "Taslak", moved: "Taşındı" };
+  function workspaceCard(widget) {
+    const box = card(widget.title || "Google Workspace", [widget.subtitle, WORKSPACE_ACTION[widget.action]].filter(Boolean).join(" · "), `wiqo.${widget.app || "docs"}`);
+    box.classList.add("w-workspace");
+    const lines = (widget.lines || []).filter(Boolean).slice(0, 4);
+    if (lines.length) {
+      const preview = el("div", "w-preview");
+      for (const line of lines) preview.append(el("div", "w-preview-line", line));
+      box.append(preview);
+    }
+    const facts = (widget.facts || []).filter((fact) => fact && fact.label && fact.value);
+    if (facts.length) {
+      const list = el("div", "w-facts");
+      for (const fact of facts) list.append(el("span", "w-fact-label muted", fact.label), el("span", "w-fact-value", fact.value));
+      box.append(list);
+    }
+    const safe = (url) => typeof url === "string" && /^https?:\/\//u.test(url);
+    const actions = el("div", "w-actions");
+    if (safe(widget.url)) actions.append(button("Aç", "primary", () => openLink(widget.url)));
+    for (const link of widget.links || []) if (link && link.label && safe(link.url)) actions.append(button(link.label, "secondary", () => openLink(link.url)));
+    if (actions.childNodes.length) box.append(actions);
+    return box;
+  }
+
   function mapWidget(widget) {
     const title = widget.title || (widget.mode === "route" ? `${widget.origin || "Konumun"} → ${widget.destination}` : widget.query || widget.location || "Harita");
     const box = card(title, widget.detail || (widget.near ? `${widget.near} yakınında` : ""), "map");
@@ -888,7 +914,6 @@
   // A long task of the agent: who is doing it, how far it is, each step with its own state, and what it waits for.
   const PERSONA_IMAGE = { general: "agent-general", research: "agent-research", developer: "agent-developer", execution: "agent-execution" };
   const TASK_KIND = { agent_task: "Ajan görevi", project_task: "Proje görevi", deferred_task: "Zamanlı görev", act_task: "Act" };
-  const STEP_MARK = { done: "✓", failed: "!", running: "", pending: "" };
 
   function duration(seconds) {
     if (!Number.isFinite(seconds) || seconds <= 0) return "";
@@ -920,7 +945,10 @@
       const list = el("ol", "task-steps");
       for (const step of steps.slice(0, 12)) {
         const row = el("li", `task-step ${step.status || "pending"}`);
-        row.append(el("span", "task-mark", STEP_MARK[step.status] ?? ""));
+        const mark = el("span", "task-mark");
+        if (step.status === "done") mark.append(icon("checkmark", 11));
+        else if (step.status === "failed") mark.append(icon("xmark", 10));
+        row.append(mark);
         const text = el("div", "row-text");
         text.append(el("div", "row-title", step.title || "Adım"));
         if (step.brief && step.status !== "pending") text.append(el("div", "row-sub", step.brief));
@@ -966,6 +994,7 @@
       case "table": return tableCard(item.columns || [], item.rows || [], item.totalRows);
       case "map": return mapWidget(item);
       case "card": return smallCard(item, ctx);
+      case "workspace": return workspaceCard(item);
       case "inline_app": return inlineApp(item);
       case "terminal_undo": return undoCard(item, "terminal", ctx);
       case "file_undo": return undoCard(item, "file", ctx);

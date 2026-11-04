@@ -43,6 +43,13 @@
     for (const member of members.slice(0, 3)) box.append(avatar(member.persona, size));
     return box;
   };
+  // A job step's state as one mark: a check, a cross, the small spinner while it runs, a quiet circle while it waits.
+  const stepDot = (status) => {
+    const dot = el("span", `t-step-dot ${status}`);
+    if (status === "running") dot.append(el("span", "spinner tiny"));
+    else dot.append(window.WiqoIcons.icon(status === "done" ? "checkmark" : status === "failed" ? "xmark" : "circle", status === "done" || status === "failed" ? 13 : 9));
+    return dot;
+  };
   const memberOf = (id) => open?.thread.members.find((member) => member.id === id);
   const activeWork = () => open?.work?.find((job) => ["running", "waiting_device", "waiting_input", "paused"].includes(job.state));
 
@@ -175,6 +182,8 @@
     head.append(clear);
   }
 
+  let workFolded = false;
+
   function renderWork() {
     const box = $("thread-work");
     box.replaceChildren();
@@ -182,6 +191,14 @@
     box.hidden = !job;
     if (!job) return;
     const active = activeWork() === job;
+    box.classList.toggle("folded", workFolded);
+    const bar = el("div", "t-work-bar");
+    // The steps fold away (the bar and its progress stay); the choice is kept while the window is open.
+    const fold = el("button", "t-fold");
+    fold.type = "button";
+    fold.title = "Adımları göster ya da gizle";
+    fold.append(window.WiqoIcons.icon("chevron.down", 14));
+    fold.onclick = () => { workFolded = !workFolded; box.classList.toggle("folded", workFolded); };
     const head = el("button", "t-work-head");
     const involved = open.thread.members.filter((member) => job.steps.some((step) => step.agentId === member.id));
     head.append(stack(involved.length ? involved : open.thread.members, 22));
@@ -191,11 +208,23 @@
     head.append(copy);
     if (active) { const track = el("div", "agent-track"); const fill = el("div"); fill.style.width = `${Math.round((job.done / Math.max(job.steps.length, 1)) * 100)}%`; track.append(fill); head.append(track); }
     head.onclick = () => showSide({ kind: "work", job });
-    box.append(head);
+    bar.append(fold, head);
     if (active) {
       const stop = el("button", "secondary small", "Durdur");
       stop.onclick = async () => { try { await invoke("work_cancel", { task: job.taskId }); } catch (error) { note(String(error)); } await openThread(open.thread.id, true); };
-      box.append(stop);
+      bar.append(stop);
+    }
+    box.append(bar);
+    if (job.steps.length > 0) {
+      const steps = el("div", "t-work-steps");
+      for (const step of job.steps) {
+        const item = el("div", "t-step");
+        item.append(stepDot(step.status), el("span", "t-step-title ellipsis", step.title));
+        const member = memberOf(step.agentId);
+        if (member) item.append(avatar(member.persona, 18));
+        steps.append(item);
+      }
+      box.append(steps);
     }
   }
 
@@ -222,22 +251,31 @@
     renderMessages();
   }
 
-  // The "@" word being typed, and the members it could be.
+  // In a group the members are always one tap away as chips above the field ("@Ada"); while an "@" word is being typed they narrow to the matching ones.
   function renderMentions() {
     const box = $("thread-mentions");
     box.replaceChildren();
     const input = $("t-input");
+    if (!open || open.thread.kind !== "group" || turn) { box.hidden = true; return; }
     const at = input.value.lastIndexOf("@");
     const word = at >= 0 ? input.value.slice(at + 1) : null;
-    if (!open || open.thread.kind !== "group" || word === null || /\s/u.test(word)) { box.hidden = true; return; }
-    const options = open.thread.members.filter((member) => !word || fold(member.name).startsWith(fold(word)));
+    const typing = word !== null && !/\s/u.test(word);
+    const options = typing ? open.thread.members.filter((member) => !word || fold(member.name).startsWith(fold(word))) : open.thread.members;
     box.hidden = options.length === 0;
+    const gap = () => (input.value && !/\s$/u.test(input.value) ? " " : "");
     for (const member of options) {
       const chip = el("button", "t-chip");
       chip.type = "button";
-      chip.append(avatar(member.persona, 18), document.createTextNode(` ${member.name}`));
-      chip.onclick = () => { input.value = `${input.value.slice(0, at)}@${member.name} `; renderMentions(); input.focus(); };
+      chip.append(avatar(member.persona, 20), document.createTextNode(` @${member.name}`));
+      chip.onclick = () => { input.value = typing ? `${input.value.slice(0, at)}@${member.name} ` : `${input.value}${gap()}@${member.name} `; renderMentions(); input.focus(); };
       box.append(chip);
+    }
+    if (!typing) {
+      // The words the server reads as "talk among yourselves"; the person finishes them with the topic.
+      const talk = el("button", "t-chip quiet", "Birbirinizle konuşun");
+      talk.type = "button";
+      talk.onclick = () => { input.value = `${input.value}${gap()}Birbirinizle konuşun: `; renderMentions(); input.focus(); };
+      box.append(talk);
     }
   }
 
@@ -438,7 +476,7 @@
     const frame = sideFrame(job.title, null, "");
     for (const step of job.steps) {
       const item = el("div", "t-step");
-      item.append(el("span", `t-step-dot ${step.status}`, step.status === "done" ? "✓" : step.status === "failed" ? "✕" : step.status === "running" ? "…" : "·"), el("span", "t-step-title", step.title), el("span", "muted small", step.agentName || ""));
+      item.append(stepDot(step.status), el("span", "t-step-title", step.title), el("span", "muted small", step.agentName || ""));;
       frame.body.append(item);
     }
     if (job.summary) frame.body.append(field("Sonuç", el("div", "md small", job.summary)));
