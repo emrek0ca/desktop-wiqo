@@ -702,7 +702,9 @@ input, textarea, select { border-radius: var(--r-sm); }
 .task-step.pending { opacity: .55; }
 .task-time { font-size: 11.5px; color: var(--text3); margin-top: 3px; white-space: nowrap; }
 .task-more { font-size: 12px; color: var(--text3); padding-left: 29px; }
-.task-waiting { padding: 10px 14px; border-radius: 14px; background: var(--warn-bg); color: var(--warn); font-size: 13px; }
+.task-waiting { padding: 10px 14px; border-radius: 14px; background: var(--warn-bg); color: var(--warn); font-size: 13px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.task-waiting-title { font-weight: 600; font-size: 12.5px; }
+.task-waiting-question { color: var(--ink); font-size: 14px; line-height: 1.45; }
 .task-card.state-done { border-color: var(--ok-line); }
 .task-card.state-failed { border-color: var(--bad); }
 

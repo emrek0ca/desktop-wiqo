@@ -933,8 +933,11 @@
     titles.append(el("div", "w-title", item.title || item.name || "Görev"));
     titles.append(el("div", "w-sub", [TASK_KIND[item.type], item.progress || (steps.length ? `${done}/${steps.length} adım` : "")].filter(Boolean).join(" · ")));
     head.append(titles);
-    const label = { running: "Çalışıyor", waiting_device: "PC bekleniyor", waiting_input: "Cevabını bekliyor", paused: "Duraklatıldı", done: "Tamamlandı", failed: "Tamamlanamadı", cancelled: "İptal edildi" }[state] || statusLabel(item.status);
-    head.append(pill(label, state === "done" ? "success" : state === "failed" ? "danger" : state === "cancelled" || state === "paused" ? "neutral" : "warning"));
+    // The same words as the phone (iOS AgentTaskCard, Android AgentTaskStatus): what it waits for comes before "running".
+    const waitingFor = item.waiting?.reason === "approval" ? "approval" : item.waiting?.reason === "answer" || state === "waiting_input" ? "answer" : null;
+    const label = waitingFor === "approval" ? "Onayını bekliyor" : waitingFor === "answer" ? "Cevabını bekliyor"
+      : { running: "Çalışıyor", waiting_device: "PC bekleniyor", waiting_input: "Cevabını bekliyor", paused: "Duraklatıldı", done: "Tamamlandı", failed: "Tamamlanamadı", cancelled: "Durduruldu" }[state] || statusLabel(item.status);
+    head.append(pill(label, state === "done" ? "success" : state === "failed" ? "danger" : state === "cancelled" || state === "paused" ? "neutral" : waitingFor || state === "waiting_device" ? "warning" : "neutral"));
     box.append(head);
     if (steps.length) {
       const bar = el("div", `progress${state === "running" ? " running" : ""}`);
@@ -960,11 +963,27 @@
       if (steps.length > 12) list.append(el("li", "task-more", `+${steps.length - 12} adım daha`));
       box.append(list);
     }
-    if (item.waiting?.question) box.append(el("div", "task-waiting", item.waiting.question));
+    if (waitingFor === "answer") {
+      // A question is answered in this chat's own box, as on the phone.
+      const ask = el("div", "task-waiting");
+      ask.append(el("div", "task-waiting-title", "Cevabını bekliyorum"));
+      if (item.waiting?.question) ask.append(el("div", "task-waiting-question", item.waiting.question));
+      ask.append(button("Cevapla", "primary small", () => { const input = document.getElementById("chat-input"); if (input) { input.focus(); input.scrollIntoView({ block: "nearest" }); } }));
+      box.append(ask);
+    } else if (item.waiting?.question) box.append(el("div", "task-waiting", item.waiting.question));
     if (item.summary && (state === "done" || state === "failed")) box.append(markdown(item.summary));
     else if (item.error) box.append(callout(item.error, "warning"));
     const foot = el("div", "w-actions");
-    if (Number.isFinite(item.estimatedSeconds) && state === "running") foot.append(el("span", "w-sub small", `Tahmini ${duration(item.estimatedSeconds)}`));
+    if (Number.isFinite(item.estimatedSeconds) && state === "running" && !waitingFor) foot.append(el("span", "w-sub small", `Tahmini ${duration(item.estimatedSeconds)}`));
+    const live = ["running", "waiting_input", "waiting_device", "paused"].includes(state);
+    if (live && item.type === "agent_task" && Number.isFinite(Number(item.id))) {
+      const stop = button("Durdur", "secondary small", async () => {
+        stop.disabled = true;
+        try { await invoke("work_cancel", { task: Number(item.id) }); stop.textContent = "Durduruldu"; }
+        catch { stop.disabled = false; stop.textContent = "Durdurulamadı"; }
+      });
+      foot.append(stop);
+    }
     foot.append(button("Ajanlar'da aç", "secondary small", () => window.showSection?.("agents")));
     box.append(foot);
     return box;
