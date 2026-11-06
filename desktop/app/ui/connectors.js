@@ -31,44 +31,80 @@
 
   let last = null;
 
+  // The logos of the apps (the same files as the phone's Apps screen); an app without one shows its first letter.
+  const LOGOS = { google: "google.svg", notion: "notion.svg", slack: "slack.png", github: "github.svg", gitlab: "gitlab.svg", linear: "linear.svg", jira: "jira.svg", asana: "asana.svg",
+    dropbox: "dropbox.svg", microsoft: "microsoft.svg", x: "x.svg", reddit: "reddit.png", linkedin: "linkedin.svg" };
+
+  function logo(provider, size = "") {
+    const box = el("span", `app-logo ${size}`);
+    if (LOGOS[provider.id]) {
+      const image = document.createElement("img");
+      image.src = `img/apps/${LOGOS[provider.id]}`;
+      image.alt = "";
+      image.onerror = () => { image.remove(); box.textContent = provider.name.slice(0, 1); };
+      box.append(image);
+    } else box.textContent = provider.name.slice(0, 1);
+    return box;
+  }
+
+  // Tapping a connected app: its account, read-only or read and write, reconnect, disconnect (as the phone's long-press menu).
+  function sheet(provider, connection, needsReconnect, missing) {
+    const modal = el("div", "modal");
+    const card = el("div", "modal-card app-sheet");
+    const close = () => modal.remove();
+    modal.onclick = (event) => { if (event.target === modal) close(); };
+    const head = el("div", "app-sheet-head");
+    head.append(logo(provider, "big"));
+    const titles = el("div");
+    titles.append(el("div", "w-title", provider.name));
+    titles.append(el("div", "muted small", needsReconnect ? (missing.length ? "Bazı erişimler eksik" : "Bağlantının süresi doldu") : connection.accountLabel || "Bağlı"));
+    head.append(titles);
+    card.append(head);
+    const level = el("select", "app-level");
+    for (const [value, label] of [["write", "Oku ve yaz"], ["read", "Sadece oku"]]) {
+      const option = el("option", "", label);
+      option.value = value;
+      option.selected = (connection.accessLevel || "write") === value;
+      level.append(option);
+    }
+    level.onchange = () => { close(); run(provider.id, () => invoke("connector_access", { provider: provider.id, level: level.value })); };
+    const field = el("label", "app-sheet-field");
+    field.append(el("span", "muted small", "Erişim"), level);
+    card.append(field);
+    const actions = el("div", "modal-actions");
+    const cut = el("button", "secondary danger", "Bağlantıyı kes");
+    cut.onclick = () => { close(); run(provider.id, () => invoke("connector_disconnect", { provider: provider.id })); };
+    actions.append(cut, el("span", "spacer"));
+    if (needsReconnect) {
+      const again = el("button", "primary", "Yeniden bağla");
+      again.onclick = () => { close(); run(provider.id, () => invoke("connector_connect", { provider: provider.id })); };
+      actions.append(again);
+    }
+    const done = el("button", needsReconnect ? "secondary" : "primary", "Tamam");
+    done.onclick = close;
+    actions.append(done);
+    card.append(actions);
+    modal.append(card);
+    document.body.append(modal);
+  }
+
   function row(provider, data) {
     const connection = data.connections.find((item) => item.provider === provider.id);
     const missing = data.capabilities.filter((item) => item.owner === provider.id && item.status === "needs_scope");
     const needsReconnect = connection?.status === "needs_reconnect" || missing.length > 0;
-    const item = el("div", "app-row");
-    const text = el("div", "app-text");
-    text.append(el("div", "w-title", provider.name));
-    text.append(el("div", "muted small", connection
-      ? needsReconnect ? (missing.length ? "Bazı erişimler eksik" : "Bağlantının süresi doldu") : connection.accountLabel || "Bağlı"
-      : provider.summary || "Bağlı değil"));
-    item.append(text);
-    const actions = el("div", "app-actions");
-    if (busy === provider.id) actions.append(el("div", "spinner small-spinner"));
-    else if (connection) {
-      const level = el("select", "app-level");
-      for (const [value, label] of [["write", "Oku ve yaz"], ["read", "Sadece oku"]]) {
-        const option = el("option", "", label);
-        option.value = value;
-        option.selected = (connection.accessLevel || "write") === value;
-        level.append(option);
-      }
-      level.onchange = () => run(provider.id, () => invoke("connector_access", { provider: provider.id, level: level.value }));
-      actions.append(level);
-      if (needsReconnect) {
-        const again = el("button", "primary small", "Yeniden bağla");
-        again.onclick = () => run(provider.id, () => invoke("connector_connect", { provider: provider.id }));
-        actions.append(again);
-      }
-      const cut = el("button", "secondary small", "Kes");
-      cut.onclick = () => run(provider.id, () => invoke("connector_disconnect", { provider: provider.id }));
-      actions.append(cut);
-    } else {
-      const connect = el("button", "primary small", "Bağla");
-      connect.onclick = () => run(provider.id, () => invoke("connector_connect", { provider: provider.id }));
-      actions.append(connect);
-    }
-    item.append(actions);
-    return item;
+    const tile = el("button", `app-tile${connection ? (needsReconnect ? " warn" : " on") : ""}`);
+    tile.type = "button";
+    tile.append(logo(provider));
+    tile.append(el("span", "app-name", provider.name));
+    tile.append(el("span", "app-state", busy === provider.id ? "…" : connection ? (needsReconnect ? "Yeniden bağla" : connection.accountLabel || "Bağlı") : "Bağla"));
+    if (connection) tile.append(el("span", "app-dot"));
+    if (busy === provider.id) tile.classList.add("busy");
+    tile.onclick = () => {
+      if (busy) return;
+      if (connection) sheet(provider, connection, needsReconnect, missing);
+      else run(provider.id, () => invoke("connector_connect", { provider: provider.id }));
+    };
+    return tile;
   }
 
   function render(data) {

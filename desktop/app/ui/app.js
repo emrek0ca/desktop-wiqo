@@ -146,7 +146,9 @@ const SECTION_TITLES = { status: "Ayarlar", agents: "Ayarlar", activity: "Ayarla
 const SETTINGS_TABS = ["permissions", "status", "agents", "activity"];
 
 function showSection(name) {
-  for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === name);
+  // The settings pages (Genel, Durum, Rutinler, Etkinlik) all sit under the one "Ayarlar" item of the top pill.
+  const group = SETTINGS_TABS.includes(name) ? "permissions" : name;
+  for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === group);
   for (const panel of document.querySelectorAll(".panel")) panel.hidden = panel.dataset.panel !== name;
   document.body.dataset.section = name;
   $("settings-tabs").hidden = !SETTINGS_TABS.includes(name);
@@ -170,7 +172,7 @@ function slidePill(container) {
   slider.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
 }
 function slidePills() {
-  requestAnimationFrame(() => { slidePill($("settings-tabs")); slidePill(document.querySelector(".left-nav")); });
+  requestAnimationFrame(() => { slidePill($("settings-tabs")); slidePill($("top-seg")); });
 }
 window.addEventListener("resize", slidePills);
 window.showSection = showSection;

@@ -91,10 +91,6 @@
       <button id="new-chat" class="new-chat"><span data-symbol="square.and.pencil" data-size="15" data-weight="0"></span>Yeni sohbet</button>
       <label class="search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="search" type="text" placeholder="Ara"></label>
       <div id="conversation-list" class="conv-list"></div>
-      <nav class="left-nav">
-        <button class="nav" data-section="threads"><span data-symbol="person.2" data-size="15" data-weight="0"></span>Ajanlar</button>
-        <button class="nav" data-section="apps"><span data-symbol="link" data-size="15" data-weight="0"></span>Uygulamalar</button>
-      </nav>
       <div id="voice-model" class="voice-model" hidden></div>
       <div class="me">
         <button id="me-settings" class="me-main" data-goto="permissions" title="Ayarlar">
@@ -111,11 +107,19 @@
 
     <main class="center">
       <div class="topbar" data-tauri-drag-region>
-        <button class="icon-button" data-toggle="left" id="open-left" title="Kenar çubuğunu aç (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
+        <button class="icon-button round" data-toggle="left" id="open-left" title="Kenar çubuğunu aç (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
         <div id="top-title" class="top-title" data-tauri-drag-region>Yeni sohbet</div>
-        <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
-        <button class="icon-button phones-link" title="Telefon"><span data-symbol="iphone" data-size="16" data-weight="0"></span></button>
-        <button id="session-toggle" class="icon-button" data-toggle="right" title="Oturum çubuğu (⌘I)"><span data-symbol="list.bullet" data-size="16" data-weight="0"></span></button>
+        <nav id="top-seg" class="seg" aria-label="Bölümler">
+          <button class="nav" data-section="chat" title="Sohbet"><span data-symbol="sparkle" data-size="15" data-weight="0"></span><span class="seg-label">Sohbet</span></button>
+          <button class="nav" data-section="threads" title="Ajanlar"><span data-symbol="person.2" data-size="15" data-weight="0"></span><span class="seg-label">Ajanlar</span></button>
+          <button class="nav" data-section="apps" title="Uygulamalar"><span data-symbol="link" data-size="15" data-weight="0"></span><span class="seg-label">Uygulamalar</span></button>
+          <button class="nav" data-section="permissions" title="Ayarlar"><span data-symbol="gearshape" data-size="15" data-weight="0"></span><span class="seg-label">Ayarlar</span></button>
+        </nav>
+        <div class="top-right">
+          <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
+          <button class="icon-button phones-link" title="Telefon"><span data-symbol="iphone" data-size="16" data-weight="0"></span></button>
+          <button id="session-toggle" class="icon-button" data-toggle="right" title="Oturum çubuğu (⌘I)"><span data-symbol="list.bullet" data-size="16" data-weight="0"></span></button>
+        </div>
       </div>
       <div id="update-banner" class="banner" hidden>
         <span id="update-text">Yeni sürüm hazır.</span>
@@ -221,8 +225,8 @@
       </div>
 
       <div class="panel page" data-panel="apps" hidden>
-        <p class="muted small">Wiqo'nun senin adına bakabileceği ve yapabileceği hesaplar. Bağladığın bir uygulamayı istediğin an kesebilir ya da "sadece oku" yapabilirsin.</p>
-        <div id="apps-list" class="card apps-list"></div>
+        <p class="muted small apps-lead">Wiqo'nun senin adına bakabileceği ve yapabileceği hesaplar. Bağladığın bir uygulamayı istediğin an kesebilir ya da "sadece oku" yapabilirsin.</p>
+        <div id="apps-list" class="apps-grid"></div>
         <p id="apps-soon" class="muted small" hidden></p>
         <p id="apps-error" class="error small" hidden></p>
       </div>
