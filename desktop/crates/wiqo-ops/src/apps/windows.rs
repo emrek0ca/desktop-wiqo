@@ -467,9 +467,14 @@ pub(super) fn protected(target: &Target) -> Option<WireError> {
     })
 }
 
+/// Chrome, Edge, Firefox, Brave, Opera and Vivaldi take an address on the command line and open it as a new tab of the window already open.
 pub(super) fn open_blank_tab(target: &Target) -> Result<(), String> {
-    Err(format!(
-        "{} için yeni sekme isteği bu sistemde desteklenmiyor.",
-        target.name
-    ))
+    let failed = || format!("{} için yeni sekme açılamadı.", target.name);
+    let path = target.path.as_deref().filter(|path| identity_of(path).is_some()).ok_or_else(failed)?;
+    crate::process::command(path).arg("about:blank").spawn().map(|_| ()).map_err(|_| failed())
+}
+
+/// No browser here lets another program close its tabs; the person's own window is used instead.
+pub(super) fn close_other_tabs(target: &Target, _keep: &str) -> Result<super::ClosedTabs, (&'static str, String)> {
+    Err(("APPLICATION_ACTION_UNAVAILABLE", format!("{} sekmelerini bu sistemde Wiqo kapatamıyor; diğer sekmeleri ekrandan (sekmeye sağ tık > Diğer sekmeleri kapat) kapatmak gerekir.", target.name)))
 }

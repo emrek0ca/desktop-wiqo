@@ -218,6 +218,11 @@ pub(super) fn open_blank_tab(target: &Target) -> Result<(), String> {
     ))
 }
 
+/// No browser here lets another program close its tabs; the person's own window is used instead.
+pub(super) fn close_other_tabs(target: &Target, _keep: &str) -> Result<super::ClosedTabs, (&'static str, String)> {
+    Err(("APPLICATION_ACTION_UNAVAILABLE", format!("{} sekmelerini bu sistemde Wiqo kapatamıyor; diğer sekmeleri ekrandan (sekmeye sağ tık > Diğer sekmeleri kapat) kapatmak gerekir.", target.name)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

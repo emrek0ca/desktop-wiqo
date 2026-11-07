@@ -135,6 +135,12 @@ pub(crate) struct Target {
     pub path: Option<String>,
 }
 
+/// What close_other_tabs left: how many tabs it closed and the title of the one kept.
+pub(crate) struct ClosedTabs {
+    pub count: u32,
+    pub kept: String,
+}
+
 enum Resolution {
     Resolved(Target),
     Ambiguous(Vec<String>),
@@ -403,6 +409,8 @@ struct Control {
     target: String,
     bundle: Option<String>,
     force: bool,
+    /// close_other_tabs: words from the title or address of the tab to keep; empty keeps the tab in front.
+    keep: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -414,6 +422,8 @@ struct ControlPayload {
     bundle_identifier: Option<String>,
     #[serde(default)]
     force: bool,
+    #[serde(default)]
+    keep: Option<String>,
 }
 
 /// Resolves and executes a human application intent. Every state-changing branch observes the process again before claiming success.
@@ -560,6 +570,26 @@ async fn control(request: Control) -> std::result::Result<Value, (Option<Value>,
                     None,
                     tool_failure("APPLICATION_NEW_TAB_UNSUPPORTED", message),
                 )),
+                None => Err((
+                    None,
+                    tool_failure("OUTCOME_UNKNOWN", "İşlem beklenmedik şekilde durdu."),
+                )),
+            }
+        }
+        "close_other_tabs" => {
+            if running_now.is_none() {
+                return Err((None, tool_failure("APPLICATION_NOT_RUNNING", format!("{name} açık değil; kapatılacak sekme yok."))));
+            }
+            let app = application.clone();
+            let keep = request.keep.clone().unwrap_or_default();
+            match blocking(move || sys::close_other_tabs(&app, keep.trim())).await {
+                Some(Ok(closed)) => {
+                    let mut value = content("close_other_tabs", &name, bundle_ref, "running", "running", closed.count > 0, true, None);
+                    value["closedTabs"] = json!(closed.count);
+                    value["keptTab"] = json!(closed.kept);
+                    Ok(value)
+                }
+                Some(Err((code, message))) => Err((None, tool_failure(code, message))),
                 None => Err((
                     None,
                     tool_failure("OUTCOME_UNKNOWN", "İşlem beklenmedik şekilde durdu."),
@@ -753,6 +783,7 @@ impl Operation for OpenApplication {
             target: name.into(),
             bundle: None,
             force: false,
+            keep: None,
         })
         .await;
         finish_control(result, |_| format!("{name} açıldı ve kontrol edildi."))
@@ -784,6 +815,7 @@ impl Operation for OpenByName {
             target: query.clone(),
             bundle: None,
             force: false,
+            keep: None,
         })
         .await;
         match result {
@@ -819,7 +851,7 @@ impl Operation for ControlApplication {
             payload(value, "applicationControl", "uygulama eylemi");
         let request = match parsed {
             Ok(request)
-                if ["open", "activate", "new_tab", "quit"].contains(&request.action.as_str())
+                if ["open", "activate", "new_tab", "close_other_tabs", "quit"].contains(&request.action.as_str())
                     && !request.target.trim().is_empty() =>
             {
                 request
@@ -838,6 +870,7 @@ impl Operation for ControlApplication {
             target: request.target,
             bundle: request.bundle_identifier,
             force: request.force,
+            keep: request.keep,
         })
         .await;
         finish_control(result, move |value| {
@@ -849,6 +882,11 @@ impl Operation for ControlApplication {
                 "open" => format!("{name} açıldı ve doğrulandı."),
                 "activate" => format!("{name} öne getirildi ve doğrulandı."),
                 "new_tab" => format!("{name} içinde yeni sekme açıldı; uygulama öne geldi."),
+                "close_other_tabs" => match value["closedTabs"].as_u64() {
+                    Some(0) => format!("{name} ön penceresinde kapatılacak başka sekme yoktu."),
+                    Some(count) => format!("{name} ön penceresinde {count} sekme kapatıldı; kalan sekme: {}.", value["keptTab"].as_str().unwrap_or("öndeki sekme")),
+                    None => format!("{name} ön penceresindeki diğer sekmeler kapatıldı."),
+                },
                 _ if value["changed"] == false => format!("{name} zaten açık değildi."),
                 _ => format!("{name} kapatıldı ve doğrulandı."),
             }
@@ -878,6 +916,7 @@ impl Operation for QuitApplication {
             target: name.into(),
             bundle: None,
             force: true,
+            keep: None,
         })
         .await;
         match result {
@@ -890,6 +929,21 @@ impl Operation for QuitApplication {
         }
     }
 }
+
+/// Browsers whose tabs the Mac can list and close through their own scripting dictionary (Chromium's and Safari's).
+const TAB_SCRIPTABLE: [&str; 8] = [
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.canary",
+    "com.apple.Safari",
+    "com.apple.SafariTechnologyPreview",
+    "com.microsoft.edgemac",
+    "com.brave.Browser",
+    "com.vivaldi.Vivaldi",
+];
+
+/// Windows names an application by its executable; these take an address on the command line and open it as a tab of the running window.
+const WINDOWS_BROWSERS: [&str; 6] = ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"];
 
 const BROWSERS: [&str; 11] = [
     "com.google.Chrome",
@@ -930,7 +984,8 @@ pub(crate) fn targets() -> Vec<Value> {
         used_names.insert(normalized);
         let actions: &[&str] = match bundle {
             Some("com.apple.finder") => &["open", "activate"],
-            Some(id) if BROWSERS.contains(&id) => &["open", "activate", "new_tab", "quit"],
+            Some(id) if TAB_SCRIPTABLE.contains(&id) => &["open", "activate", "new_tab", "close_other_tabs", "quit"],
+            Some(id) if BROWSERS.contains(&id) || WINDOWS_BROWSERS.contains(&id) => &["open", "activate", "new_tab", "quit"],
             _ => &["open", "activate", "quit"],
         };
         out.push(json!({ "name": name, "bundleIdentifier": bundle.unwrap_or(""), "isRunning": is_running, "supportedActions": actions, "category": category.unwrap_or("") }));
@@ -971,7 +1026,7 @@ pub(crate) fn targets() -> Vec<Value> {
 
 /// Brings an application to the front and confirms it is there (a screenshot of the wrong window is worse than none).
 pub(crate) async fn activate_verified(target: &str) -> Result<()> {
-    match control(Control { action: "activate".into(), target: target.into(), bundle: None, force: false }).await {
+    match control(Control { action: "activate".into(), target: target.into(), bundle: None, force: false, keep: None }).await {
         Ok(value) if value["verified"] == true => Ok(()),
         Ok(_) => Err(tool_failure("APPLICATION_ACTIVATION_UNVERIFIED", format!("{target} öne getirilemedi; başka bir pencerenin görüntüsünü almamak için işlem durduruldu."))),
         Err((_, error)) => Err(error),

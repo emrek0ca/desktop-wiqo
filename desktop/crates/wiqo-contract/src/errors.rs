@@ -12,12 +12,13 @@ pub enum Effect {
     Uncertain,
 }
 
-/// What may be done next without asking: look again, try once more, or stop. No recovery means the model may choose another route or ask.
+/// What may be done next without asking: look again, try once more, take another route (never the same call), or stop. No recovery means the model may choose another route or ask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Recovery {
     Observe,
     RetryOnce,
+    Alternative,
     Stop,
 }
 

@@ -2,7 +2,7 @@
   "version": 1,
   "about": "One classification for every failure code the Mac and Windows companions, the browser and document workers and the backend report. The backend reads it (generated into src/tools/deviceErrorCodes.generated.ts) to decide, from the code rather than from the wording, whether to observe again, retry once or stop, and whether the step may have changed anything. contracts/companion/error-codes.mjs fails when a companion reports a code that is not listed here.",
   "fields": {
-    "recovery": "observe = look at the screen or page again first; retry_once = a transient error, one more try is safe; stop = no automatic repeat; null = the model may choose another route or ask.",
+    "recovery": "observe = look at the screen or page again first; retry_once = a transient error, one more try is safe; alternative = this call cannot work as it is, the same goal is reached another way (another operation or tool), never the same call again; stop = no automatic repeat; null = the model may choose another route or ask.",
     "effect": "none = nothing was changed; partial = the action failed but may have changed something; uncertain = the result is unknown, never repeat the same action.",
     "blocked": "true = needs the person or a permission, or a safety rule refused it: do not retry and do not try a side route."
   },
@@ -57,7 +57,17 @@
       "effect": "partial",
       "recovery": null
     },
+    "APPLICATION_NEW_TAB_UNSUPPORTED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "APPLICATION_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "APPLICATION_NOT_RUNNING": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -240,7 +250,12 @@
     "BROWSER_NO_PAGE": {
       "blocked": false,
       "effect": "none",
-      "recovery": "stop"
+      "recovery": "alternative"
+    },
+    "BROWSER_NO_WINDOW": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
     },
     "BROWSER_PERMISSION_REQUIRED": {
       "blocked": true,
@@ -407,27 +422,17 @@
       "effect": "none",
       "recovery": null
     },
+    "DESKTOP_APPROVAL_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
     "DESKTOP_APP_UNAVAILABLE": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
     "DESKTOP_CANCELLED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
-    "DESKTOP_APPROVAL_REQUIRED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
-    "DESKTOP_PERSON_ACTIVE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": "retry_once"
-    },
-    "DESKTOP_STOPPED_BY_PERSON": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
@@ -451,6 +456,11 @@
       "blocked": false,
       "effect": "none",
       "recovery": "observe"
+    },
+    "DESKTOP_PERSON_ACTIVE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "retry_once"
     },
     "DESKTOP_SECURE_FIELD_BLOCKED": {
       "blocked": true,
@@ -481,6 +491,11 @@
       "blocked": false,
       "effect": "none",
       "recovery": null
+    },
+    "DESKTOP_STOPPED_BY_PERSON": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
     },
     "DESKTOP_TARGET_NOT_FOUND": {
       "blocked": false,
@@ -680,7 +695,7 @@
     "FILE_TOO_LARGE": {
       "blocked": false,
       "effect": "none",
-      "recovery": null
+      "recovery": "alternative"
     },
     "FILE_UNDO_FAILED": {
       "blocked": false,
@@ -695,7 +710,7 @@
     "FILE_UNDO_RECORD_FAILED": {
       "blocked": false,
       "effect": "partial",
-      "recovery": null
+      "recovery": "alternative"
     },
     "FILE_UNDO_STALE": {
       "blocked": false,
@@ -765,7 +780,7 @@
     "INVALID_FILE_PATH": {
       "blocked": false,
       "effect": "none",
-      "recovery": null
+      "recovery": "alternative"
     },
     "INVALID_PAYLOAD": {
       "blocked": false,
@@ -1102,6 +1117,11 @@
       "effect": "none",
       "recovery": "stop"
     },
+    "TAB_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "TERMINAL_ACTION_INVALID": {
       "blocked": false,
       "effect": "none",
@@ -1270,7 +1290,7 @@
     "TRANSFER_FAILED": {
       "blocked": false,
       "effect": "partial",
-      "recovery": null
+      "recovery": "alternative"
     },
     "TRANSFER_LIMIT": {
       "blocked": false,
