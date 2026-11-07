@@ -287,7 +287,9 @@
   // a streamed word used to rebuild the whole conversation, so pictures reloaded, cards flashed and the page seemed to refresh on its own.
   function assistantPartNodes(message, latest, live) {
     const parts = { trace: [], text: [], cards: [], tools: [] };
-    if (message.trace) {
+    // A message with a background task has one activity log, inside the task card: the turn's lines go there, above the task's steps.
+    const taskLog = !live && message.trace?.endedAt && (message.tasks || []).some((task) => task.type === "agent_task");
+    if (message.trace && !taskLog) {
       const node = traceNode(message.trace, live);
       if (node) parts.trace.push(node);
     }
@@ -307,7 +309,8 @@
       parts.cards.push(R.widget({ type: "approval", title: confirmation.title || confirmation.summary, detail: confirmation.message || confirmation.detail, confirmationId: confirmation.id, details: confirmation.details, expiresAt: confirmation.expiresAt }, ctx));
     }
     for (const taskCard of message.tasks || []) {
-      const node = R.widget(taskCard, ctx);
+      const turnLines = taskLog && taskCard.type === "agent_task" ? message.trace.steps.map((step) => ({ label: settled(step.label), state: step.state })) : [];
+      const node = R.widget(turnLines.length ? { ...taskCard, turnLines } : taskCard, ctx);
       if (node) parts.cards.push(node);
     }
     if (message.location) parts.cards.push(locationCard(message));

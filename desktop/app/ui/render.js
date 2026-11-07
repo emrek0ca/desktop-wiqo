@@ -939,12 +939,31 @@
       : { running: "Çalışıyor", waiting_device: "PC bekleniyor", waiting_input: "Cevabını bekliyor", paused: "Duraklatıldı", done: "Tamamlandı", failed: "Tamamlanamadı", cancelled: "Durduruldu" }[state] || statusLabel(item.status);
     head.append(pill(label, state === "done" ? "success" : state === "failed" ? "danger" : state === "cancelled" || state === "paused" ? "neutral" : waitingFor || state === "waiting_device" ? "warning" : "neutral"));
     box.append(head);
+    const turnLines = Array.isArray(item.turnLines) ? item.turnLines : [];
     if (steps.length) {
       const bar = el("div", `progress${state === "running" ? " running" : ""}`);
       const fill = el("div", "progress-fill");
       fill.style.width = `${Math.round((done / steps.length) * 100)}%`;
       bar.append(fill);
       box.append(bar);
+    }
+    // One activity log (same as the phone): the turn's lines, then the task's steps; open while the task works, folded once it is over.
+    const live = ["running", "waiting_input", "waiting_device", "paused"].includes(state);
+    const log = el("details", "task-log");
+    log.open = live;
+    const logHead = el("summary");
+    logHead.append(icon("chevron.right", 11, 0.3, "trace-chevron"), el("span", "", "İşlem günlüğü"), el("span", "task-log-count", `· ${turnLines.length + steps.length} adım`));
+    log.append(logHead);
+    if (turnLines.length) {
+      const lines = el("div", "trace-steps");
+      for (const line of turnLines) {
+        const row = el("div", `trace-step ${line.state || "done"}`);
+        row.append(icon(line.state === "failed" ? "exclamationmark.circle.fill" : "checkmark.circle.fill", 13), el("span", "", line.label || ""));
+        lines.append(row);
+      }
+      log.append(lines);
+    }
+    if (steps.length) {
       const list = el("ol", "task-steps");
       for (const step of steps.slice(0, 12)) {
         const row = el("li", `task-step ${step.status || "pending"}`);
@@ -954,15 +973,34 @@
         row.append(mark);
         const text = el("div", "row-text");
         text.append(el("div", "row-title", step.title || "Adım"));
+        // A build step names what it makes; it works only from the research step before it (same words as the phone).
+        const made = { web: "Yapıyor: web sitesi", desktop: "Yapıyor: masaüstü uygulaması", mobile: "Yapıyor: mobil uygulama" }[step.builds];
+        if (made) text.append(el("div", "task-builds", made));
         if (step.brief && step.status !== "pending") text.append(el("div", "row-sub", step.brief));
+        const files = Array.isArray(step.artifacts) ? step.artifacts.filter((file) => file && file.id) : [];
+        if (files.length) {
+          const chips = el("div", "task-files");
+          for (const file of files) {
+            const label = { build_brief: "Yapım özeti", site: "Site", preview: "Önizleme", act_project: "Act projesi" }[file.purpose] || file.filename || "Dosya";
+            const chip = button(label, "secondary small", async () => {
+              chip.disabled = true;
+              try { await invoke("artifact_save", { id: file.id, filename: file.filename || label, open: true }); }
+              catch { chip.textContent = "Açılamadı"; }
+              finally { chip.disabled = false; }
+            });
+            chips.append(chip);
+          }
+          text.append(chips);
+        }
         row.append(text);
         const took = duration(step.seconds);
         if (took) row.append(el("span", "task-time", took));
         list.append(row);
       }
       if (steps.length > 12) list.append(el("li", "task-more", `+${steps.length - 12} adım daha`));
-      box.append(list);
+      log.append(list);
     }
+    if (turnLines.length || steps.length) box.append(log);
     if (waitingFor === "answer") {
       // A question is answered in this chat's own box, as on the phone.
       const ask = el("div", "task-waiting");
@@ -975,7 +1013,6 @@
     else if (item.error) box.append(callout(item.error, "warning"));
     const foot = el("div", "w-actions");
     if (Number.isFinite(item.estimatedSeconds) && state === "running" && !waitingFor) foot.append(el("span", "w-sub small", `Tahmini ${duration(item.estimatedSeconds)}`));
-    const live = ["running", "waiting_input", "waiting_device", "paused"].includes(state);
     if (live && item.type === "agent_task" && Number.isFinite(Number(item.id))) {
       const stop = button("Durdur", "secondary small", async () => {
         stop.disabled = true;
