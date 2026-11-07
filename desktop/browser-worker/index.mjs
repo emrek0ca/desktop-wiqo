@@ -15,7 +15,7 @@ const MAX_TEXT = 4_000;
 const COMMAND_TIMEOUT_MS = 30_000;
 const RUNTIME_SETUP_TIMEOUT_MS = 105_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ACTIONS = new Set(["navigate", "observe", "observe_diff", "read", "click", "fill", "select", "press", "scroll", "back", "download", "submit", "run_steps", "handoff"]);
+const ACTIONS = new Set(["navigate", "observe", "observe_diff", "read", "click", "fill", "select", "press", "scroll", "back", "download", "submit", "run_steps", "handoff", "sign_in"]);
 const STEP_ACTIONS = new Set(["navigate", "observe", "observe_diff", "read", "click", "fill", "select", "press", "scroll", "back", "submit"]);
 const MAX_BATCH_STEPS = 8;
 const KEYS = new Set(["Enter", "Escape", "Tab", "ArrowDown", "ArrowUp"]);
@@ -31,6 +31,9 @@ const requests = new Map();
 
 let playwright;
 let browser;
+let browserChannel;
+/** Wiqo's own signed-in profile (the person's accounts, never their own browser profile): a persistent context in the companion's data folder. */
+let accountContext;
 let socks;
 let shuttingDown = false;
 
@@ -350,6 +353,7 @@ async function ensureBrowser() {
   // The computer's own Google Chrome or Microsoft Edge serves when it is installed (a fresh, empty context, never the person's profile): the
   // Chromium download is large and on a slow line never finished within one request. Only without either is Chromium downloaded.
   const channel = existsSync(playwright.chromium.executablePath()) ? undefined : await installedChannel();
+  browserChannel = channel;
   if (!channel && !existsSync(playwright.chromium.executablePath())) {
     await installChromium(packageRoot, setupStartedAt);
   }
@@ -378,15 +382,76 @@ async function ensureBrowser() {
   }
 }
 
+/** Blocks every request to a non-public address, as for the ephemeral tasks. */
+async function guardRoutes(context) {
+  await context.route("**/*", async (route) => {
+    try {
+      const url = new URL(route.request().url());
+      if (!publicBrowserURL(url.toString())) return await route.abort("blockedbyclient");
+      await route.continue();
+    } catch { await route.abort("blockedbyclient"); }
+  });
+}
+
+/**
+ * The account profile: one persistent Chromium profile in the companion's data folder ("Wiqo Desktop/browser-worker/account-profile"), separate
+ * from the person's Chrome or Edge profile. The person signs in to their sites in it themselves (sign_in); Wiqo never sees, types or stores a
+ * password. Tasks run with `session: "account"` open their own tab in it and use those sessions.
+ */
+async function ensureAccountContext() {
+  if (accountContext) return accountContext;
+  await ensureBrowser();
+  const profile = join(process.env.WIQO_BROWSER_WORKER_PACKAGE_ROOT, "account-profile");
+  await mkdir(profile, { recursive: true });
+  const port = socks?.address()?.port;
+  if (!port) throw Object.assign(new Error(), { code: "BROWSER_RUNTIME_INVALID" });
+  try {
+    accountContext = await playwright.chromium.launchPersistentContext(profile, {
+      headless: false,
+      ...(browserChannel ? { channel: browserChannel } : {}),
+      proxy: { server: "socks5://127.0.0.1:" + port, bypass: "" },
+      args: ["--proxy-bypass-list=<-loopback>", "--disable-quic", "--disable-webrtc", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"],
+      acceptDownloads: false,
+      viewport: { width: 1280, height: 900 },
+      locale: "tr-TR"
+    });
+  } catch {
+    throw Object.assign(new Error(), { code: "BROWSER_BROWSER_MISSING" });
+  }
+  accountContext.setDefaultTimeout(COMMAND_TIMEOUT_MS);
+  accountContext.setDefaultNavigationTimeout(COMMAND_TIMEOUT_MS);
+  await guardRoutes(accountContext);
+  accountContext.on("page", (page) => page.on("download", (download) => { void download.cancel().catch(() => {}); }));
+  accountContext.on("close", () => {
+    accountContext = undefined;
+    for (const [id, task] of tasks) if (task.account) tasks.delete(id);
+  });
+  return accountContext;
+}
+
 async function closeTask(taskId) {
   const task = tasks.get(taskId);
   if (!task) return;
   tasks.delete(taskId);
+  // An account task owns only its tab: the profile and its sessions stay for the next task.
+  if (task.account) { try { await task.page.close(); } catch { /* already closed */ } return; }
   try { await task.context.close(); } catch { /* already closed */ }
 }
 
-async function getTask(taskId, create = false) {
+async function getTask(taskId, create = false, account = false) {
   let task = tasks.get(taskId);
+  if (task && create && Boolean(task.account) !== account) throw Object.assign(new Error(), { code: "BROWSER_ACTION_INVALID" });
+  if (!task && create && account) {
+    if (tasks.size >= MAX_TASKS) throw Object.assign(new Error(), { code: "BROWSER_TASK_LIMIT" });
+    const context = await ensureAccountContext();
+    const page = await context.newPage();
+    task = {
+      id: taskId, context, page, account: true, pageVersion: 0, contentShared: false, interactionApproved: false,
+      targetNonce: randomUUID().replaceAll("-", ""), targetRefs: new Map(), lastTargets: [], lastTextHash: null
+    };
+    tasks.set(taskId, task);
+    page.on("close", () => { if (tasks.get(taskId)?.page === page) tasks.delete(taskId); });
+  }
   if (!task && create) {
     if (tasks.size >= MAX_TASKS) throw Object.assign(new Error(), { code: "BROWSER_TASK_LIMIT" });
     await ensureBrowser();
@@ -519,7 +584,10 @@ async function sensitiveElement(locator) {
   });
 }
 
-async function assertSafeClick(locator, allowSubmit, allowDownload = false) {
+/** What an approved account step may press or send that an anonymous task may not: sending a message or an e-mail, replying, posting a comment. */
+const ACCOUNT_SENDABLE = /send|g[oö]nder|message|mesaj|e-?mail|e-posta|recipient|contact|reply|yan[ıi]tla|cevapla|post|payla[sş]|yorum|comment/g;
+
+async function assertSafeClick(locator, allowSubmit, allowDownload = false, accountSend = false) {
   const details = await locator.evaluate((element) => {
     const tag = element.tagName.toLowerCase();
     const type = (element.getAttribute("type") ?? "").toLowerCase();
@@ -537,13 +605,15 @@ async function assertSafeClick(locator, allowSubmit, allowDownload = false) {
   if (details.isSubmit && !allowSubmit) throw Object.assign(new Error(), { code: "BROWSER_TARGET_UNSAFE" });
   if (details.type === "file" || details.type === "reset") throw Object.assign(new Error(), { code: "BROWSER_TARGET_UNSAFE" });
   if (details.linkScheme && !["http", "https"].includes(details.linkScheme)) throw Object.assign(new Error(), { code: "BROWSER_TARGET_UNSAFE" });
-  if (/pay|payment|checkout|purchase|buy now|place order|delete|sil|send|g[oö]nder|message|mesaj|e-?mail|e-posta|recipient|phone|telephone|contact|transfer|havale|login|sign.?in|log.?in|giri[sş]|oturum|upload|dosya|attach|ekle/.test(allowDownload ? details.label.replace(/dosya(?:yı|yi)?/g, "") : details.label)) {
+  const label = accountSend ? details.label.replace(ACCOUNT_SENDABLE, " ") : details.label;
+  // Paying, deleting, signing in and uploading stay closed in every mode; an approved account step may send.
+  if (/pay|payment|checkout|purchase|buy now|place order|delete|sil|send|g[oö]nder|message|mesaj|e-?mail|e-posta|recipient|phone|telephone|contact|transfer|havale|login|sign.?in|log.?in|giri[sş]|oturum|upload|dosya|attach|ekle/.test(allowDownload ? label.replace(/dosya(?:yı|yi)?/g, "") : label)) {
     throw Object.assign(new Error(), { code: "BROWSER_TARGET_UNSAFE" });
   }
   return details;
 }
 
-async function safeFormDetails(locator) {
+async function safeFormDetails(locator, accountSend = false) {
   const result = await locator.evaluate((button) => {
     const form = button.closest("form");
     if (!form) return null;
@@ -561,9 +631,12 @@ async function safeFormDetails(locator) {
       fileUpload: controls.some((element) => element.tagName.toLowerCase() === "input" && element.type === "file")
     };
   });
+  // An approved account step may send a message, a mail or a reply form; secrets, payments, deleting and uploads stay closed.
+  const labels = accountSend ? result?.labels.replace(/e-?mail|recipient|phone|telephone|message|subject|contact/g, " ") : result?.labels;
+  const target = accountSend ? result?.action.toLowerCase().replace(/message|mesaj|e-?mail|e-posta|contact|iletisim/g, " ") : result?.action.toLowerCase();
   if (!result || result.fileUpload || !["get", "post"].includes(result.method)
-    || !cleanURL(result.action) || /password|one-time-code|otp|verification|security.code|card|credit|debit|cvv|cvc|iban|account.number|e-?mail|recipient|phone|telephone|message|subject|contact|delete|sil|remove|upload|dosya|attach|ekle/.test(result.labels)
-    || /login|sign.?in|payment|checkout|purchase|billing|message|mesaj|e-?mail|e-posta|delete|sil|transfer|contact|iletisim/.test(result.action.toLowerCase())) {
+    || !cleanURL(result.action) || /password|one-time-code|otp|verification|security.code|card|credit|debit|cvv|cvc|iban|account.number|e-?mail|recipient|phone|telephone|message|subject|contact|delete|sil|remove|upload|dosya|attach|ekle/.test(labels)
+    || /login|sign.?in|payment|checkout|purchase|billing|message|mesaj|e-?mail|e-posta|delete|sil|transfer|contact|iletisim/.test(target)) {
     throw Object.assign(new Error(), { code: "BROWSER_FORM_BLOCKED" });
   }
 }
@@ -842,9 +915,18 @@ async function execute(message) {
     await task.page.bringToFront();
     return taskFailure(task, action, "BROWSER_HUMAN_REQUIRED");
   }
+  if (action === "sign_in") {
+    // The person signs in themselves, in Wiqo's own profile: the page is brought forward and nothing on it is read or typed by Wiqo.
+    if (!cleanURL(message.url)) return failure("BROWSER_NETWORK_BLOCKED");
+    const task = await getTask(taskId, true, true);
+    await task.page.goto(message.url, { waitUntil: "domcontentloaded", timeout: COMMAND_TIMEOUT_MS });
+    await task.page.bringToFront();
+    return { ok: true, result: { taskId: task.id, action, account: true, url: cleanURL(task.page.url()), pageVersion: task.pageVersion, contentShared: false, interactionApproved: false,
+      text: "Giriş sayfası Wiqo'nun hesap penceresinde açıldı. Kullanıcı girişi kendisi yapacak; Wiqo şifreyi görmez ve yazmaz.", verified: true } };
+  }
   if (action === "navigate") {
     if (!cleanURL(message.url)) return failure("BROWSER_NETWORK_BLOCKED");
-    const task = await getTask(taskId, true);
+    const task = await getTask(taskId, true, message.session === "account");
     task.targetRefs.clear();
     task.contentShared = false;
     await task.page.goto(message.url, { waitUntil: "domcontentloaded", timeout: COMMAND_TIMEOUT_MS });
@@ -947,10 +1029,12 @@ async function execute(message) {
     const selected = await locator.selectOption({ label: message.value }, { timeout: COMMAND_TIMEOUT_MS });
     if (selected.length !== 1) return taskFailure(task, action, "BROWSER_TARGET_NOT_FOUND");
   } else {
-    const details = await assertSafeClick(locator, action === "submit");
+    // Sending from the person's account is allowed only for a step they approved on their phone (the backend marks it sendApproved).
+    const accountSend = task.account === true && message.sendApproved === true;
+    const details = await assertSafeClick(locator, action === "submit", false, accountSend);
     if (action === "submit") {
       if (!details.isSubmit) return taskFailure(task, action, "BROWSER_TARGET_UNSAFE");
-      await safeFormDetails(locator);
+      await safeFormDetails(locator, accountSend);
     }
     const pagesBefore = new Set(task.context.pages());
     await locator.click({ timeout: COMMAND_TIMEOUT_MS });
@@ -992,6 +1076,8 @@ function queueFor(taskId, work) {
 
 async function closeAll() {
   for (const taskId of [...tasks.keys()]) await closeTask(taskId);
+  try { await accountContext?.close(); } catch { /* already closed */ }
+  accountContext = undefined;
   try { await browser?.close(); } catch { /* already closed */ }
   browser = undefined;
   if (socks?.listening) await new Promise((resolveClose) => socks.close(() => resolveClose()));
