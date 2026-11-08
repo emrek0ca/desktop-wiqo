@@ -26,7 +26,7 @@ use wiqo_core::storage::{
     CredentialStore, Credentials, DataDir, Identity, PairedPhone, PairedPhones, Settings,
 };
 use wiqo_core::verify::NonceCache;
-use wiqo_core::wire::{CommandResult, CommandStatus};
+use wiqo_core::wire::{CommandResult, CommandStatus, Request};
 
 /// "2026-10-20T17:00:00.123Z" -> "2026-10-20T17:00:00Z": the form phones decode.
 fn whole_seconds(stamp: &str) -> String {
@@ -110,7 +110,10 @@ pub enum Event {
         id: String,
     },
     /// One event of a chat answer (`turn` is the message it belongs to): the server's own SSE events, plus `task`, `step_update` and `turnEnd`.
-    RunSync { account: String, event: serde_json::Value },
+    RunSync {
+        account: String,
+        event: serde_json::Value,
+    },
     Chat {
         turn: String,
         event: serde_json::Value,
@@ -209,8 +212,6 @@ pub struct Snapshot {
     pub paired: bool,
     pub connection: ConnectionState,
     pub phones: Vec<PhoneInfo>,
-    pub full_access: bool,
-    pub reads_without_phone: bool,
     /// The signed-in Wiqo account, if any.
     pub account: Option<String>,
     pub capabilities: Vec<Capability>,
@@ -273,8 +274,6 @@ pub struct WorkItem {
     pub task: Option<String>,
 }
 
-const APPROVAL_SECONDS: u64 = 90;
-
 /// A "PC'de onayla" question that is still open: what the corner card fetches when it opens, because the card's window may not exist
 /// yet when the question is raised (the first question of a session used to be lost, and the step was refused for no answer).
 #[derive(Debug, Clone, Serialize)]
@@ -284,6 +283,9 @@ pub struct PendingApproval {
     pub kind: String,
     pub detail: String,
     pub seconds: u64,
+    /// The phone's message this step belongs to: the question is on that phone too.
+    #[serde(skip)]
+    request_id: Option<String>,
 }
 
 struct Shared {
@@ -291,13 +293,17 @@ struct Shared {
     connection: Mutex<ConnectionState>,
     activity: Mutex<VecDeque<Activity>>,
     working: Mutex<Vec<WorkItem>>,
-    approvals: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    approvals: Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Sender<(bool, &'static str)>>,
+    >,
     open_questions: Mutex<Vec<(PendingApproval, std::time::Instant)>>,
     /// Kinds the person just allowed: the same kind is not asked again for two minutes, so a task of thirty moves is one question, not thirty.
     allowed_kinds: Mutex<std::collections::HashMap<String, std::time::Instant>>,
     permissions: Arc<permissions::Permissions>,
     /// When each permission was last asked for after a failed step: one ask per two minutes, never a dialog storm.
     asked_at: Mutex<std::collections::HashMap<&'static str, std::time::Instant>>,
+    /// What the relay hands to this computer's own work, for `Desktop::serve_relay`.
+    inbox: tokio::sync::mpsc::UnboundedSender<Inbox>,
 }
 
 impl Shared {
@@ -307,75 +313,15 @@ impl Shared {
     }
 }
 
-/// "PC'de onayla": the step waits for the person's click in the panel; no answer within 90 seconds refuses it.
-struct Desk(Arc<Shared>);
-
-#[async_trait::async_trait]
-impl wiqo_core::engine::Approver for Desk {
-    async fn approve(&self, kind: &str, detail: &str) -> bool {
-        // Changes that can be taken back (a move, a copy, a write) share one answer for a short while; a delete or a send is asked every time.
-        let batched = matches!(
-            kind,
-            "moveFile"
-                | "copyFile"
-                | "writeFile"
-                | "saveTextFile"
-                | "renameFile"
-                | "moveDesktopFile"
-                | "renameDesktopFile"
-        );
-        if batched {
-            let mut allowed = self.0.allowed_kinds.lock().expect("allowed lock");
-            allowed.retain(|_, at| at.elapsed() < Duration::from_secs(120));
-            if allowed.contains_key(kind) {
-                return true;
-            }
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let (answer, answered) = tokio::sync::oneshot::channel();
-        self.0
-            .approvals
-            .lock()
-            .expect("approvals lock")
-            .insert(id.clone(), answer);
-        self.0.open_questions.lock().expect("questions lock").push((
-            PendingApproval {
-                id: id.clone(),
-                kind: kind.to_string(),
-                detail: detail.to_string(),
-                seconds: APPROVAL_SECONDS,
-            },
-            std::time::Instant::now(),
-        ));
-        let _ = self.0.events.send(Event::Approval {
-            id: id.clone(),
-            kind: kind.to_string(),
-            detail: detail.to_string(),
-            seconds: APPROVAL_SECONDS,
-        });
-        let allowed = matches!(
-            tokio::time::timeout(Duration::from_secs(APPROVAL_SECONDS), answered).await,
-            Ok(Ok(true))
-        );
-        if allowed && batched {
-            self.0
-                .allowed_kinds
-                .lock()
-                .expect("allowed lock")
-                .insert(kind.to_string(), std::time::Instant::now());
-        }
-        self.0.approvals.lock().expect("approvals lock").remove(&id);
-        self.0
-            .open_questions
-            .lock()
-            .expect("questions lock")
-            .retain(|(question, _)| question.id != id);
-        let _ = self.0.events.send(Event::ApprovalClosed { id });
-        allowed
-    }
-}
-
 impl Observer for Shared {
+    fn remote(&self, request: Request) {
+        let _ = self.inbox.send(Inbox::Phone(request));
+    }
+
+    fn automation(&self, steps: Vec<(i64, serde_json::Value)>) {
+        let _ = self.inbox.send(Inbox::Automation(steps));
+    }
+
     fn state(&self, state: &ConnectionState) {
         *self.connection.lock().expect("connection lock") = state.clone();
         let _ = self.events.send(Event::Connection {
@@ -455,8 +401,82 @@ impl Observer for Shared {
     }
 }
 
+/// An open question as the phone reads it (frames.json `approvalRequest`), with the server's generic approval push for a phone whose app is closed.
+fn approval_request(question: &PendingApproval, seconds_left: u64) -> serde_json::Value {
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(seconds_left as i64);
+    wiqo_core::relay::to_phone(
+        serde_json::json!({ "kind": wiqo_contract::frames::APPROVAL_REQUEST, "approvalId": question.id, "requestId": question.request_id,
+            "operation": question.kind, "detail": question.detail, "expiresAt": expires_at.to_rfc3339() }),
+        Some(question.id.as_str()),
+    )
+}
+
+/// What the relay hands to this computer's own work.
+enum Inbox {
+    /// A paired phone's checked frame.
+    Phone(Request),
+    /// Due automation steps: the server's step id and the step.
+    Automation(Vec<(i64, serde_json::Value)>),
+}
+
+/// A phone's `remoteMessage` (frames.json): the request it would have sent to `/copilot/chat` itself.
+struct RemoteMessage {
+    request_id: String,
+    conversation: String,
+    history: serde_json::Value,
+    text: String,
+    task: Option<String>,
+    question: Option<String>,
+    attachments: serde_json::Value,
+    /// The whole `/copilot/chat` body the phone would have sent.
+    request: serde_json::Value,
+}
+
+impl RemoteMessage {
+    fn read(value: &serde_json::Value) -> Option<RemoteMessage> {
+        let plain = |text: &str, max: usize| {
+            !text.is_empty()
+                && text.len() <= max
+                && text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
+        };
+        let request_id = value["requestId"]
+            .as_str()
+            .filter(|id| id.len() >= 8 && plain(id, 128))?
+            .to_string();
+        let conversation = value["conversationId"].as_str().unwrap_or("default");
+        let conversation = plain(conversation, 128).then(|| conversation.to_string())?;
+        let mut messages = value["messages"].as_array()?.clone();
+        let last = messages.pop()?;
+        if last["role"] != "user" {
+            return None;
+        }
+        let text = last["content"].as_str()?.to_string();
+        let id = |key: &str| {
+            value[key]
+                .as_str()
+                .filter(|id| plain(id, 200))
+                .map(str::to_string)
+        };
+        let (task, question) = (id("taskId"), id("questionId"));
+        Some(RemoteMessage {
+            request_id,
+            conversation,
+            history: serde_json::Value::Array(messages),
+            text,
+            task,
+            question,
+            attachments: value["attachments"].clone(),
+            request: value.clone(),
+        })
+    }
+}
+
 pub struct Desktop {
     pub runtime: Arc<Runtime>,
+    /// Taken once by `serve_relay`.
+    inbox: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Inbox>>>,
     server: String,
     shared: Arc<Shared>,
     relay: Mutex<Option<(JoinHandle<()>, Arc<Notify>)>>,
@@ -480,11 +500,13 @@ impl Desktop {
         let services = Arc::new(Services {
             data_dir: dir.clone(),
             credentials: credentials.clone(),
-            access: Arc::new(wiqo_core::grants::Access::default()),
+            announce: Default::default(),
         });
         let (events, _) = broadcast::channel(256);
         let permissions = Arc::new(permissions::Permissions::new(dir.file("permissions.json")));
+        let (inbox, inbox_reader) = tokio::sync::mpsc::unbounded_channel();
         let shared = Arc::new(Shared {
+            inbox,
             events,
             connection: Mutex::new(ConnectionState::Stopped),
             activity: Mutex::new(VecDeque::new()),
@@ -497,11 +519,11 @@ impl Desktop {
         });
         let mut engine = Engine::new(platform, settings, Arc::new(Ledger::open(&dir)), services);
         wiqo_ops::register_all(&mut engine).map_err(anyhow::Error::msg)?;
-        engine.set_approver(Arc::new(Desk(shared.clone())));
         let probe = permissions.clone();
         engine.set_blockers(Arc::new(move || probe.blockers()));
         let runtime = Arc::new(Runtime {
             identity,
+            outbox: Default::default(),
             credentials,
             phones: PairedPhones::open_with(&dir, vault.clone()),
             engine,
@@ -524,6 +546,7 @@ impl Desktop {
         *shared.connection.lock().expect("connection lock") = initial;
         let chat = chat::Chat::new(&server, vault, &dir);
         Ok(Arc::new(Desktop {
+            inbox: Mutex::new(Some(inbox_reader)),
             chat,
             permissions,
             runtime,
@@ -533,7 +556,9 @@ impl Desktop {
         }))
     }
 
-    pub async fn watch_runs(&self) { self.chat.watch_runs(&self.shared.events).await; }
+    pub async fn watch_runs(&self) {
+        self.chat.watch_runs(&self.shared.events).await;
+    }
 
     pub fn events(&self) -> broadcast::Receiver<Event> {
         self.shared.events.subscribe()
@@ -550,18 +575,32 @@ impl Desktop {
     /// Starts the server connection in the background (once; a second call does nothing while it runs).
     /// Reuses device credentials, or repairs only a first, interrupted account link.
     pub async fn restore_connection(self: &Arc<Self>) {
-        if self.runtime.engine.settings().snapshot().connection_stopped { return; }
-        if self.is_paired() { self.connect(); return; }
-        if self.chat.token_for_device().is_none() { return; }
+        if self.runtime.engine.settings().snapshot().connection_stopped {
+            return;
+        }
+        if self.is_paired() {
+            self.connect();
+            return;
+        }
+        if self.chat.token_for_device().is_none() {
+            return;
+        }
         self.shared.state(&ConnectionState::Connecting);
         let owner = self.chat.token_for_device();
-        if self.link_device_mode(true).await.is_err() && self.chat.token_for_device() == owner && !self.is_paired() {
+        if self.link_device_mode(true).await.is_err()
+            && self.chat.token_for_device() == owner
+            && !self.is_paired()
+        {
             self.shared.state(&ConnectionState::NotPaired);
         }
     }
 
     pub fn connect(self: &Arc<Self>) {
-        let _ = self.runtime.engine.settings().update(|data| data.connection_stopped = false);
+        let _ = self
+            .runtime
+            .engine
+            .settings()
+            .update(|data| data.connection_stopped = false);
         let mut relay = self.relay.lock().expect("relay lock");
         if relay.as_ref().is_some_and(|(task, _)| !task.is_finished()) || !self.is_paired() {
             return;
@@ -575,7 +614,11 @@ impl Desktop {
 
     /// Stops the connection: no command reaches this computer until `connect` again.
     pub fn disconnect(&self) {
-        let _ = self.runtime.engine.settings().update(|data| data.connection_stopped = true);
+        let _ = self
+            .runtime
+            .engine
+            .settings()
+            .update(|data| data.connection_stopped = true);
         if let Some((task, _)) = self.relay.lock().expect("relay lock").take() {
             task.abort();
         }
@@ -594,15 +637,11 @@ impl Desktop {
             .is_some_and(|(task, _)| !task.is_finished())
     }
 
-    /// "Durdur": what this computer is doing for the server's agent stops — background terminal jobs at once, and the task grant is withdrawn.
+    /// "Durdur": what this computer is doing stops — screen control and background terminal jobs at once.
     pub fn stop_work(&self) {
         wiqo_ops::stop_desktop_control();
         if let Some(terminal) = self.runtime.engine.terminal() {
             terminal.cancel_all();
-        }
-        let access = &self.runtime.engine.services().access;
-        if access.active().is_some() {
-            access.grant(0, Vec::new(), String::new());
         }
     }
 
@@ -663,7 +702,7 @@ impl Desktop {
 
     /// Sends one chat message; the answer arrives as `Event::Chat` with this `turn`, ending with `turnEnd` (and an error text when it failed).
     pub async fn chat_send(
-        &self,
+        self: &Arc<Self>,
         turn: &str,
         conversation: &str,
         history: serde_json::Value,
@@ -679,11 +718,15 @@ impl Desktop {
                 &device,
                 &self.shared.events,
                 turn,
+                uuid::Uuid::new_v4().to_string(),
                 conversation,
                 history,
                 text,
-                answer_to,
+                answer_to.as_ref().map(|(task, _)| task.clone()),
+                answer_to.map(|(_, question)| question),
                 attachments,
+                &chat::Asker::Window,
+                &self.approver(None),
             )
             .await;
         let error = outcome.err().map(|error| error.to_string());
@@ -691,6 +734,137 @@ impl Desktop {
             turn: turn.to_string(),
             event: serde_json::json!({ "type": "turnEnd", "error": error }),
         });
+    }
+
+    /// The yes a turn's steps wait for (`ask`), for the window's turn or a phone's message (`request_id`).
+    fn approver(self: &Arc<Self>, request_id: Option<String>) -> Box<chat::Approve> {
+        let desktop = self.clone();
+        Box::new(move |kind: String, detail: String| {
+            let (desktop, request_id) = (desktop.clone(), request_id.clone());
+            Box::pin(async move { desktop.ask(&kind, &detail, request_id.as_deref()).await })
+        })
+    }
+
+    /// What the relay hands to this computer, for as long as the app runs: a paired phone's frame (contracts/companion/frames.json: a message is
+    /// acknowledged at once and answered here, every event passed to the phone; an approval answer), or due automation steps it asked for.
+    pub async fn serve_relay(self: &Arc<Self>) {
+        let Some(mut inbox) = self.inbox.lock().expect("inbox lock").take() else {
+            return;
+        };
+        while let Some(item) = inbox.recv().await {
+            let request = match item {
+                Inbox::Phone(request) => request,
+                Inbox::Automation(steps) => {
+                    let desktop = self.clone();
+                    tokio::spawn(async move { desktop.run_automation(steps).await });
+                    continue;
+                }
+            };
+            let value = &request.payload["value"];
+            match request.kind.as_str() {
+                wiqo_contract::frames::REMOTE_MESSAGE => {
+                    let desktop = self.clone();
+                    tokio::spawn(async move { desktop.remote_turn(request).await });
+                }
+                wiqo_contract::frames::APPROVAL_DECISION => {
+                    if let (Some(id), Some(approved)) =
+                        (value["approvalId"].as_str(), value["approved"].as_bool())
+                    {
+                        self.answer(id, approved, "phone");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Due automation steps: each runs here as the person's own automation and its receipt goes back on the socket. Nobody is there to say yes, so a
+    /// step that changes, deletes or sends is refused (the server sends none; this is the computer's own rule).
+    async fn run_automation(self: &Arc<Self>, steps: Vec<(i64, serde_json::Value)>) {
+        for (step_id, step) in steps {
+            let result = if chat::needs_yes(&step) {
+                chat::refused_step(
+                    &step,
+                    "Otomasyonda onay verecek kimse yok; bu adım çalıştırılmadı.",
+                )
+            } else {
+                chat::run_step(&self.runtime.engine, &step).await
+            };
+            self.runtime
+                .outbox
+                .deliver(&serde_json::json!({ "type": "automationStepDone", "stepId": step_id, "commandId": step["id"], "result": result }))
+                .await;
+        }
+    }
+
+    /// One message from a phone: "aldım" first (the phone waits `ackSeconds` and then writes to the server itself), then the same turn as one typed
+    /// here, with the phone's id, features and language, its steps run as that phone's, and the whole stream passed to the phone.
+    async fn remote_turn(self: &Arc<Self>, request: Request) {
+        let Some(message) = RemoteMessage::read(&request.payload["value"]) else {
+            tracing::warn!("remote message {} unreadable, dropped", request.id);
+            return;
+        };
+        let outbox = self.runtime.outbox.clone();
+        let frame = |kind: &str, body: serde_json::Value| {
+            let mut frame = serde_json::json!({ "kind": kind, "requestId": message.request_id });
+            if let (Some(frame), Some(body)) = (frame.as_object_mut(), body.as_object()) {
+                frame.extend(body.clone());
+            }
+            wiqo_core::relay::to_phone(frame, None)
+        };
+        outbox
+            .deliver(&frame(wiqo_contract::frames::ACK, serde_json::json!({})))
+            .await;
+        // The stream leaves in order through one queue: a busy socket slows the phone's copy, it never drops an event of it.
+        let (forward, mut queue) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+        let request_id = message.request_id.clone();
+        let sender = outbox.clone();
+        let drain = tokio::spawn(async move {
+            while let Some(event) = queue.recv().await {
+                sender
+                    .deliver(&wiqo_core::relay::to_phone(
+                        serde_json::json!({ "kind": wiqo_contract::frames::STREAM_EVENT, "requestId": request_id, "event": event }),
+                        None,
+                    ))
+                    .await;
+            }
+        });
+        let asker = chat::Asker::Phone {
+            request: message.request,
+            forward: Box::new(move |event| {
+                let _ = forward.send(event);
+            }),
+        };
+        let device = self.runtime.identity.device_id.clone();
+        let outcome = self
+            .chat
+            .send(
+                &self.runtime.engine,
+                &device,
+                &self.shared.events,
+                &message.request_id,
+                message.request_id.clone(),
+                &message.conversation,
+                message.history,
+                &message.text,
+                message.task,
+                message.question,
+                message.attachments,
+                &asker,
+                &self.approver(Some(message.request_id.clone())),
+            )
+            .await;
+        if let (Err(error), chat::Asker::Phone { forward, .. }) = (&outcome, &asker) {
+            forward(serde_json::json!({ "type": "error", "message": error.to_string() }));
+        }
+        drop(asker);
+        let _ = drain.await;
+        outbox
+            .deliver(&frame(
+                wiqo_contract::frames::TURN_END,
+                serde_json::json!({}),
+            ))
+            .await;
     }
 
     /// Sends one message to an agent thread; the answer arrives as `Event::Thread` with this `turn`, ending with `turnEnd` (and an error text when it failed).
@@ -773,7 +947,9 @@ impl Desktop {
             .bootstrap(&token, &self.runtime.identity.device_id, restore_only)
             .await
             .map_err(|error| anyhow::anyhow!("Bu bilgisayar hesabına bağlanamadı: {error}"))?;
-        if self.chat.token_for_device().as_deref() != Some(token.as_str()) { bail!("Hesap değişti; eski cihaz bağlantısı uygulanmadı."); }
+        if self.chat.token_for_device().as_deref() != Some(token.as_str()) {
+            bail!("Hesap değişti; eski cihaz bağlantısı uygulanmadı.");
+        }
         self.runtime.credentials.set(Credentials {
             api_base: self.server.clone(),
             access_token: tokens.access_token,
@@ -800,15 +976,7 @@ impl Desktop {
         confirmation: &serde_json::Value,
         approved: bool,
     ) -> Result<serde_json::Value> {
-        let phones = self.runtime.phones.list();
-        self.chat
-            .confirm(
-                &phones,
-                &self.runtime.identity.device_id,
-                confirmation,
-                approved,
-            )
-            .await
+        self.chat.confirm(confirmation, approved).await
     }
 
     /// "Geri al": takes back one command's changes, or (with `task`) every change of that task, newest first. Each record restores only
@@ -892,8 +1060,13 @@ impl Desktop {
         outcome.map_err(|error| anyhow::anyhow!(error.message))
     }
 
-    /// The answer to a "PC'de onayla" card.
+    /// The answer to a "PC'de onayla" card, clicked in this computer's panel.
     pub fn answer_approval(&self, id: &str, allow: bool) {
+        self.answer(id, allow, "desktop");
+    }
+
+    /// The first answer to a question wins, from the panel or a phone; a later one finds nothing and is ignored, so a step is never run twice.
+    fn answer(&self, id: &str, allow: bool, by: &'static str) {
         if let Some(answer) = self
             .shared
             .approvals
@@ -901,18 +1074,91 @@ impl Desktop {
             .expect("approvals lock")
             .remove(id)
         {
-            let _ = answer.send(allow);
+            let _ = answer.send((allow, by));
         }
     }
 
-    /// "Okuma adımlarını telefonsuz çalıştır": the server hears it at once (the registration's `agent.readOnly`).
-    pub fn set_reads_without_phone(&self, on: bool) -> Result<()> {
-        self.runtime
-            .engine
-            .settings()
-            .update(|data| data.reads_without_phone = on)?;
-        self.reannounce();
-        Ok(())
+    /// "PC'de onayla": a step that changes, deletes or sends waits for a yes. The question is in this computer's panel and, for a phone's message, on
+    /// that phone at the same moment (with the generic approval push for a phone whose app is closed); whichever answers first decides, and both are
+    /// told it is settled. No answer within `approvalSeconds` refuses it. Changes that can be taken back (a move, a copy, a write) share one yes for a
+    /// short while; a delete or a send is asked every time.
+    pub async fn ask(&self, kind: &str, detail: &str, request_id: Option<&str>) -> bool {
+        let batched = matches!(kind, "moveFile" | "copyFile" | "writeFile");
+        if batched {
+            let mut allowed = self.shared.allowed_kinds.lock().expect("allowed lock");
+            allowed.retain(|_, at| at.elapsed() < Duration::from_secs(120));
+            if allowed.contains_key(kind) {
+                return true;
+            }
+        }
+        let seconds = wiqo_contract::frames::Frames::get().approval_seconds;
+        let id = uuid::Uuid::new_v4().to_string();
+        let (answer, answered) = tokio::sync::oneshot::channel();
+        self.shared
+            .approvals
+            .lock()
+            .expect("approvals lock")
+            .insert(id.clone(), answer);
+        let question = PendingApproval {
+            id: id.clone(),
+            kind: kind.to_string(),
+            detail: detail.to_string(),
+            seconds,
+            request_id: request_id.map(str::to_string),
+        };
+        self.shared
+            .open_questions
+            .lock()
+            .expect("questions lock")
+            .push((question.clone(), std::time::Instant::now()));
+        let _ = self.shared.events.send(Event::Approval {
+            id: id.clone(),
+            kind: kind.to_string(),
+            detail: detail.to_string(),
+            seconds,
+        });
+        if request_id.is_some() {
+            self.runtime
+                .outbox
+                .deliver(&approval_request(&question, seconds))
+                .await;
+        }
+        let (allowed, by) = match tokio::time::timeout(Duration::from_secs(seconds), answered).await
+        {
+            Ok(Ok(answer)) => answer,
+            _ => (false, "timeout"),
+        };
+        self.shared
+            .approvals
+            .lock()
+            .expect("approvals lock")
+            .remove(&id);
+        self.shared
+            .open_questions
+            .lock()
+            .expect("questions lock")
+            .retain(|(question, _)| question.id != id);
+        if allowed && batched {
+            self.shared
+                .allowed_kinds
+                .lock()
+                .expect("allowed lock")
+                .insert(kind.to_string(), std::time::Instant::now());
+        }
+        let _ = self
+            .shared
+            .events
+            .send(Event::ApprovalClosed { id: id.clone() });
+        if let Some(request_id) = request_id {
+            self.runtime
+                .outbox
+                .deliver(&wiqo_core::relay::to_phone(
+                    serde_json::json!({ "kind": wiqo_contract::frames::APPROVAL_RESOLVED, "approvalId": id, "requestId": request_id, "approved": allowed, "by": by }),
+                    None,
+                ))
+                .await;
+        }
+        allowed
     }
 
     /// Where the on-device speech model lives (next to the other data of this computer).
@@ -930,7 +1176,9 @@ impl Desktop {
             .expect("questions lock")
             .iter()
             .map(|(question, raised)| PendingApproval {
-                seconds: APPROVAL_SECONDS.saturating_sub(raised.elapsed().as_secs()),
+                seconds: wiqo_contract::frames::Frames::get()
+                    .approval_seconds
+                    .saturating_sub(raised.elapsed().as_secs()),
                 ..question.clone()
             })
             .collect()
@@ -976,7 +1224,7 @@ impl Desktop {
     }
 
     fn reannounce(&self) {
-        self.runtime.engine.services().access.announce();
+        self.runtime.engine.services().announce.notify_one();
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -1022,8 +1270,6 @@ impl Desktop {
                     platform: phone.platform,
                 })
                 .collect(),
-            full_access: settings.full_access(),
-            reads_without_phone: settings.reads_without_phone(),
             account: self.chat.email(),
             capabilities,
             activity: self
@@ -1035,15 +1281,6 @@ impl Desktop {
                 .cloned()
                 .collect(),
         }
-    }
-
-    pub fn set_full_access(&self, on: bool) -> Result<()> {
-        self.runtime
-            .engine
-            .settings()
-            .update(|data| data.full_access = on)?;
-        self.reannounce();
-        Ok(())
     }
 
     pub fn set_capability(&self, id: &str, enabled: bool) -> Result<()> {
@@ -1153,14 +1390,145 @@ impl Desktop {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// One desktop on a data folder of its own, with what it sends to the server captured.
+    fn desktop() -> (Arc<Desktop>, tokio::sync::mpsc::Receiver<String>) {
+        static FOLDER: std::sync::Once = std::sync::Once::new();
+        FOLDER.call_once(|| {
+            let folder =
+                std::env::temp_dir().join(format!("wiqo-approvals-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&folder).unwrap();
+            std::env::set_var("WIQO_DATA_DIR", folder);
+        });
+        // One at a time: the first opening writes the folder's files, the others read them.
+        static OPENING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let desktop = {
+            let _one = OPENING.lock().unwrap();
+            Desktop::open(Some("http://127.0.0.1:1".into())).unwrap()
+        };
+        let (sender, sent) = tokio::sync::mpsc::channel(32);
+        desktop.runtime.outbox.attach(Some(sender));
+        (desktop, sent)
+    }
+
+    async fn open_question(desktop: &Arc<Desktop>) -> String {
+        for _ in 0..200 {
+            if let Some(question) = desktop.pending_approvals().first() {
+                return question.id.clone();
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("no question was raised");
+    }
+
+    fn frames(sent: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<serde_json::Value> {
+        let mut frames = Vec::new();
+        while let Ok(text) = sent.try_recv() {
+            frames.push(serde_json::from_str::<serde_json::Value>(&text).unwrap());
+        }
+        frames
+    }
+
+    #[tokio::test]
+    async fn the_first_answer_wins_and_a_second_one_changes_nothing() {
+        let (desktop, mut sent) = desktop();
+        let asking = desktop.clone();
+        let decision = tokio::spawn(async move {
+            asking
+                .ask("deleteFile", "a.txt çöpe atılacak", Some("request-1"))
+                .await
+        });
+        let id = open_question(&desktop).await;
+        desktop.answer(&id, true, "phone");
+        desktop.answer_approval(&id, false);
+        assert!(decision.await.unwrap(), "the phone answered first");
+        let frames = frames(&mut sent);
+        let asked = frames
+            .iter()
+            .find(|frame| frame["frame"]["kind"] == "approvalRequest")
+            .unwrap();
+        assert_eq!(
+            asked["notify"],
+            id.as_str(),
+            "a closed phone gets the generic push"
+        );
+        assert_eq!(asked["frame"]["operation"], "deleteFile");
+        let settled = frames
+            .iter()
+            .find(|frame| frame["frame"]["kind"] == "approvalResolved")
+            .unwrap();
+        assert_eq!(settled["frame"]["approved"], true);
+        assert_eq!(settled["frame"]["by"], "phone");
+        assert!(desktop.pending_approvals().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_answer_in_time_refuses_the_step() {
+        let (desktop, mut sent) = desktop();
+        let asking = desktop.clone();
+        let decision = tokio::spawn(async move {
+            asking
+                .ask("sendEmail", "E-posta gönderilecek", Some("request-2"))
+                .await
+        });
+        let id = open_question(&desktop).await;
+        tokio::time::advance(Duration::from_secs(
+            wiqo_contract::frames::Frames::get().approval_seconds + 1,
+        ))
+        .await;
+        assert!(!decision.await.unwrap());
+        desktop.answer_approval(&id, true);
+        let settled = frames(&mut sent)
+            .into_iter()
+            .find(|frame| frame["frame"]["kind"] == "approvalResolved")
+            .unwrap();
+        assert_eq!(settled["frame"]["approved"], false);
+        assert_eq!(settled["frame"]["by"], "timeout");
+    }
+
+    #[tokio::test]
+    async fn a_question_of_this_window_stays_on_this_computer() {
+        let (desktop, mut sent) = desktop();
+        let asking = desktop.clone();
+        let decision = tokio::spawn(async move { asking.ask("deleteFile", "b.txt", None).await });
+        let id = open_question(&desktop).await;
+        desktop.answer_approval(&id, false);
+        assert!(!decision.await.unwrap());
+        assert!(
+            frames(&mut sent).is_empty(),
+            "nothing goes to a phone for a message typed here"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_automation_step_runs_here_and_its_receipt_goes_back_but_a_change_is_never_made_unattended(
+    ) {
+        let (desktop, mut sent) = desktop();
+        let read = serde_json::json!({ "id": uuid::Uuid::new_v4().to_string(), "type": "getSystemStatus", "payload": { "kind": "none" }, "summary": "Durumu oku", "isDestructive": false });
+        let change = serde_json::json!({ "id": uuid::Uuid::new_v4().to_string(), "type": "deleteFile", "payload": { "kind": "fileName", "value": "~/Desktop/a.txt" }, "summary": "Sil", "isDestructive": true });
+        desktop
+            .run_automation(vec![(7, read.clone()), (8, change.clone())])
+            .await;
+        let answers = frames(&mut sent);
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0]["type"], "automationStepDone");
+        assert_eq!(answers[0]["stepId"], 7);
+        assert_eq!(answers[0]["commandId"], read["id"]);
+        assert!(answers[0]["result"]["status"].is_string());
+        assert_eq!(answers[1]["stepId"], 8);
+        assert_eq!(answers[1]["result"]["status"], "denied");
+        assert_eq!(answers[1]["result"]["errorCode"], "DENIED_ON_PC");
+    }
+
     #[test]
     fn the_pairing_code_carries_a_date_phones_can_decode() {
         assert_eq!(
-            super::whole_seconds("2026-10-20T17:00:00.123Z"),
+            whole_seconds("2026-10-20T17:00:00.123Z"),
             "2026-10-20T17:00:00Z"
         );
         assert_eq!(
-            super::whole_seconds("2026-10-20T17:00:00Z"),
+            whole_seconds("2026-10-20T17:00:00Z"),
             "2026-10-20T17:00:00Z"
         );
     }

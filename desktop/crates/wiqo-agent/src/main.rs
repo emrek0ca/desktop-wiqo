@@ -29,9 +29,6 @@ enum Command {
     Pair,
     Run,
     Status,
-    FullAccess {
-        state: String,
-    },
     /// Runs the everyday tools for real (files, search, apps, clipboard, screen, system) and prints one JSON line per step; exits 1 on a failure.
     Selftest {
         /// An application to open, find among the running ones and quit (default: Notepad on Windows, TextEdit on macOS).
@@ -69,10 +66,6 @@ async fn main() -> Result<()> {
                 );
             }
             println!(
-                "full access {}",
-                if info.full_access { "on" } else { "off" }
-            );
-            println!(
                 "abilities   {}",
                 info.capabilities
                     .iter()
@@ -80,15 +73,6 @@ async fn main() -> Result<()> {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
-        }
-        Command::FullAccess { state } => {
-            let on = match state.as_str() {
-                "on" => true,
-                "off" => false,
-                _ => bail!("use `full-access on` or `full-access off`"),
-            };
-            desktop.set_full_access(on)?;
-            println!("full access {}", if on { "on" } else { "off" });
         }
         Command::Pair => {
             let offer = desktop.start_pairing().await?;
@@ -148,7 +132,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// One tool step, as the server or the window's chat sends it (Origin::Local: the person at this computer asked).
+/// One tool step, as the window's chat sends it (the person at this computer asked).
 async fn step(
     desktop: &Desktop,
     kind: &str,
@@ -164,11 +148,7 @@ async fn step(
         signature: None,
         nonce: None,
     };
-    desktop
-        .runtime
-        .engine
-        .execute(&request, &wiqo_core::engine::Origin::Local)
-        .await
+    desktop.runtime.engine.execute(&request).await
 }
 
 async fn selftest(desktop: &Desktop, app: Option<String>, headless: bool, verbose: bool) -> usize {

@@ -249,15 +249,28 @@ pub(super) fn open_blank_tab(target: &Target) -> Result<(), String> {
 
 /// Closes every tab of the browser's front window except one: the tab whose title or address contains `keep`, else the tab in front. It goes through
 /// the browser's own scripting dictionary (Chromium's or Safari's), so it needs the Automation permission the first time; Firefox and Arc have none.
-pub(super) fn close_other_tabs(target: &Target, keep: &str) -> Result<super::ClosedTabs, (&'static str, String)> {
+pub(super) fn close_other_tabs(
+    target: &Target,
+    keep: &str,
+) -> Result<super::ClosedTabs, (&'static str, String)> {
     let name = &target.name;
-    let unsupported = || ("APPLICATION_ACTION_UNAVAILABLE", format!("{name} sekmelerini kapatmaya izin vermiyor; diğer sekmeleri ekrandan (sekmeye sağ tık > Diğer sekmeleri kapat) kapatmak gerekir."));
+    let unsupported = || {
+        ("APPLICATION_ACTION_UNAVAILABLE", format!("{name} sekmelerini kapatmaya izin vermiyor; diğer sekmeleri ekrandan (sekmeye sağ tık > Diğer sekmeleri kapat) kapatmak gerekir."))
+    };
     let bundle = target.bundle.as_deref().ok_or_else(unsupported)?;
     let safari = bundle.starts_with("com.apple.Safari");
     let (active, set_active, title) = if safari {
-        ("index of current tab of w", "set current tab of w to tab found of w", "name")
+        (
+            "index of current tab of w",
+            "set current tab of w to tab found of w",
+            "name",
+        )
     } else {
-        ("active tab index of w", "set active tab index of w to found", "title")
+        (
+            "active tab index of w",
+            "set active tab index of w to found",
+            "title",
+        )
     };
     if !super::TAB_SCRIPTABLE.contains(&bundle) {
         return Err(unsupported());
@@ -296,19 +309,30 @@ end run"#
     );
     let mut command = crate::process::command("/usr/bin/osascript");
     command.args(["-e", &script, keep]);
-    let output = crate::process::run_with_timeout(command, Duration::from_secs(20))
-        .ok_or_else(|| ("OUTCOME_UNKNOWN", format!("{name} sekmeleri kapatırken zamanında yanıt vermedi.")))?;
+    let output =
+        crate::process::run_with_timeout(command, Duration::from_secs(20)).ok_or_else(|| {
+            (
+                "OUTCOME_UNKNOWN",
+                format!("{name} sekmeleri kapatırken zamanında yanıt vermedi."),
+            )
+        })?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {
         let (count, kept) = stdout.split_once('\n').unwrap_or((stdout.as_str(), ""));
-        return Ok(super::ClosedTabs { count: count.trim().parse().unwrap_or(0), kept: kept.trim().to_string() });
+        return Ok(super::ClosedTabs {
+            count: count.trim().parse().unwrap_or(0),
+            kept: kept.trim().to_string(),
+        });
     }
     Err(if stderr.contains("WIQO_NO_WINDOW") {
-        ("BROWSER_NO_WINDOW", format!("{name} açık ama penceresi yok; kapatılacak sekme yok."))
+        (
+            "BROWSER_NO_WINDOW",
+            format!("{name} açık ama penceresi yok; kapatılacak sekme yok."),
+        )
     } else if stderr.contains("WIQO_TAB_NOT_FOUND") {
         ("TAB_NOT_FOUND", format!("{name} ön penceresinde başlığında ya da adresinde “{keep}” geçen sekme yok; hiçbir sekme kapatılmadı."))
-    } else if stderr.contains("-1743") || stderr.contains("Not authorized") {
+    } else if crate::applescript::refused(&stderr) {
         ("AUTOMATION_PERMISSION_REQUIRED", format!("Wiqo'nun {name} sekmelerini yönetmesine izin verilmemiş. Sistem Ayarları > Gizlilik ve Güvenlik > Otomasyon'da Wiqo altında {name}'u aç."))
     } else {
         ("OUTCOME_UNKNOWN", format!("{name} sekmeleri kapatılamadı."))

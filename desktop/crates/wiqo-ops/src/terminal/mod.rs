@@ -7,6 +7,7 @@ mod edit;
 mod policy;
 mod profile;
 pub(crate) mod shell;
+pub(crate) mod step;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -235,7 +236,7 @@ impl Terminal for Sessions {
                 .insert(command_id.to_string(), digest.to_string());
         }
         let answer = match serde_json::from_value::<Request>(raw.clone()) {
-            Ok(request) => self.dispatch(&session, command_id, request).await,
+            Ok(request) => self.dispatch(&session, request).await,
             Err(_) => denied("TERMINAL_ACTION_INVALID", "Terminal isteği çözülemedi."),
         };
         let mut state = self.lock();
@@ -271,12 +272,7 @@ impl Terminal for Sessions {
 }
 
 impl Sessions {
-    async fn dispatch(
-        &self,
-        session: &Session,
-        command_id: &str,
-        request: Request,
-    ) -> CommandResult {
+    async fn dispatch(&self, session: &Session, request: Request) -> CommandResult {
         let action = request.action.clone().unwrap_or_else(|| "run".into());
         self.prune();
         if action == "undo_file" {
@@ -286,7 +282,7 @@ impl Sessions {
             };
             let started = Utc::now();
             return match request.undo_id.as_deref() {
-                Some(id) => match crate::undo::undo_file(&context, id) {
+                Some(id) => match crate::files::undo::undo_file(&context, id) {
                     Ok(message) => result(CommandStatus::Completed, message, None, None, started),
                     Err(error) => result(
                         CommandStatus::Failed,
@@ -418,9 +414,7 @@ impl Sessions {
                     return denied("TERMINAL_READ_ONLY", "Bu oturum yalnızca okuma izni veriyor; değiştiren komut için yeni onay gerekiyor.");
                 }
                 if action == "start_job" {
-                    return self.start_job(
-                        session, command_id, &request, &grant, &root, &directory, command,
-                    );
+                    return self.start_job(&request, &grant, &root, &directory, command);
                 }
                 self.run_once(&request, &grant, &root, &directory, command, started)
                     .await
@@ -623,11 +617,8 @@ impl Sessions {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn start_job(
         &self,
-        session: &Session,
-        command_id: &str,
         request: &Request,
         grant: &Grant,
         root: &Path,
@@ -690,15 +681,13 @@ impl Sessions {
             job.control.progress = Some(progress);
             job.control.clone()
         };
-        let (state, outbox, scope, dir, root, grant_id, shell, job_id) = (
+        let (state, scope, dir, root, grant_id, shell) = (
             self.state.clone(),
-            session.outbox.clone(),
             write_scope(grant, root),
             directory.to_path_buf(),
             root.to_path_buf(),
             grant.id.clone(),
             request.shell.clone(),
-            id.clone(),
         );
         let starting_directory = self.lock().directories.get(&grant.id).cloned();
         std::thread::spawn(move || {
@@ -754,9 +743,7 @@ impl Sessions {
             job.state = state_name;
             job.message = message;
             job.error_code = code.clone();
-            outbox.send(&json!({ "type": "terminalJobUpdate", "jobId": job_id, "state": state_name, "errorCode": code }));
         });
-        let _ = command_id;
         self.snapshot(&id)
     }
 
@@ -1125,7 +1112,6 @@ fn file_action(
 mod tests {
     use super::*;
     use wiqo_core::engine::Services;
-    use wiqo_core::terminal::Outbox;
 
     fn session(accept: bool) -> Session {
         static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
@@ -1133,7 +1119,6 @@ mod tests {
         Session {
             services,
             grants: Arc::new(move |_| accept),
-            outbox: Outbox::default(),
             code_enabled: true,
         }
     }

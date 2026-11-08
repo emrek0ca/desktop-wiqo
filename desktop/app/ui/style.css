@@ -611,9 +611,6 @@ input, textarea, select { border-radius: var(--r-sm); }
 .card-bar .mini:hover { background: var(--fill); color: var(--ink); }
 .card-bar .mini.on { background: var(--ink); color: var(--ink-on); animation: pulse 1.6s ease-in-out infinite; }
 .card-bar .mini.speaking { animation-duration: .7s; }
-.card-bar .access { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 999px; color: var(--text2); font-size: 13px; }
-.card-bar .access:hover { background: var(--fill); }
-.card-bar .access.on { color: #d9622b; }
 .card-bar .send, .card-bar .stop { flex: none; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(120,120,120,.18); } }
 

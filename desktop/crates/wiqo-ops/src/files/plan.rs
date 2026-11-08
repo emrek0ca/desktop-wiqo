@@ -253,7 +253,7 @@ async fn run_step(ctx: &Context, step: &Step, files: &HashMap<String, Vec<Entry>
                 "query": step.query.clone().unwrap_or_default(), "folder": step.folder, "kind": step.kind,
                 "modifiedWithinDays": step.modified_within_days, "sort": step.sort, "alternatives": step.alternatives,
             }});
-            match done(blocking(Box::new(move || crate::search::search(&request))).await) {
+            match done(blocking(Box::new(move || super::search::search(&request))).await) {
                 Ok(found) => {
                     let entries = listed(&found);
                     if entries.is_none() {
@@ -278,7 +278,7 @@ async fn run_step(ctx: &Context, step: &Step, files: &HashMap<String, Vec<Entry>
                     "list" => crate::files::list_files(&context, &operation(&path, None)),
                     "read" => crate::files::read_file(&context, &operation(&path, None)),
                     "convert" => {
-                        crate::convert::convert_file(&context, &operation(&path, destination))
+                        super::convert::convert_file(&context, &operation(&path, destination))
                     }
                     "move" => {
                         crate::files::transfer_op(&context, &operation(&path, destination), false)
@@ -330,7 +330,7 @@ async fn run_step(ctx: &Context, step: &Step, files: &HashMap<String, Vec<Entry>
                 command_id: transfer,
                 services: ctx.services.clone(),
             };
-            match done(crate::transfer::send_file(&context, &operation(&path, None)).await) {
+            match done(super::transfer::send_file(&context, &operation(&path, None)).await) {
                 Ok(result) => {
                     let mut sent = completed("Dosya telefona gönderildi.".into(), None);
                     sent.artifact_id = result

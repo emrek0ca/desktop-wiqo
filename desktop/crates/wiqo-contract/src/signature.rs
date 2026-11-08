@@ -37,26 +37,6 @@ pub fn command_signature(
     ))
 }
 
-/// `wiqo-terminal-grant:v1`: the permission to run terminal work inside one folder, until a time, in `read` or `full` mode.
-pub fn terminal_grant_signature(
-    token: &str,
-    grant_id: &str,
-    root_directory: &str,
-    mode: &str,
-    expires_at: u64,
-) -> String {
-    hmac_hex(
-        token,
-        &format!(
-            "wiqo-terminal-grant:v1:{}:{}:{}:{}",
-            grant_id.to_lowercase(),
-            root_directory,
-            mode,
-            expires_at
-        ),
-    )
-}
-
 /// Compares a received hex signature with the expected one without leaking where they differ.
 pub fn verify_signature(expected_hex: &str, received_hex: &str) -> bool {
     let (Ok(expected), Ok(received)) = (hex::decode(expected_hex), hex::decode(received_hex))

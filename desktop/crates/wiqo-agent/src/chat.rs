@@ -1,6 +1,6 @@
-//! The chat in the window: the person signs in with their own Wiqo account and talks to the same `/copilot/chat` the phone uses, with this computer
-//! as the device. PC steps the answer asks for run right here (the person typed the request at this computer, like a phone's task authorizes its
-//! steps); a step that changes, deletes or sends waits for a click in the corner panel. Results go back to the server until the task is done.
+//! The chat: the person signs in with their own Wiqo account and talks to `/copilot/chat` with this computer as the device. This computer holds the
+//! stream and runs every PC step the answer asks for, whether the message was typed in this window or handed over by a paired phone (then the phone
+//! is the remote screen: every event goes to it as well, and its steps run as that phone's). Results go back to the server until the task is done.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use wiqo_core::engine::{Engine, Origin};
+use wiqo_core::engine::Engine;
 use wiqo_core::storage::DataDir;
 use wiqo_core::vault::{Account, Vault};
 use wiqo_core::wire::{CommandStatus, Request};
@@ -24,6 +24,94 @@ const CLIENT_FEATURES: [&str; 3] = [
     "receipt-card-v1",
 ];
 const MAX_ROUNDS: usize = 8;
+
+/// Asks the person before a step that changes, deletes or sends (the operation and the sentence they read); true is a yes.
+pub type Approve =
+    dyn Fn(String, String) -> futures_util::future::BoxFuture<'static, bool> + Send + Sync;
+
+/// Whether a step of the answer waits for the person's yes: one that changes, deletes or sends something (`isDestructive`, cleared by the server
+/// only for what the person allowed once and for all) or that the server marked. A read never asks (`requiresUserPresence` marks reads of private
+/// files too); a press on the screen that cannot be taken back is asked by the computer itself (DESKTOP_APPROVAL_REQUIRED).
+pub(crate) fn needs_yes(step: &Value) -> bool {
+    step["approvalRequired"] == true || step["isDestructive"] == true
+}
+
+/// Who a turn is for.
+pub enum Asker {
+    /// The person typed it in this window.
+    Window,
+    /// A paired phone handed its message here (frames.json `remoteMessage`): `request` is the `/copilot/chat` body the phone would have sent itself. It
+    /// goes out as it is, written from the phone with the phone's features and language; only what describes the computer is this computer's. Every
+    /// event of the answer also goes to `forward`.
+    Phone {
+        request: Value,
+        forward: Box<dyn Fn(Value) + Send + Sync>,
+    },
+}
+
+impl Asker {
+    /// The request's `clientFeatures` and `locale`, and where the person writes from.
+    fn client(&self, context: &Value) -> Value {
+        match self {
+            Asker::Window => {
+                let mut client = context.clone();
+                merge(
+                    &mut client,
+                    &json!({ "clientFeatures": CLIENT_FEATURES, "locale": "tr" }),
+                );
+                client
+            }
+            Asker::Phone { request, .. } => {
+                let mut client = context.clone();
+                if let Some(object) = client.as_object_mut() {
+                    object.remove("sourceDeviceId");
+                }
+                // The phone's own features, plus the one that says who runs the steps: this computer, which holds the stream.
+                let mut features: Vec<Value> = request["clientFeatures"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if !features
+                    .iter()
+                    .any(|feature| feature == "relay-execution-v1")
+                {
+                    features.push(json!("relay-execution-v1"));
+                }
+                merge(
+                    &mut client,
+                    &json!({ "surface": "phone", "clientFeatures": features, "locale": request["locale"].as_str().unwrap_or("tr") }),
+                );
+                client
+            }
+        }
+    }
+
+    /// What the phone's own request says beyond the message (the files read on the phone, the agent it writes to, a card it edits…). What describes the
+    /// computer, and the results of PC steps, are never taken from it.
+    fn own_fields(&self) -> Value {
+        match self {
+            Asker::Window => json!({}),
+            Asker::Phone { request, .. } => {
+                let mut fields = request.clone();
+                if let Some(object) = fields.as_object_mut() {
+                    for key in [
+                        "deviceId",
+                        "sourceDeviceId",
+                        "surface",
+                        "availableApps",
+                        "availableCapabilities",
+                        "applicationTargets",
+                        "authorities",
+                        "deviceResults",
+                    ] {
+                        object.remove(key);
+                    }
+                }
+                fields
+            }
+        }
+    }
+}
 
 pub struct Chat {
     server: String,
@@ -89,7 +177,11 @@ impl Chat {
 
     fn store(&self, account: Option<Account>, expected_token: Option<&str>) -> Result<()> {
         let mut current = self.account.lock().expect("account lock");
-        if expected_token.is_some() && current.as_ref().map(|item| item.token.as_str()) != expected_token { return Ok(()); }
+        if expected_token.is_some()
+            && current.as_ref().map(|item| item.token.as_str()) != expected_token
+        {
+            return Ok(());
+        }
         if self.vault.enabled() {
             self.vault
                 .update(|secrets| secrets.account = account.clone())?;
@@ -158,10 +250,13 @@ impl Chat {
             .ok_or_else(|| anyhow!("Giriş yapılamadı."))?
             .to_string();
         let email = value["email"].as_str().unwrap_or(email.trim()).to_string();
-        self.store(Some(Account {
-            email: email.clone(),
-            token,
-        }), None)?;
+        self.store(
+            Some(Account {
+                email: email.clone(),
+                token,
+            }),
+            None,
+        )?;
         Ok(email)
     }
 
@@ -182,10 +277,13 @@ impl Chat {
             .ok_or_else(|| anyhow!("Giriş yapılamadı."))?
             .to_string();
         let email = value["email"].as_str().unwrap_or(email.trim()).to_string();
-        self.store(Some(Account {
-            email: email.clone(),
-            token,
-        }), None)?;
+        self.store(
+            Some(Account {
+                email: email.clone(),
+                token,
+            }),
+            None,
+        )?;
         Ok(email)
     }
 
@@ -298,10 +396,13 @@ impl Chat {
             .await
             .unwrap_or(Value::Null);
         let email = me["email"].as_str().unwrap_or("").to_string();
-        self.store(Some(Account {
-            email: email.clone(),
-            token,
-        }), None)?;
+        self.store(
+            Some(Account {
+                email: email.clone(),
+                token,
+            }),
+            None,
+        )?;
         Ok(email)
     }
 
@@ -644,40 +745,13 @@ impl Chat {
         .await
     }
 
-    /// Answers a card the server asked to confirm (a mail, a delete, a terminal folder). A terminal card's grant is signed here with a paired
-    /// phone's key, which is exactly what this desktop verifies before it runs a terminal command.
-    pub async fn confirm(
-        &self,
-        engine_phones: &[wiqo_core::storage::PairedPhone],
-        device_id: &str,
-        confirmation: &Value,
-        approved: bool,
-    ) -> Result<Value> {
+    /// Answers a card the server asked to confirm (a mail, a calendar change: the server's own tools).
+    pub async fn confirm(&self, confirmation: &Value, approved: bool) -> Result<Value> {
         let token = self.token()?;
         let id = confirmation["id"]
             .as_str()
             .ok_or_else(|| anyhow!("Onay kartı okunamadı."))?;
-        let mut body = json!({ "confirmationId": id, "approved": approved });
-        let details = &confirmation["details"];
-        if approved && !details["wiqoGrantId"].is_null() {
-            let grant = (|| {
-                let phone = engine_phones.first()?;
-                if !details["wiqoGrantDeviceId"].as_str()?.eq_ignore_ascii_case(device_id) {
-                    return None;
-                }
-                let expires: u64 = details["wiqoGrantExpiresAt"].as_str()?.parse().ok()?;
-                let signature = wiqo_contract::terminal_grant_signature(
-                    &phone.token,
-                    details["wiqoGrantId"].as_str()?,
-                    details["wiqoGrantRoot"].as_str()?,
-                    details["wiqoGrantMode"].as_str()?,
-                    expires,
-                );
-                Some(json!({ "grantId": details["wiqoGrantId"], "signature": signature, "scope": "task" }))
-            })()
-            .ok_or_else(|| anyhow!("Terminal izni imzalanamadı; bu bilgisayarın bir telefonla eşleşmesi gerekiyor."))?;
-            body["terminalGrant"] = grant;
-        }
+        let body = json!({ "confirmationId": id, "approved": approved });
         self.call(
             reqwest::Method::POST,
             "copilot/confirm",
@@ -760,8 +834,9 @@ impl Chat {
         }
     }
 
-    /// One message: the answer streams to the window as `chat` events (`turn` names this message); PC steps run and their results go back until
-    /// the server's answer has no more steps.
+    /// One message: the answer streams to the window as `chat` events (`turn` names this message) and, for a phone's message, to the phone; PC
+    /// steps run here and their results go back until the server's answer has no more steps. `request_id` is the first request's id (a phone's own id,
+    /// so the server runs that request once whichever way it arrives).
     #[allow(clippy::too_many_arguments)]
     pub async fn send(
         &self,
@@ -769,35 +844,39 @@ impl Chat {
         device_id: &str,
         events: &broadcast::Sender<Event>,
         turn: &str,
+        request_id: String,
         conversation: &str,
         history: Value,
         text: &str,
-        answer_to: Option<(String, String)>,
+        task: Option<String>,
+        question: Option<String>,
         attachments: Value,
+        asker: &Asker,
+        approve: &Approve,
     ) -> Result<()> {
         self.stop.store(false, Ordering::SeqCst);
         let token = self.token()?;
         let emit = |event: Value| {
+            if let Asker::Phone { forward, .. } = asker {
+                forward(event.clone());
+            }
             let _ = events.send(Event::Chat {
                 turn: turn.to_string(),
                 event,
             });
         };
-        // An answer to a question the running task asked keeps that task's id and the question's id.
-        let task = answer_to
-            .as_ref()
-            .map(|(task, _)| task.clone())
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let context = device_context(engine, device_id);
+        // An answer to a question the running task asked keeps that task's id and the question's id; a phone names its own task.
+        let task = task.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let context = asker.client(&device_context(engine, device_id));
         let mut messages: Vec<Value> = history.as_array().cloned().unwrap_or_default();
         messages.push(json!({ "role": "user", "content": text }));
         let mut body = json!({
-            "messages": messages, "conversationId": conversation, "requestId": Uuid::new_v4().to_string(), "taskId": task,
-            "clientFeatures": CLIENT_FEATURES, "locale": "tr",
+            "messages": messages, "conversationId": conversation, "requestId": request_id, "taskId": task,
         });
-        if let Some((_, question)) = &answer_to {
+        if let Some(question) = &question {
             body["questionId"] = json!(question);
         }
+        merge(&mut body, &asker.own_fields());
         // Pictures the person added: {name, mimeType, dataBase64}, at most four.
         if let Some(items) = attachments.as_array().filter(|items| !items.is_empty()) {
             body["attachments"] = Value::Array(items.iter().take(4).cloned().collect());
@@ -810,7 +889,10 @@ impl Chat {
             if steps.is_empty() || answer["type"] == "error" {
                 return Ok(());
             }
-            if answer["deviceConnectivity"]["deviceId"].as_str().is_some_and(|target| !target.eq_ignore_ascii_case(device_id)) {
+            if answer["deviceConnectivity"]["deviceId"]
+                .as_str()
+                .is_some_and(|target| !target.eq_ignore_ascii_case(device_id))
+            {
                 bail!("Bu görevin hedefi başka bir PC; adımlar bu bilgisayarda çalıştırılmadı.");
             }
             let mut results = Vec::new();
@@ -823,7 +905,30 @@ impl Chat {
                 emit(
                     json!({ "type": "step_update", "step": { "id": step["id"], "summary": step["summary"], "status": "running" } }),
                 );
-                let result = run_step(engine, step).await;
+                let summary = step["summary"].as_str().unwrap_or("").to_string();
+                let kind = step["type"].as_str().unwrap_or("").to_string();
+                let mut result = if needs_yes(step) && !approve(kind.clone(), summary).await {
+                    refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
+                } else {
+                    run_with_progress(engine, step, &emit).await
+                };
+                // The computer itself asks before a press that cannot be taken back: the person's yes is asked with its own sentence, and the same
+                // step runs once more, under a new id, carrying that yes.
+                if result["errorCode"] == "DESKTOP_APPROVAL_REQUIRED" {
+                    let sentence = result["error"].as_str().unwrap_or("").to_string();
+                    result = if approve(kind, sentence).await {
+                        let mut approved = step.clone();
+                        approved["id"] = json!(Uuid::new_v4().to_string());
+                        if let Some(value) = approved["payload"]["value"].as_object_mut() {
+                            value.insert("cardApproved".into(), json!(true));
+                        }
+                        let mut again = run_step(engine, &approved).await;
+                        again["stepId"] = step["id"].clone();
+                        again
+                    } else {
+                        refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
+                    };
+                }
                 emit(
                     json!({ "type": "step_update", "step": { "id": step["id"], "summary": step["summary"], "status": result["status"], "message": result["message"] } }),
                 );
@@ -846,7 +951,7 @@ impl Chat {
                     { "role": "user", "content": "Yerel PC sonuçları hazır. Bu sonuçları kullanarak önceki isteği şimdi tamamla; belge içeriğini yeniden isteme." },
                 ],
                 "conversationId": conversation, "requestId": Uuid::new_v4().to_string(), "taskId": answer["taskId"].as_str().unwrap_or(&task),
-                "deviceResults": results, "clientFeatures": CLIENT_FEATURES, "locale": "tr",
+                "deviceResults": results,
             });
             merge(&mut next, &context);
             emit(json!({ "type": "reset" }));
@@ -869,28 +974,50 @@ impl Chat {
             tokio::pin!(changed);
             changed.as_mut().enable();
             let account = self.account.lock().expect("account lock").clone();
-            let Some(account) = account else { changed.await; continue; };
+            let Some(account) = account else {
+                changed.await;
+                continue;
+            };
             let token = account.token;
-            let request = self.http.get(format!("{}/runs/events", self.server))
-                .bearer_auth(&token).timeout(Duration::from_secs(15 * 60));
-            let result = tokio::select! { result = request.send() => result, _ = &mut changed => continue };
+            let request = self
+                .http
+                .get(format!("{}/runs/events", self.server))
+                .bearer_auth(&token)
+                .timeout(Duration::from_secs(15 * 60));
+            let result =
+                tokio::select! { result = request.send() => result, _ = &mut changed => continue };
             if let Ok(response) = result {
-                if response.status().as_u16() == 401 && self.token().ok().as_deref() == Some(token.as_str()) { let _ = self.store(None, Some(&token)); }
+                if response.status().as_u16() == 401
+                    && self.token().ok().as_deref() == Some(token.as_str())
+                {
+                    let _ = self.store(None, Some(&token));
+                }
                 if response.status().is_success() {
                     let mut bytes = response.bytes_stream();
                     let mut buffer = Vec::new();
                     loop {
                         let next = tokio::select! { chunk = bytes.next() => chunk, _ = &mut changed => break };
-                        let Some(chunk) = next else { break; };
-                        if self.token().ok().as_deref() != Some(token.as_str()) { break; }
-                        let Ok(chunk) = chunk else { break; };
+                        let Some(chunk) = next else {
+                            break;
+                        };
+                        if self.token().ok().as_deref() != Some(token.as_str()) {
+                            break;
+                        }
+                        let Ok(chunk) = chunk else {
+                            break;
+                        };
                         buffer.extend_from_slice(&chunk);
-                        if buffer.len() > 2_000_000 { break; }
+                        if buffer.len() > 2_000_000 {
+                            break;
+                        }
                         while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
                             let line: Vec<u8> = buffer.drain(..=end).collect();
                             if let Some(event) = parse_event_line(&String::from_utf8_lossy(&line)) {
                                 delay = 1;
-                                let _ = events.send(Event::RunSync { account: account.email.clone(), event });
+                                let _ = events.send(Event::RunSync {
+                                    account: account.email.clone(),
+                                    event,
+                                });
                             }
                         }
                     }
@@ -1118,8 +1245,35 @@ fn device_context(engine: &Engine, device_id: &str) -> Value {
     json!({ "surface": "desktop", "sourceDeviceId": device_id, "deviceId": device_id, "availableApps": apps, "availableCapabilities": capabilities, "applicationTargets": targets, "authorities": authorities })
 }
 
+/// A step that did not run because the person said no (or did not answer in time).
+pub(crate) fn refused_step(step: &Value, message: &str) -> Value {
+    json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": message, "errorCode": "DENIED_ON_PC" })
+}
+
 /// Runs one step of the answer here and describes the result the way the server reads `deviceResults`.
-async fn run_step(engine: &Engine, step: &Value) -> Value {
+/// Runs a step and, while it runs, puts how far it has come at the end of its line ("Kopyala · %45 · ~20 sn kaldı") for the panel and the phone.
+async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value)) -> Value {
+    let id = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok());
+    let summary = step["summary"].as_str().unwrap_or("").to_string();
+    let run = run_step(engine, step);
+    tokio::pin!(run);
+    let mut shown = String::new();
+    loop {
+        tokio::select! {
+            result = &mut run => return result,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                let Some(progress) = id.and_then(wiqo_core::engine::progress_of) else { continue };
+                let words = progress.words();
+                if words != shown {
+                    emit(json!({ "type": "step_update", "step": { "id": step["id"], "summary": format!("{summary} · {words}"), "status": "running" } }));
+                    shown = words;
+                }
+            }
+        }
+    }
+}
+
+pub(crate) async fn run_step(engine: &Engine, step: &Value) -> Value {
     let kind = step["type"].as_str().unwrap_or("unknown").to_string();
     let refused = |message: &str, code: &str| json!({ "stepId": step["id"], "type": kind, "status": "denied", "message": message, "errorCode": code });
     let Some(id) = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
@@ -1133,7 +1287,6 @@ async fn run_step(engine: &Engine, step: &Value) -> Value {
         return refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP");
     }
     let summary = step["summary"].as_str().unwrap_or("").to_string();
-    // Approval happened on the server card before this step was sent (the one approval path); nothing is asked again here.
     let request = Request {
         id,
         kind: kind.clone(),
@@ -1144,7 +1297,7 @@ async fn run_step(engine: &Engine, step: &Value) -> Value {
         signature: None,
         nonce: None,
     };
-    let result = engine.execute(&request, &Origin::Local).await;
+    let result = engine.execute(&request).await;
     let confirmed = result.status == CommandStatus::Completed && result.error.is_none();
     let status = if confirmed {
         "completed".to_string()
@@ -1232,9 +1385,18 @@ mod tests {
 
     #[test]
     fn an_old_requests_unauthorized_reply_cannot_sign_out_the_new_account() {
-        let dir = DataDir::new(std::env::temp_dir().join(format!("wiqo-auth-race-{}", Uuid::new_v4()))).unwrap();
+        let dir =
+            DataDir::new(std::env::temp_dir().join(format!("wiqo-auth-race-{}", Uuid::new_v4())))
+                .unwrap();
         let chat = Chat::new("http://127.0.0.1:1", Arc::new(Vault::new(false)), &dir);
-        chat.store(Some(Account { email: "new@test.invalid".into(), token: "new-test-token".into() }), None).unwrap();
+        chat.store(
+            Some(Account {
+                email: "new@test.invalid".into(),
+                token: "new-test-token".into(),
+            }),
+            None,
+        )
+        .unwrap();
         chat.store(None, Some("old-test-token")).unwrap();
         assert_eq!(chat.email().as_deref(), Some("new@test.invalid"));
         chat.store(None, Some("new-test-token")).unwrap();
@@ -1248,20 +1410,202 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = [0u8; 4096];
-            stream.read(&mut request).unwrap();
-            let body = format!("data: {}\n\n", json!({ "type": "done", "steps": [{ "id": Uuid::new_v4(), "type": "openURL" }], "deviceConnectivity": { "deviceId": "OTHER-PC" } }));
+            assert!(stream.read(&mut request).unwrap() > 0);
+            let body = format!(
+                "data: {}\n\n",
+                json!({ "type": "done", "steps": [{ "id": Uuid::new_v4(), "type": "openURL" }], "deviceConnectivity": { "deviceId": "OTHER-PC" } })
+            );
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
         });
-        let dir = DataDir::new(std::env::temp_dir().join(format!("wiqo-target-test-{}", Uuid::new_v4()))).unwrap();
-        let chat = Chat::new(&format!("http://{address}"), Arc::new(Vault::new(false)), &dir);
-        chat.store(Some(Account { email: "test@test.invalid".into(), token: "test-only-token".into() }), None).unwrap();
-        let engine = Engine::new(wiqo_contract::Platform::current(), Arc::new(wiqo_core::storage::Settings::open(&dir)), Arc::new(wiqo_core::ledger::Ledger::open(&dir)), wiqo_core::engine::Services::temporary());
+        let dir =
+            DataDir::new(std::env::temp_dir().join(format!("wiqo-target-test-{}", Uuid::new_v4())))
+                .unwrap();
+        let chat = Chat::new(
+            &format!("http://{address}"),
+            Arc::new(Vault::new(false)),
+            &dir,
+        );
+        chat.store(
+            Some(Account {
+                email: "test@test.invalid".into(),
+                token: "test-only-token".into(),
+            }),
+            None,
+        )
+        .unwrap();
+        let engine = Engine::new(
+            wiqo_contract::Platform::current(),
+            Arc::new(wiqo_core::storage::Settings::open(&dir)),
+            Arc::new(wiqo_core::ledger::Ledger::open(&dir)),
+            wiqo_core::engine::Services::temporary(),
+        );
         let (events, _) = broadcast::channel(16);
-        let result = chat.send(&engine, "THIS-PC", &events, "turn", "conversation", json!([]), "Test", None, json!([])).await;
+        let result = chat
+            .send(
+                &engine,
+                "THIS-PC",
+                &events,
+                "turn",
+                Uuid::new_v4().to_string(),
+                "conversation",
+                json!([]),
+                "Test",
+                None,
+                None,
+                json!([]),
+                &Asker::Window,
+                &|_, _| Box::pin(async { true }),
+            )
+            .await;
         assert!(result.unwrap_err().to_string().contains("başka bir PC"));
         server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_phones_message_goes_out_as_written_from_the_phone_and_its_stream_goes_back_to_it() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(500)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 65536];
+            while let Ok(read) = stream.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length: usize = text
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|value| value.trim().parse().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let text = String::from_utf8_lossy(&request).to_string();
+            let body = format!(
+                "data: {}\n\ndata: {}\n\n",
+                json!({ "type": "delta", "text": "Merhaba" }),
+                json!({ "type": "done", "reply": "Merhaba", "steps": [] })
+            );
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            text
+        });
+        let dir =
+            DataDir::new(std::env::temp_dir().join(format!("wiqo-remote-test-{}", Uuid::new_v4())))
+                .unwrap();
+        let chat = Chat::new(
+            &format!("http://{address}"),
+            Arc::new(Vault::new(false)),
+            &dir,
+        );
+        chat.store(
+            Some(Account {
+                email: "test@test.invalid".into(),
+                token: "test-only-token".into(),
+            }),
+            None,
+        )
+        .unwrap();
+        let engine = Engine::new(
+            wiqo_contract::Platform::current(),
+            Arc::new(wiqo_core::storage::Settings::open(&dir)),
+            Arc::new(wiqo_core::ledger::Ledger::open(&dir)),
+            wiqo_core::engine::Services::temporary(),
+        );
+        let (events, _) = broadcast::channel(16);
+        let forwarded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = forwarded.clone();
+        let asker = Asker::Phone {
+            request: json!({ "requestId": "phone-request-1", "clientFeatures": ["receipt-card-v1", "voice-reply-v1"], "locale": "de", "agentId": 7,
+                "files": [{ "name": "a.txt" }], "deviceId": "SOMEWHERE-ELSE", "deviceResults": [{ "stepId": "x" }] }),
+            forward: Box::new(move |event| sink.lock().unwrap().push(event)),
+        };
+        chat.send(
+            &engine,
+            "THIS-PC",
+            &events,
+            "turn",
+            "phone-request-1".into(),
+            "conversation",
+            json!([]),
+            "Hallo",
+            Some("phone-task".into()),
+            None,
+            json!([]),
+            &asker,
+            &|_, _| Box::pin(async { true }),
+        )
+        .await
+        .unwrap();
+        let request = server.join().unwrap();
+        let body: Value =
+            serde_json::from_str(&request[request.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        assert_eq!(body["requestId"], "phone-request-1");
+        assert_eq!(body["taskId"], "phone-task");
+        assert_eq!(body["surface"], "phone");
+        assert_eq!(body["deviceId"], "THIS-PC");
+        assert!(body.get("sourceDeviceId").is_none());
+        assert_eq!(body["locale"], "de");
+        assert_eq!(
+            body["clientFeatures"],
+            json!(["receipt-card-v1", "voice-reply-v1", "relay-execution-v1"]),
+            "the phone's features, run here"
+        );
+        assert_eq!(body["agentId"], 7, "the phone's own fields go as they are");
+        assert_eq!(body["files"][0]["name"], "a.txt");
+        assert!(
+            body.get("deviceResults").is_none(),
+            "results of PC steps are never taken from the phone"
+        );
+        let kinds: Vec<Value> = forwarded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|event| event["type"].clone())
+            .collect();
+        assert_eq!(kinds, vec![json!("task"), json!("delta"), json!("done")]);
+    }
+
+    #[test]
+    fn a_change_a_delete_or_a_send_waits_for_a_yes_and_a_read_does_not() {
+        assert!(needs_yes(
+            &json!({ "type": "deleteFile", "approvalRequired": true, "isDestructive": true })
+        ));
+        assert!(needs_yes(
+            &json!({ "type": "sendEmail", "isDestructive": true })
+        ));
+        assert!(needs_yes(
+            &json!({ "type": "moveFile", "isDestructive": true, "requiresUserPresence": false })
+        ));
+        assert!(!needs_yes(
+            &json!({ "type": "readFile", "isDestructive": false, "requiresUserPresence": true })
+        ));
+        assert!(
+            !needs_yes(&json!({ "type": "moveFile", "isDestructive": false })),
+            "allowed once and for all"
+        );
+        let refused = refused_step(
+            &json!({ "id": "s1", "type": "deleteFile" }),
+            "Onay verilmedi; bu adım çalıştırılmadı.",
+        );
+        assert_eq!(refused["status"], "denied");
+        assert_eq!(refused["errorCode"], "DENIED_ON_PC");
     }
 
     #[test]

@@ -13,9 +13,10 @@ use sha2::{Digest, Sha256};
 use wiqo_contract::{is_valid_file_name, FilePolicy};
 use wiqo_core::engine::{Context, Lane, Operation, Outcome};
 
+use super::undo;
 use crate::fsx::{self, is_regular_file, is_symlink};
 use crate::op::{data, error, outcome, payload, permission, tool_failure, Done, Result};
-use crate::{undo, Op};
+use crate::Op;
 
 const MAX_ARTIFACT_BYTES: u64 = 250 * 1024 * 1024;
 const MAX_PHONE_TRANSFER_BYTES: u64 = 250 * 1024 * 1024;
@@ -262,15 +263,17 @@ fn commit_artifact(
             })?,
         }
     }
-    let target = folder.join(filename.trim());
-    let existed = fs::symlink_metadata(&target).is_ok();
+    let requested = folder.join(filename.trim());
+    let taken = fs::symlink_metadata(&requested).is_ok();
+    // A taken name is not a failure: without `overwrite` the file lands beside it as "ad (2)" and the receipt says so.
+    let target = if taken && !overwrite {
+        fsx::free_name(&requested)
+            .ok_or_else(|| tool_failure("FILE_EXISTS", "Hedefte boş dosya adı bulunamadı."))?
+    } else {
+        requested.clone()
+    };
+    let existed = taken && overwrite;
     if existed {
-        if !overwrite {
-            return Err(permission(
-                "FILE_EXISTS",
-                "Aynı adlı dosya zaten var; üzerine yazılmadı.",
-            ));
-        }
         if is_symlink(&target) || !is_regular_file(&target) {
             return Err(tool_failure(
                 "UNSAFE_ARTIFACT_TARGET",
@@ -303,6 +306,9 @@ fn commit_artifact(
     })?;
     if !existed {
         item.undo_id = undo::register(ctx, &target.to_string_lossy(), None, None);
+    }
+    if target != requested {
+        item.requested_path = Some(crate::files::file_path_text(&requested));
     }
     let message = format!(
         "Doğrulandı: {} · {} bayt · SHA-256: {}",
@@ -440,7 +446,10 @@ pub(crate) async fn send_file(ctx: &Context, value: &Value) -> Result<Done> {
         // The server's answer is the only trace of why: this line hid a refusal of every transfer for weeks.
         return Err(tool_failure(
             "TRANSFER_FAILED",
-            format!("Dosya telefona iletilemedi (sunucu yanıtı {}).", response.status().as_u16()),
+            format!(
+                "Dosya telefona iletilemedi (sunucu yanıtı {}).",
+                response.status().as_u16()
+            ),
         ));
     }
     let body: Value = response.json().await.map_err(|_| failed())?;
@@ -505,11 +514,12 @@ mod tests {
         let file = desktop.join(&folder).join("rapor.txt");
         assert_eq!(fs::read(&file).unwrap(), b"bir");
         assert!(done.message.contains("SHA-256"));
+        // A taken name is not a failure: without `overwrite` the file lands beside it and the original is untouched.
+        commit_artifact(&ctx, b"iki", "rapor.txt", false, &directory).unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"bir");
         assert_eq!(
-            commit_artifact(&ctx, b"iki", "rapor.txt", false, &directory)
-                .unwrap_err()
-                .code,
-            "FILE_EXISTS"
+            fs::read(desktop.join(&folder).join("rapor (2).txt")).unwrap(),
+            b"iki"
         );
         commit_artifact(&ctx, b"iki", "rapor.txt", true, &directory).unwrap();
         assert_eq!(fs::read(&file).unwrap(), b"iki");

@@ -17,11 +17,6 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "AGENT_SCOPE": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "APPLICATION_ACTION_UNAVAILABLE": {
       "blocked": false,
       "effect": "none",
@@ -538,9 +533,9 @@
       "recovery": "retry_once"
     },
     "DEVICE_OFFLINE": {
-      "recovery": "stop",
+      "blocked": true,
       "effect": "none",
-      "blocked": true
+      "recovery": "stop"
     },
     "DEVICE_STEP_FAILED": {
       "blocked": false,
@@ -567,25 +562,10 @@
       "effect": "none",
       "recovery": null
     },
-    "DOCUMENT_DEPENDENCY_MISSING": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "DOCUMENT_EMPTY": {
       "blocked": false,
       "effect": "none",
       "recovery": null
-    },
-    "DOCUMENT_MODELS_MISSING": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": "stop"
-    },
-    "DOCUMENT_NETWORK_BLOCKED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
     },
     "DOCUMENT_PARSE_FAILED": {
       "blocked": false,
@@ -596,11 +576,6 @@
       "blocked": false,
       "effect": "none",
       "recovery": null
-    },
-    "DOCUMENT_UNSAFE": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
     },
     "DOCUMENT_UNSUPPORTED": {
       "blocked": false,
@@ -638,9 +613,9 @@
       "recovery": null
     },
     "EXPIRED_REQUEST": {
-      "recovery": null,
+      "blocked": false,
       "effect": "none",
-      "blocked": false
+      "recovery": null
     },
     "FILE_COPY_FAILED": {
       "blocked": false,
@@ -732,11 +707,6 @@
       "effect": "partial",
       "recovery": null
     },
-    "FULL_ACCESS_DISABLED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "FULL_DISK_ACCESS_REQUIRED": {
       "blocked": true,
       "effect": "none",
@@ -818,16 +788,6 @@
       "recovery": null
     },
     "LEDGER_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
-    "LOCAL_ANALYSIS_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
-    "LOCAL_ANALYSIS_INVALID": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -1042,11 +1002,6 @@
       "effect": "partial",
       "recovery": null
     },
-    "SCREEN_CLICK_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "SCREEN_RECORDING_PERMISSION_REQUIRED": {
       "blocked": true,
       "effect": "none",
@@ -1102,11 +1057,6 @@
       "effect": "none",
       "recovery": null
     },
-    "STALE_SCREEN_OBSERVATION": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": "observe"
-    },
     "STEP_ID_CONFLICT": {
       "blocked": false,
       "effect": "none",
@@ -1126,6 +1076,11 @@
       "blocked": false,
       "effect": "none",
       "recovery": null
+    },
+    "TERMINAL_ARGS_INVALID": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "alternative"
     },
     "TERMINAL_CANCELLED": {
       "blocked": true,
@@ -1170,6 +1125,11 @@
     "TERMINAL_EDIT_NOT_FOUND": {
       "blocked": false,
       "effect": "none",
+      "recovery": null
+    },
+    "TERMINAL_FAILED": {
+      "blocked": false,
+      "effect": "partial",
       "recovery": null
     },
     "TERMINAL_FILE_NOT_TEXT": {
@@ -1221,6 +1181,11 @@
       "blocked": false,
       "effect": "none",
       "recovery": null
+    },
+    "TERMINAL_JOB_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "alternative"
     },
     "TERMINAL_JOB_UNKNOWN": {
       "blocked": false,
@@ -1312,40 +1277,10 @@
       "effect": "none",
       "recovery": null
     },
-    "UI_ACTION_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
-    "UI_ELEMENT_AMBIGUOUS": {
+    "UNDO_NOTHING": {
       "blocked": false,
       "effect": "none",
-      "recovery": "observe"
-    },
-    "UI_ELEMENT_NOT_FOUND": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": "observe"
-    },
-    "UI_SEARCH_TIMEOUT": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": "retry_once"
-    },
-    "UI_TARGET_NOT_RUNNING": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
-    "UI_VERIFICATION_FAILED": {
-      "blocked": false,
-      "effect": "uncertain",
       "recovery": "stop"
-    },
-    "UI_WINDOW_NOT_FOUND": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": "observe"
     },
     "UNSUPPORTED_FORMAT": {
       "blocked": false,

@@ -30,32 +30,6 @@
       "canonical": "{\"path\":\"~/Desktop/deneme\",\"windows\":\"C:\\\\Users\\\\Ada\"}"
     }
   ],
-  "terminalGrants": [
-    {
-      "grantId": "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
-      "rootDirectory": "~/Desktop/deneme",
-      "mode": "full",
-      "expiresAt": 1790000000,
-      "token": "wiqo-test-pairing-token-0123456789abcdef",
-      "signature": "7c27e14c1a02000178e9461b1b84c3a82e16c5a0854c9b97629c4f15c6efd6e3"
-    },
-    {
-      "grantId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-      "rootDirectory": "C:\\Users\\Ada\\proje",
-      "mode": "read",
-      "expiresAt": 1790003600,
-      "token": "wiqo-test-pairing-token-0123456789abcdef",
-      "signature": "5e622f24f0e8612f2dbfa926d72b74b7f2f1c8200e40f7fa1a208b4b19242b1d"
-    },
-    {
-      "grantId": "0b8e7d2a-1111-4c3b-8d9e-aaaaaaaaaaaa",
-      "rootDirectory": "/Users/ada/çalışma alanı",
-      "mode": "full",
-      "expiresAt": 1790028800,
-      "token": "wiqo-test-pairing-token-0123456789abcdef",
-      "signature": "961a70de1ea54f2483792f0ab4db77dce9e57e52ba5eb31790fac20a887ccded"
-    }
-  ],
   "commandSignatures": [
     {
       "id": "B5F1B7E4-8A55-4C4D-9F6B-1D2C3E4F5A6B",

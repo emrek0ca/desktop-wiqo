@@ -64,8 +64,8 @@ impl Operation for GetSystemStatus {
         ) {
             message.push_str(&format!(
                 " · disk {} boş / {}",
-                crate::utility::human(free),
-                crate::utility::human(total)
+                crate::fsx::human(free),
+                crate::fsx::human(total)
             ));
         }
         Outcome::ok(message, json!({ "kind": "systemStatus", "value": status }))
@@ -155,7 +155,7 @@ fn system_status() -> Value {
         status["batteryPercentage"] = json!(percentage);
         status["isCharging"] = json!(charging);
     }
-    if let Some(volume) = crate::device::current_volume() {
+    if let Some(volume) = super::controls::current_volume() {
         status["volumePercentage"] = json!(volume);
     }
     status

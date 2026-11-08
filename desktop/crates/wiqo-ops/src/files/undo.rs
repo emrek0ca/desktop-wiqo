@@ -1,5 +1,6 @@
-//! Taking a file change back. Every verified write, move, copy or delete leaves a small record here; one tap on the phone applies it, but only while the file is
-//! still exactly as the operation left it (a file changed since is never overwritten) and only within a week.
+//! Taking a file change back. Every verified write, move, copy or delete leaves a small record here, and so does a batch (a folder tidied, files renamed,
+//! documents moved): one tap on the phone applies it, but only while every file is still exactly as the operation left it (a file changed since is never
+//! overwritten; a batch with one changed file is left whole) and only within a week. At most 200 records are kept.
 
 use std::fs;
 use std::path::PathBuf;
@@ -28,6 +29,37 @@ struct Record {
     after_sha256: String,
     /// Where to move the file back to (a move or a delete), instead of restoring content.
     restore_path: Option<String>,
+    /// A batch: every file it moved, each put back where it was; and the folders it made, removed again when they are left empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    moves: Vec<Moved>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    folders: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Moved {
+    path: String,
+    after_sha256: String,
+    restore_path: String,
+}
+
+/// The path as a record keeps it: absolute, with the home folder spelled out.
+fn stored(path: &std::path::Path) -> String {
+    fsx::abbreviate(path).replacen('~', &fsx::home().to_string_lossy(), 1)
+}
+
+fn save(ctx: &Context, record: &Record) -> Option<()> {
+    let dir = folder(ctx).ok()?;
+    let file = dir.join(format!("{}.json", record.id));
+    fs::write(&file, serde_json::to_vec(record).ok()?).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&file, fs::Permissions::from_mode(0o600));
+    }
+    prune(&dir);
+    Some(())
 }
 
 fn folder(ctx: &Context) -> std::io::Result<PathBuf> {
@@ -68,22 +100,88 @@ pub fn register(
     let id = uuid::Uuid::new_v4().to_string();
     let record = Record {
         id: id.clone(),
-        path: fsx::abbreviate(&resolved).replacen('~', &fsx::home().to_string_lossy(), 1),
+        path: stored(&resolved),
         created_at: Utc::now(),
         before: before.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)),
         after_sha256,
         restore_path: restore_path.map(str::to_string),
+        moves: Vec::new(),
+        folders: Vec::new(),
     };
-    let dir = folder(ctx).ok()?;
-    let file = dir.join(format!("{id}.json"));
-    fs::write(&file, serde_json::to_vec(&record).ok()?).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&file, fs::Permissions::from_mode(0o600));
-    }
-    prune(&dir);
+    save(ctx, &record)?;
     Some(id)
+}
+
+/// Records a batch as one undo: `moves` are (where the file is now, where it was), `made` the folders the batch created. `None` when there is
+/// nothing to put back or a file cannot be recorded (then no undo is offered for the batch).
+pub fn register_moves(
+    ctx: &Context,
+    moves: &[(PathBuf, PathBuf)],
+    made: &[PathBuf],
+) -> Option<String> {
+    let moves: Vec<Moved> = moves
+        .iter()
+        .map(|(now, was)| {
+            let resolved = fsx::resolve(&now.to_string_lossy(), false)?;
+            fsx::is_regular_file(&resolved).then_some(())?;
+            Some(Moved {
+                path: stored(&resolved),
+                after_sha256: sha_file(&resolved)?,
+                restore_path: stored(was),
+            })
+        })
+        .collect::<Option<_>>()?;
+    let first = moves.first()?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let record = Record {
+        id: id.clone(),
+        path: first.path.clone(),
+        created_at: Utc::now(),
+        before: None,
+        after_sha256: first.after_sha256.clone(),
+        restore_path: None,
+        folders: made.iter().map(|folder| stored(folder)).collect(),
+        moves,
+    };
+    save(ctx, &record)?;
+    Some(id)
+}
+
+/// Puts a batch back: first checks every file is as the batch left it and every old place is free, then moves them all.
+fn undo_moves(record: &Record) -> Result<String> {
+    let changed = || {
+        stale("Toplu işlemden sonra dosyalardan biri değişmiş veya eski yeri dolmuş; hiçbir dosyaya dokunulmadı.")
+    };
+    let mut plan = Vec::with_capacity(record.moves.len());
+    for moved in &record.moves {
+        let now = fsx::resolve(&moved.path, false).ok_or_else(changed)?;
+        if sha_file(&now).as_deref() != Some(moved.after_sha256.as_str()) {
+            return Err(changed());
+        }
+        let back = fsx::resolve(&moved.restore_path, true)
+            .filter(|path| fs::symlink_metadata(path).is_err())
+            .ok_or_else(changed)?;
+        plan.push((now, back));
+    }
+    let mut done = 0;
+    for (now, back) in &plan {
+        if crate::files::move_across(now, back).is_err() {
+            return Err(error(
+                "FILE_UNDO_FAILED",
+                format!(
+                    "{done}/{} dosya eski yerine döndü; kalanlar taşınamadı.",
+                    plan.len()
+                ),
+                "tool_failure",
+            ));
+        }
+        done += 1;
+    }
+    // Only a folder the batch made and left empty goes; remove_dir refuses anything else.
+    for made in &record.folders {
+        let _ = fs::remove_dir(made);
+    }
+    Ok(format!("{done} dosya eski yerine döndü."))
 }
 
 fn prune(dir: &PathBuf) {
@@ -123,6 +221,11 @@ pub fn undo_file(ctx: &Context, undo_id: &str) -> Result<String> {
         || (Utc::now() - record.created_at).num_days() >= KEEP_DAYS
     {
         return Err(invalid());
+    }
+    if !record.moves.is_empty() {
+        let message = undo_moves(&record)?;
+        let _ = fs::remove_file(file);
+        return Ok(message);
     }
     let current_path = fsx::resolve(&record.path, false)
         .ok_or_else(|| stale("Dosya işlemden sonra değişmiş; yeni içerik korundu."))?;

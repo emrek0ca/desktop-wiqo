@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "about": "Frames between the phone and the desktop. The desktop holds the chat stream (/copilot/chat) and runs every PC step; the phone is its remote screen. The server is a plain pipe: it passes frames on as they came and never reads, keeps or answers them. There is no direct local-network connection.",
+  "transport": {
+    "toDesktop": "POST /devices/{desktopId}/frames with { frame }: the server writes { type: 'companionFrame', frame } to that desktop's socket and answers 202 { delivered }. The phone decides by the desktop's ack, never by delivered.",
+    "toPhone": "The desktop writes { type: 'companionFrame', frame, notify? } to its socket; the server passes it to GET /devices/events as { type: 'companion_frame', deviceId, frame }. notify is an approvalId: the server sends the generic approval push (rova.type = 'pcApproval', Android data.pcApprovalId) and does nothing else with it."
+  },
+  "timing": {
+    "ackSeconds": 3,
+    "approvalSeconds": 90
+  },
+  "toDesktop": {
+    "about": "Every frame to the desktop is a signed command v2 (vectors.json commandSignatures): { id, type, createdAt, payload: { kind, value }, signatureVersion: 2, createdAtEpochMs, nonce, signature }, signed with the pairing token. The desktop checks the signature and the nonce (INVALID_SIGNATURE, SIGNATURE_VERSION_REQUIRED) and drops what fails. type is one of these, or an operation of operations.json (a PC screen's own command, answered with commandResult).",
+    "types": {
+      "remoteMessage": {
+        "payloadKind": "remoteMessage",
+        "fields": [
+          "the /copilot/chat body the phone would have sent itself (messages, conversationId, requestId, taskId, questionId, clientFeatures, locale, attachments, files, agentId…); the desktop replaces what describes the computer and adds its own step results"
+        ],
+        "answer": "ack within ackSeconds, then streamEvent frames. No ack: the phone sends the same request (same requestId) to /copilot/chat itself, without a PC."
+      },
+      "approvalDecision": {
+        "payloadKind": "approvalDecision",
+        "fields": [
+          "approvalId",
+          "approved"
+        ],
+        "answer": "approvalResolved. The first answer (desktop or phone) wins; a later one is ignored."
+      }
+    }
+  },
+  "toPhone": {
+    "about": "Frames from the desktop are not signed: the phone acts on none of them without its own signed answer. A message's stream is every event /copilot/chat sends, round after round (a round with PC steps ends in its own done, then reset and the next round): the turn ends only with turnEnd, and the last done before it is the answer.",
+    "kinds": {
+      "ack": [
+        "requestId"
+      ],
+      "streamEvent": [
+        "requestId",
+        "event"
+      ],
+      "turnEnd": [
+        "requestId"
+      ],
+      "approvalRequest": [
+        "approvalId",
+        "requestId",
+        "operation",
+        "detail",
+        "expiresAt"
+      ],
+      "approvalResolved": [
+        "approvalId",
+        "requestId",
+        "approved",
+        "by"
+      ],
+      "commandResult": [
+        "commandId",
+        "result"
+      ]
+    }
+  }
+}

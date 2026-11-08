@@ -1,10 +1,11 @@
-//! The computer itself: power, sound, media keys, the clipboard and web addresses. What the platforms can do differs; each function says what it needs and
+//! The computer itself: power, sound, brightness, media keys, the clipboard (and its recent history) and web addresses. What the platforms can do differs; each function says what it needs and
 //! answers with a contract error code when the platform or a permission does not allow it.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use serde_json::Value;
+use chrono::Utc;
+use serde_json::{json, Value};
 use wiqo_core::engine::{Context, Lane};
 
 #[cfg(target_os = "macos")]
@@ -50,6 +51,16 @@ pub(crate) fn operations() -> Vec<Op> {
             name: "setClipboardText",
             lane: side,
             run: set_clipboard,
+        }),
+        Arc::new(Blocking {
+            name: "setBrightness",
+            lane: side,
+            run: set_brightness,
+        }),
+        Arc::new(Blocking {
+            name: "getClipboardHistory",
+            lane: Lane::ReadOnly,
+            run: |_, _| clipboard_history(),
         }),
         Arc::new(Blocking {
             name: "getClipboardText",
@@ -342,7 +353,7 @@ fn send_media(action: &str) -> Result<()> {
     for app in ["Spotify", "Music"] {
         if run("/usr/bin/pgrep", &["-x", app], 3).is_ok() {
             return run("/usr/bin/osascript", &["-e", &format!("tell application \"{app}\" to {verb}")], 8).map(|_| ()).map_err(|message| {
-                if message.contains("-1743") {
+                if crate::applescript::refused(&message) {
                     permission("MEDIA_PERMISSION_DENIED", format!("Wiqo için Otomasyon ({app}) izni verilmedi. Sistem Ayarları > Gizlilik ve Güvenlik > Otomasyon altından izin verin."))
                 } else {
                     tool_failure("MEDIA_FAILED", format!("Medya komutu çalıştırılamadı: {message}"))
@@ -456,6 +467,111 @@ fn open_in_browser(raw: &str) -> Result<Option<String>> {
         )
     })?;
     Ok(None)
+}
+
+// ----- brightness -----
+
+fn set_brightness(_ctx: &Context, value: &Value) -> Result<Done> {
+    let level: i64 = payload(value, "brightness", "parlaklık")?;
+    let level = level.clamp(0, 100);
+    let unavailable = || {
+        tool_failure(
+            "BRIGHTNESS_UNAVAILABLE",
+            "Ekran parlaklığı bu bilgisayarda desteklenmiyor.",
+        )
+    };
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGMainDisplayID() -> u32;
+        }
+        type SetBrightness = unsafe extern "C" fn(u32, f32) -> i32;
+        let library = unsafe {
+            libloading::Library::new(
+                "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices",
+            )
+        }
+        .map_err(|_| unavailable())?;
+        let set: libloading::Symbol<SetBrightness> =
+            unsafe { library.get(b"DisplayServicesSetBrightness") }.map_err(|_| unavailable())?;
+        if unsafe { set(CGMainDisplayID(), level as f32 / 100.0) } != 0 {
+            return Err(tool_failure("BRIGHTNESS_FAILED", "Parlaklık ayarlanamadı. Harici ekranlarda veya bazı Mac modellerinde desteklenmiyor olabilir."));
+        }
+        Ok(Done::message(format!("Parlaklık %{level} yapıldı.")))
+    }
+    // A laptop's built-in panel answers WMI; an external monitor does not, and the read-back says which happened.
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop | Select-Object -First 1; \
+             Invoke-CimMethod -InputObject $m -MethodName WmiSetBrightness -Arguments @{{Timeout=1; Brightness={level}}} | Out-Null; \
+             (Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1).CurrentBrightness"
+        );
+        let now = run("powershell", &["-NoProfile", "-Command", &script], 10)
+            .map_err(|_| unavailable())?;
+        match now.trim().parse::<i64>() {
+            Ok(read) if (read - level).abs() <= 5 => {
+                Ok(Done::message(format!("Parlaklık %{level} yapıldı.")))
+            }
+            Ok(read) => Err(tool_failure(
+                "BRIGHTNESS_FAILED",
+                format!("Parlaklık %{level} istendi, ekran %{read} gösteriyor."),
+            )),
+            Err(_) => Err(unavailable()),
+        }
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = level;
+        Err(unavailable())
+    }
+}
+
+// ----- clipboard history -----
+
+struct History {
+    entries: Mutex<Vec<Value>>,
+}
+
+/// The last 20 texts copied while Wiqo runs, newest first (kept in memory only). Started by the first request, so nothing is watched unless asked.
+fn history() -> &'static History {
+    static HISTORY: OnceLock<History> = OnceLock::new();
+    HISTORY.get_or_init(|| {
+        std::thread::spawn(|| {
+            let mut last: Option<String> = None;
+            loop {
+                if let Ok(text) = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+                    if !text.is_empty() && last.as_deref() != Some(text.as_str()) {
+                        last = Some(text.clone());
+                        let mut entries = history().entries.lock().expect("history lock");
+                        if entries.first().and_then(|entry| entry["text"].as_str()) != Some(text.as_str()) {
+                            let text: String = text.chars().take(4_000).collect();
+                            entries.insert(0, json!({ "text": text, "copiedAt": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true) }));
+                            entries.truncate(20);
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(1500));
+            }
+        });
+        History { entries: Mutex::new(Vec::new()) }
+    })
+}
+
+/// Starts watching the clipboard when the app starts (the history is about what the person copies, not what was on the clipboard at the request).
+pub fn start_clipboard_history() {
+    let _ = history();
+}
+
+fn clipboard_history() -> Result<Done> {
+    let entries = history().entries.lock().expect("history lock").clone();
+    let message = if entries.is_empty() {
+        "Pano geçmişi boş.".to_string()
+    } else {
+        format!("Panoda son {} kayıt.", entries.len())
+    };
+    Ok(Done::new(message, Some(data("clipboardHistory", entries))))
 }
 
 #[cfg(test)]

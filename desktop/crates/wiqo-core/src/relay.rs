@@ -1,4 +1,4 @@
-//! The connection to the server: register this desktop, receive commands, send answers, and stay connected.
+//! The connection to the server: register this desktop, take the phones' frames, send frames back, and stay connected.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,18 +15,16 @@ use wiqo_contract::Platform;
 
 use crate::api::Api;
 use crate::codes;
-use crate::engine::{Engine, Origin};
+use crate::engine::Engine;
 use crate::storage::{CredentialStore, Credentials, Identity, PairedPhones};
-use crate::terminal::{self, Outbox, Session, CODE_CAPABILITY};
+use crate::terminal::{Outbox, CODE_CAPABILITY};
 use crate::verify::{signer_of, NonceCache, Rejection};
 use crate::wire::{CommandResult, CommandStatus, Request, WireError};
 
 const PROTOCOL_VERSION: u32 = 2;
-/// Features the server may rely on, announced at registration (only those this desktop really has).
-const FEATURE_FULL_ACCESS: &str = "agent.fullAccess";
-const FEATURE_TASK_GRANT: &str = "agent.taskGrant";
-const FEATURE_TASK_ACTIVE: &str = "agent.taskActive";
 const REFRESH_MARGIN_SECONDS: i64 = 120;
+/// How often the desktop asks for its due automation steps while connected.
+const AUTOMATION_PULL: Duration = Duration::from_secs(15);
 
 /// Where the connection to the server stands, for whoever shows it (the app window, the tray, the CLI log).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -46,6 +44,12 @@ pub trait Observer: Send + Sync {
     /// One command finished: its relay id, its type and its answer.
     fn command(&self, _key: &str, _kind: &str, _result: &CommandResult) {}
     fn phones_changed(&self) {}
+    /// A frame from a paired phone whose signature was checked: a message or an approval answer (contracts/companion/frames.json). A PC
+    /// screen's own command never comes here: it runs and is answered on the relay.
+    fn remote(&self, _request: Request) {}
+    /// Due automation steps the server handed over on this desktop's own question (`automationPull`): each in the chat's step shape, to run
+    /// and answer with `automation_done`.
+    fn automation(&self, _steps: Vec<(i64, Value)>) {}
     /// A command started (`key` is its relay id; `detail` a short line about what it touches) and, later, ended.
     /// `task` groups the commands of one task: the run id the server sends, or a terminal session's grant id.
     fn started(&self, _key: &str, _kind: &str, _detail: &str, _task: Option<&str>) {}
@@ -58,6 +62,8 @@ impl Observer for Silent {}
 /// Everything one running desktop needs.
 pub struct Runtime {
     pub identity: Identity,
+    /// The open socket to the server: frames for the phones and this desktop's own questions leave through it.
+    pub outbox: Outbox,
     pub credentials: Arc<CredentialStore>,
     pub phones: PairedPhones,
     pub engine: Engine,
@@ -74,13 +80,10 @@ pub fn platform_name(platform: Platform) -> &'static str {
 
 fn registration(runtime: &Runtime) -> Value {
     let engine = &runtime.engine;
-    // Only what this desktop really does: saving into a sub-folder of the Desktop, taking task grants, and full access or a running grant.
+    // Only what this desktop really does: saving into a sub-folder of the Desktop.
     // "desktop.approvalGate": this companion asks before a press that cannot be taken back. The server sends desktop actions only to one that does.
     let mut features: Vec<&str> = vec!["artifact-directory-v1", "desktop.approvalGate"];
     let names = engine.operation_names();
-    if names.contains(&"grantAgentAccess") {
-        features.push(FEATURE_TASK_GRANT);
-    }
     // fileUtility's inspect and moveDocuments actions: the server only plans them for a desktop that says it has them.
     if names.contains(&"fileUtility") {
         features.extend(["file-inspect-v1", "bulk-document-move-v1"]);
@@ -90,18 +93,6 @@ fn registration(runtime: &Runtime) -> Value {
         .filter(|_| engine.settings().capability_enabled(CODE_CAPABILITY));
     if let Some(terminal) = terminal {
         features.extend(terminal.features());
-        if engine.settings().full_access() {
-            features.push("terminal-full-access-v1");
-        }
-    }
-    // The server may run own-folder reads here without the phone's round trip (grants.rs `read_without_phone`).
-    if engine.settings().reads_without_phone() {
-        features.push("agent.readOnly");
-    }
-    if engine.settings().full_access() {
-        features.push(FEATURE_FULL_ACCESS);
-    } else if engine.services().access.active().is_some() {
-        features.push(FEATURE_TASK_ACTIVE);
     }
     json!({
         "type": "register",
@@ -119,18 +110,11 @@ fn registration(runtime: &Runtime) -> Value {
 }
 
 enum Incoming {
-    Command {
-        command_id: String,
-        request: Value,
-        origin_is_agent: bool,
-        /// Which run, step and role the command belongs to; echoed back with the answer, never signed.
-        run: Value,
-    },
-    Terminal {
-        command_id: String,
-        request: Value,
-    },
     PairingRevoked(String),
+    /// A frame from a phone, through the server's pipe (contracts/companion/frames.json).
+    Frame(Value),
+    /// The answer to this desktop's `automationPull`.
+    AutomationSteps(Vec<(i64, Value)>),
     Ignored,
 }
 
@@ -139,28 +123,23 @@ fn parse_incoming(text: &str) -> Incoming {
         return Incoming::Ignored;
     };
     let kind = value["type"].as_str().unwrap_or("").to_string();
-    let command_id = value["commandId"].as_str().map(str::to_string);
     match kind.as_str() {
-        "interactiveCommand" | "agentCommand" => match command_id {
-            Some(command_id) => Incoming::Command {
-                command_id,
-                request: value["request"].clone(),
-                origin_is_agent: kind == "agentCommand",
-                run: value["run"].clone(),
-            },
-            None => Incoming::Ignored,
-        },
+        "companionFrame" if value["frame"].is_object() => Incoming::Frame(value["frame"].clone()),
+        "automationSteps" => Incoming::AutomationSteps(
+            value["steps"]
+                .as_array()
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .filter_map(|item| Some((item["stepId"].as_i64()?, item["step"].clone())))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        ),
         "pairingRevoked" => value["pairingId"]
             .as_str()
             .map(|id| Incoming::PairingRevoked(id.to_string()))
             .unwrap_or(Incoming::Ignored),
-        "terminalCommand" => match command_id {
-            Some(command_id) => Incoming::Terminal {
-                command_id,
-                request: value["request"].clone(),
-            },
-            None => Incoming::Ignored,
-        },
         _ => Incoming::Ignored,
     }
 }
@@ -179,43 +158,85 @@ fn log_result(command_id: &str, kind: &str, result: &CommandResult, took: Durati
     );
 }
 
-fn answer(command_id: &str, result: &CommandResult) -> String {
-    json!({ "type": "interactiveCommandResult", "commandId": command_id, "result": result })
-        .to_string()
-}
-
-fn answer_with_run(command_id: &str, result: &CommandResult, run: &Value) -> String {
-    if run.is_null() {
-        return answer(command_id, result);
+/// A frame for the person's phones (contracts/companion/frames.json): the server passes it on as it is. `notify` (an approval's id) asks the server for
+/// the generic approval push, for a phone whose app is closed.
+pub fn to_phone(frame: Value, notify: Option<&str>) -> Value {
+    match notify {
+        Some(id) => json!({ "type": "companionFrame", "frame": frame, "notify": id }),
+        None => json!({ "type": "companionFrame", "frame": frame }),
     }
-    json!({ "type": "interactiveCommandResult", "commandId": command_id, "result": result, "run": run })
-        .to_string()
 }
 
-/// One terminal request: the session it may use (the grant check sees the phones paired right now), then the terminal's own answer.
-pub async fn handle_terminal(
-    runtime: &Arc<Runtime>,
-    outbox: &Outbox,
-    command_id: &str,
-    request: &Value,
-) -> Option<CommandResult> {
-    let terminal = runtime.engine.terminal()?.clone();
-    let digest = wiqo_contract::canonical_json(request)
-        .map(|text| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(text.as_bytes())))
-        .unwrap_or_default();
-    let checker = runtime.clone();
-    let session = Session {
-        services: runtime.engine.services().clone(),
-        grants: Arc::new(move |grant| {
-            terminal::accepts(grant, &checker.phones.list(), checker.engine.settings())
-        }),
-        outbox: outbox.clone(),
-        code_enabled: runtime
-            .engine
-            .settings()
-            .capability_enabled(CODE_CAPABILITY),
+/// None when a paired phone signed this command (signed command v2 with its pairing key and a fresh nonce), else the refusal to send back.
+fn unsigned(runtime: &Runtime, request: &Request, raw_payload: &Value) -> Option<CommandResult> {
+    let phones = runtime.phones.list();
+    let keys = phones
+        .iter()
+        .map(|phone| (phone.pairing_id.as_str(), phone.token.as_str()));
+    signer_of(request, raw_payload, keys, &runtime.nonces, Utc::now())
+        .err()
+        .map(|rejection| match rejection {
+            Rejection::VersionRequired => refusal(
+                request.id,
+                codes::SIGNATURE_VERSION_REQUIRED,
+                "Güvenli komut imzası için Wiqo uygulamasını güncelleyin.",
+                "permission",
+            ),
+            Rejection::Invalid => refusal(
+                request.id,
+                codes::INVALID_SIGNATURE,
+                "Komut kriptografik imzası geçersiz.",
+                "permission",
+            ),
+        })
+}
+
+/// One frame from a phone. A message or an approval answer goes to the observer once its signature holds; anything
+/// else is a PC screen's own command: it runs here as that phone's command and its result goes back as a `commandResult` frame.
+async fn phone_frame(runtime: &Runtime, observer: &dyn Observer, frame: Value) {
+    let Ok(request) = serde_json::from_value::<Request>(frame.clone()) else {
+        tracing::warn!("frame: unreadable, dropped");
+        return;
     };
-    Some(terminal.handle(session, command_id, request, &digest).await)
+    if wiqo_contract::frames::Frames::get().is_to_desktop(&request.kind) {
+        match unsigned(runtime, &request, &frame["payload"]) {
+            None => observer.remote(request),
+            Some(refused) => tracing::warn!(
+                "frame {} ({}): {}",
+                request.id,
+                request.kind,
+                refused.error.map(|error| error.code).unwrap_or_default()
+            ),
+        }
+        return;
+    }
+    let command_id = request.id.to_string();
+    let clock = std::time::Instant::now();
+    observer.started(
+        &command_id,
+        &request.kind,
+        &crate::engine::describe(&frame["payload"]),
+        None,
+    );
+    let kind = request.kind.clone();
+    let result = match unsigned(runtime, &request, &frame["payload"]) {
+        None => {
+            let mut request = request;
+            vouch_for_person(&mut request);
+            runtime.engine.execute(&request).await
+        }
+        Some(refused) => refused,
+    };
+    log_result(&command_id, &kind, &result, clock.elapsed());
+    runtime
+        .outbox
+        .deliver(&to_phone(
+            json!({ "kind": wiqo_contract::frames::COMMAND_RESULT, "commandId": command_id, "result": result }),
+            None,
+        ))
+        .await;
+    observer.command(&command_id, &kind, &result);
+    observer.finished(&command_id);
 }
 
 fn refusal(request_id: Uuid, code: &str, message: &str, category: &str) -> CommandResult {
@@ -227,136 +248,18 @@ fn refusal(request_id: Uuid, code: &str, message: &str, category: &str) -> Comma
     )
 }
 
-/// Checks and runs one command from the server, returning the text to send back.
-pub async fn handle_command(
-    runtime: &Runtime,
-    command_id: &str,
-    raw_request: Value,
-    from_agent: bool,
-) -> String {
-    handle(runtime, command_id, raw_request, from_agent).await.0
-}
-
-/// The pairing whose key signed this step's card approval (`wiqo-terminal-grant:v1` over the step's own digest, mode `step`), if one did.
-fn approved_by(
-    request: &Request,
-    approval: &Value,
-    phones: &[crate::storage::PairedPhone],
-) -> Option<String> {
-    let grant_id = approval["grantId"].as_str()?;
-    let root = approval["root"].as_str()?;
-    let signature = approval["signature"].as_str()?;
-    let expires_at = approval["expiresAt"].as_u64()?;
-    let now = Utc::now().timestamp() as u64;
-    if approval["mode"] != "step"
-        || expires_at <= now
-        || expires_at > now + 3_600
-        || root != crate::engine::request_digest(request)
-    {
-        return None;
-    }
-    phones.iter().find_map(|phone| {
-        let expected = wiqo_contract::terminal_grant_signature(
-            &phone.token,
-            grant_id,
-            root,
-            "step",
-            expires_at,
-        );
-        wiqo_contract::verify_signature(&expected, signature).then(|| phone.pairing_id.clone())
-    })
-}
-
-async fn handle(
-    runtime: &Runtime,
-    command_id: &str,
-    raw_request: Value,
-    from_agent: bool,
-) -> (String, Option<(String, CommandResult)>) {
-    let mut request: Request = match serde_json::from_value(raw_request.clone()) {
-        Ok(request) => request,
-        Err(_) => {
-            return (
-                answer(
-                    command_id,
-                    &refusal(
-                        Uuid::nil(),
-                        codes::INVALID_PAYLOAD,
-                        "Komut çözülemedi; Wiqo'yu güncelleyin.",
-                        "validation",
-                    ),
-                ),
-                None,
-            )
-        }
-    };
-    let origin = if from_agent {
-        // A step the person approved on a card (phone or this window) carries the grant they signed with a paired key: it runs as if that
-        // phone had sent it. Anything else from the server is the agent, bound by "Tam yetki" or the phone's task grant.
-        match approved_by(&request, &raw_request["approval"], &runtime.phones.list()) {
-            Some(pairing_id) => Origin::Phone { pairing_id },
-            None => Origin::Agent,
-        }
-    } else {
-        let phones = runtime.phones.list();
-        let keys = phones
-            .iter()
-            .map(|phone| (phone.pairing_id.as_str(), phone.token.as_str()));
-        match signer_of(
-            &request,
-            &raw_request["payload"],
-            keys,
-            &runtime.nonces,
-            Utc::now(),
-        ) {
-            Ok(pairing_id) => Origin::Phone { pairing_id },
-            Err(rejection) => {
-                let refused = match rejection {
-                    Rejection::VersionRequired => refusal(
-                        request.id,
-                        codes::SIGNATURE_VERSION_REQUIRED,
-                        "Güvenli komut imzası için Wiqo uygulamasını güncelleyin.",
-                        "permission",
-                    ),
-                    Rejection::Invalid => refusal(
-                        request.id,
-                        codes::INVALID_SIGNATURE,
-                        "Komut kriptografik imzası geçersiz.",
-                        "permission",
-                    ),
-                };
-                return (
-                    answer(command_id, &refused),
-                    Some((request.kind.clone(), refused)),
-                );
-            }
-        }
-    };
-    let approved = from_agent && matches!(origin, Origin::Phone { .. });
-    vouch_for_person(&mut request, from_agent, approved);
-    let result = runtime.engine.execute(&request, &origin).await;
-    (answer(command_id, &result), Some((request.kind, result)))
-}
-
-/// What a desktop action may say about the person is decided here and nowhere else: `cardApproved` when their signature on a card was checked above, `person` only
-/// inside a phone's own signature. Whatever else came in those fields, from the server or the model, is dropped.
-fn vouch_for_person(request: &mut Request, from_agent: bool, approved: bool) {
+/// What a desktop action may say about the person is decided here and nowhere else: `person` only inside a phone's own signature, and never
+/// `cardApproved` (only this computer's own chat sets it, after the person's yes). Whatever else came in that field is dropped.
+fn vouch_for_person(request: &mut Request) {
     if request.kind != "computerDesktop" {
         return;
     }
-    let Some(value) = request
+    if let Some(value) = request
         .payload
         .get_mut("value")
         .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    value.remove("cardApproved");
-    if from_agent {
-        value.remove("person");
-    }
-    if approved {
-        value.insert("cardApproved".into(), Value::Bool(true));
+    {
+        value.remove("cardApproved");
     }
 }
 
@@ -365,18 +268,16 @@ pub struct Relay {
     api: Api,
     observer: Arc<dyn Observer>,
     refresh: Arc<Notify>,
-    outbox: Outbox,
 }
 
 impl Relay {
     pub fn new(runtime: Arc<Runtime>, api_base: &str) -> Relay {
-        let refresh = runtime.engine.services().access.changed();
+        let refresh = runtime.engine.services().announce.clone();
         Relay {
             runtime,
             api: Api::new(api_base),
             observer: Arc::new(Silent),
             refresh,
-            outbox: Outbox::default(),
         }
     }
 
@@ -423,7 +324,11 @@ impl Relay {
             .await
             .map_err(|error| {
                 if error.is_unauthorized() {
-                    let _ = self.runtime.engine.settings().update(|data| data.connection_stopped = true);
+                    let _ = self
+                        .runtime
+                        .engine
+                        .settings()
+                        .update(|data| data.connection_stopped = true);
                     let _ = store.clear();
                 }
                 format!("token refresh: {error}")
@@ -464,13 +369,11 @@ impl Relay {
         );
         self.observer.state(&ConnectionState::Online);
 
-        // Answers leave through one channel, so any number of commands can run at once and still write to the socket one at a time.
+        // Frames for the phones leave through one channel, so any number of commands can run at once and still write to the socket one at a time.
         let (outgoing, mut answers) = mpsc::channel::<String>(64);
-        self.outbox.attach(Some(outgoing.clone()));
-        let result = self
-            .serve(&mut sink, &mut stream, &outgoing, &mut answers)
-            .await;
-        self.outbox.attach(None);
+        self.runtime.outbox.attach(Some(outgoing));
+        let result = self.serve(&mut sink, &mut stream, &mut answers).await;
+        self.runtime.outbox.attach(None);
         result
     }
 
@@ -478,7 +381,6 @@ impl Relay {
         &self,
         sink: &mut S,
         stream: &mut R,
-        outgoing: &mpsc::Sender<String>,
         answers: &mut mpsc::Receiver<String>,
     ) -> Result<(), String>
     where
@@ -486,8 +388,13 @@ impl Relay {
         R: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
             + Unpin,
     {
+        // This desktop asks for its due automation steps now and then; the server never sends work on its own.
+        let mut pull = tokio::time::interval(AUTOMATION_PULL);
         loop {
             tokio::select! {
+                _ = pull.tick() => {
+                    sink.send(Message::text(json!({ "type": "automationPull" }).to_string())).await.map_err(|error| error.to_string())?;
+                }
                 _ = self.refresh.notified() => {
                     sink.send(Message::text(registration(&self.runtime).to_string())).await.map_err(|error| error.to_string())?;
                 }
@@ -497,7 +404,7 @@ impl Relay {
                 message = stream.next() => {
                     let Some(message) = message else { return Err("the server closed the connection".into()) };
                     match message.map_err(|error| error.to_string())? {
-                        Message::Text(text) => self.dispatch(text.as_str(), outgoing),
+                        Message::Text(text) => self.dispatch(text.as_str()),
                         Message::Close(frame) => return Err(format!("closed by the server: {frame:?}")),
                         _ => {}
                     }
@@ -506,96 +413,16 @@ impl Relay {
         }
     }
 
-    fn dispatch(&self, text: &str, outgoing: &mpsc::Sender<String>) {
+    fn dispatch(&self, text: &str) {
         match parse_incoming(text) {
-            Incoming::Command {
-                command_id,
-                request,
-                origin_is_agent,
-                run,
-            } => {
-                let (runtime, outgoing, observer) = (
-                    self.runtime.clone(),
-                    outgoing.clone(),
-                    self.observer.clone(),
-                );
-                tokio::spawn(async move {
-                    tracing::info!(
-                        "command {command_id} ({})",
-                        request["type"].as_str().unwrap_or("?")
-                    );
-                    observer.started(
-                        &command_id,
-                        request["type"].as_str().unwrap_or("?"),
-                        &crate::engine::describe(&request["payload"]),
-                        run["id"].as_str(),
-                    );
-                    let clock = std::time::Instant::now();
-                    let (reply, finished) =
-                        handle(&runtime, &command_id, request, origin_is_agent).await;
-                    if let Some((kind, result)) = &finished {
-                        log_result(&command_id, kind, result, clock.elapsed());
-                    }
-                    let reply = match &finished {
-                        Some((_, result)) if !run.is_null() => {
-                            answer_with_run(&command_id, result, &run)
-                        }
-                        _ => reply,
-                    };
-                    let _ = outgoing.send(reply).await;
-                    if let Some((kind, result)) = finished {
-                        observer.command(&command_id, &kind, &result);
-                    }
-                    observer.finished(&command_id);
-                });
+            Incoming::AutomationSteps(steps) => {
+                if !steps.is_empty() {
+                    self.observer.automation(steps);
+                }
             }
-            Incoming::Terminal {
-                command_id,
-                request,
-            } => {
-                let (runtime, outgoing, observer, outbox) = (
-                    self.runtime.clone(),
-                    outgoing.clone(),
-                    self.observer.clone(),
-                    self.outbox.clone(),
-                );
-                tokio::spawn(async move {
-                    let clock = std::time::Instant::now();
-                    let action = request["action"].as_str().unwrap_or("run").to_string();
-                    tracing::info!("terminal {command_id} ({action})");
-                    let detail: String = request["command"]
-                        .as_str()
-                        .or(request["filePath"].as_str())
-                        .unwrap_or("")
-                        .chars()
-                        .take(120)
-                        .collect();
-                    observer.started(
-                        &command_id,
-                        &format!("terminal.{action}"),
-                        &detail,
-                        request["grant"]["id"].as_str(),
-                    );
-                    let result =
-                        match handle_terminal(&runtime, &outbox, &command_id, &request).await {
-                            Some(result) => result,
-                            None => refusal(
-                                Uuid::nil(),
-                                codes::UNSUPPORTED_OPERATION,
-                                "Terminal oturumları bu Wiqo sürümünde yok.",
-                                "validation",
-                            ),
-                        };
-                    log_result(
-                        &command_id,
-                        &format!("terminal.{action}"),
-                        &result,
-                        clock.elapsed(),
-                    );
-                    let _ = outgoing.send(answer(&command_id, &result)).await;
-                    observer.command(&command_id, &format!("terminal.{action}"), &result);
-                    observer.finished(&command_id);
-                });
+            Incoming::Frame(frame) => {
+                let (runtime, observer) = (self.runtime.clone(), self.observer.clone());
+                tokio::spawn(async move { phone_frame(&runtime, observer.as_ref(), frame).await });
             }
             Incoming::PairingRevoked(pairing_id) => match self.runtime.phones.remove(&pairing_id) {
                 Ok(true) => {
@@ -611,55 +438,148 @@ impl Relay {
 }
 
 #[cfg(test)]
-mod approval_tests {
+mod frame_tests {
     use super::*;
+    use std::sync::Mutex;
 
-    fn request() -> Request {
-        serde_json::from_value(serde_json::json!({
-            "id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301", "type": "deleteFile", "createdAt": "2026-10-31T00:00:00Z",
-            "payload": { "kind": "fileName", "value": { "path": "~/Desktop/a b.txt", "size": 0.5, "n": 3 } }
-        }))
-        .unwrap()
+    struct Recorder(Mutex<Vec<String>>);
+    impl Observer for Recorder {
+        fn remote(&self, request: Request) {
+            self.0.lock().unwrap().push(request.kind);
+        }
+    }
+
+    fn runtime() -> Runtime {
+        let dir = crate::storage::DataDir::new(
+            std::env::temp_dir().join(format!("wiqo-frames-{}", Uuid::new_v4())),
+        )
+        .unwrap();
+        let phones = PairedPhones::open(&dir);
+        phones
+            .add(crate::storage::PairedPhone {
+                pairing_id: "p1".into(),
+                name: "Telefon".into(),
+                platform: "iOS".into(),
+                token: "pairing-key".into(),
+            })
+            .unwrap();
+        Runtime {
+            identity: Identity {
+                device_id: "PC".into(),
+                display_name: "PC".into(),
+            },
+            outbox: Outbox::default(),
+            credentials: Arc::new(CredentialStore::open(&dir)),
+            phones,
+            engine: Engine::new(
+                wiqo_contract::Platform::current(),
+                Arc::new(crate::storage::Settings::open(&dir)),
+                Arc::new(crate::ledger::Ledger::open(&dir)),
+                crate::engine::Services::temporary(),
+            ),
+            nonces: NonceCache::default(),
+        }
+    }
+
+    /// A frame as a phone sends it: a signed command v2 with its pairing key.
+    fn frame(key: &str, kind: &str, payload: Value) -> Value {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let epoch_ms = now.timestamp_millis();
+        let nonce = Uuid::new_v4().to_string();
+        let signature = wiqo_contract::command_signature(
+            key,
+            &id.to_string(),
+            kind,
+            epoch_ms as u64,
+            &nonce,
+            &payload,
+        )
+        .unwrap();
+        json!({ "id": id, "type": kind, "payload": payload, "createdAt": crate::wire::timestamp(now), "signatureVersion": 2,
+            "createdAtEpochMs": epoch_ms, "nonce": nonce, "signature": signature })
+    }
+
+    fn message() -> Value {
+        json!({ "kind": "remoteMessage", "value": { "requestId": "request-0001", "messages": [{ "role": "user", "content": "selam" }] } })
+    }
+
+    #[tokio::test]
+    async fn a_paired_phones_signed_message_reaches_the_chat_and_a_replay_or_a_stranger_does_not() {
+        let runtime = runtime();
+        let recorder = Recorder(Mutex::new(Vec::new()));
+        let signed = frame("pairing-key", "remoteMessage", message());
+        phone_frame(&runtime, &recorder, signed.clone()).await;
+        phone_frame(&runtime, &recorder, signed).await;
+        phone_frame(
+            &runtime,
+            &recorder,
+            frame("another-key", "remoteMessage", message()),
+        )
+        .await;
+        let mut forged = frame(
+            "pairing-key",
+            "approvalDecision",
+            json!({ "kind": "approvalDecision", "value": { "approvalId": "a", "approved": true } }),
+        );
+        forged["payload"]["value"]["approved"] = json!(false);
+        phone_frame(&runtime, &recorder, forged).await;
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            vec!["remoteMessage".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pc_screens_command_is_answered_with_a_command_result_frame() {
+        let runtime = runtime();
+        let (sender, mut sent) = mpsc::channel(4);
+        runtime.outbox.attach(Some(sender));
+        let recorder = Recorder(Mutex::new(Vec::new()));
+        let command = frame("pairing-key", "listFiles", json!({ "kind": "none" }));
+        phone_frame(&runtime, &recorder, command.clone()).await;
+        let answer: Value = serde_json::from_str(&sent.recv().await.unwrap()).unwrap();
+        assert_eq!(answer["type"], "companionFrame");
+        assert_eq!(answer["frame"]["kind"], "commandResult");
+        assert_eq!(answer["frame"]["commandId"], command["id"]);
+        assert!(answer["frame"]["result"]["status"].is_string());
+        assert!(
+            recorder.0.lock().unwrap().is_empty(),
+            "a command is not a chat message"
+        );
+
+        let unsigned = json!({ "id": Uuid::new_v4(), "type": "listFiles", "payload": { "kind": "none" }, "createdAt": crate::wire::timestamp(Utc::now()) });
+        phone_frame(&runtime, &recorder, unsigned).await;
+        let refused: Value = serde_json::from_str(&sent.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            refused["frame"]["result"]["error"]["code"],
+            codes::SIGNATURE_VERSION_REQUIRED
+        );
     }
 
     #[test]
-    fn the_server_and_the_pc_compute_the_same_step_digest() {
-        // The same step through the backend's agentStepDigest (src/agent/pcAgent.ts).
-        assert_eq!(
-            crate::engine::request_digest(&request()),
-            "7055c70f0d5100fd56d8b7bfef7d8d6e00ad405b6ae1bfcab61d637adbcb2b86"
-        );
-    }
-
-    #[test]
-    fn a_card_approval_runs_as_the_phone_that_signed_it_and_nothing_else_does() {
-        let phone = crate::storage::PairedPhone {
-            pairing_id: "p1".into(),
-            name: "Telefon".into(),
-            platform: "iOS".into(),
-            token: "secret".into(),
-        };
-        let root = crate::engine::request_digest(&request());
-        let expires = Utc::now().timestamp() as u64 + 600;
-        let signature =
-            wiqo_contract::terminal_grant_signature("secret", "g1", &root, "step", expires);
-        let approval = serde_json::json!({ "grantId": "g1", "root": root, "mode": "step", "expiresAt": expires, "signature": signature });
-        assert_eq!(
-            approved_by(&request(), &approval, std::slice::from_ref(&phone)).as_deref(),
-            Some("p1")
-        );
-        let mut forged = approval.clone();
-        forged["signature"] = serde_json::json!("00".repeat(32));
-        assert_eq!(
-            approved_by(&request(), &forged, std::slice::from_ref(&phone)),
-            None
-        );
-        let mut other = approval.clone();
-        other["root"] = serde_json::json!("ab".repeat(32));
-        assert_eq!(
-            approved_by(&request(), &other, &[phone]),
-            None,
-            "an approval for another step"
-        );
+    fn only_a_companion_frame_with_a_body_is_a_frame() {
+        assert!(matches!(
+            parse_incoming(r#"{"type":"companionFrame","frame":{"id":"x"}}"#),
+            Incoming::Frame(_)
+        ));
+        assert!(matches!(
+            parse_incoming(r#"{"type":"companionFrame","frame":"x"}"#),
+            Incoming::Ignored
+        ));
+        match parse_incoming(
+            r#"{"type":"automationSteps","steps":[{"stepId":4,"step":{"id":"c"}},{"step":{}}]}"#,
+        ) {
+            Incoming::AutomationSteps(steps) => assert_eq!(
+                steps,
+                vec![(4, json!({ "id": "c" }))],
+                "a step without its id is dropped"
+            ),
+            _ => panic!("automationSteps"),
+        }
+        assert_eq!(to_phone(json!({"kind":"ack"}), Some("a1"))["notify"], "a1");
+        assert!(to_phone(json!({"kind":"ack"}), None)
+            .get("notify")
+            .is_none());
     }
 }

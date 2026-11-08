@@ -115,7 +115,6 @@ function render() {
     pill.querySelector(".label").textContent = title;
   }
   $("right-device").textContent = snapshot.deviceName;
-  $("session-full").textContent = snapshot.fullAccess ? "Açık" : "Kapalı";
   $("session-phones").textContent = String(snapshot.phones.length);
   const running = key === "online" || key === "connecting" || key === "retrying";
   $("toggle-connection").textContent = running ? "Bağlantıyı kes" : "Bağlan";
@@ -125,10 +124,6 @@ function render() {
   $("device-name").textContent = snapshot.deviceName;
   $("device-platform").textContent = { macOS: "macOS", windows: "Windows", linux: "Linux" }[snapshot.platform] || snapshot.platform;
   $("phone-count").textContent = String(snapshot.phones.length);
-  $("full-access-state").textContent = snapshot.fullAccess ? "Açık" : "Kapalı";
-  $("full-access-chip").classList.toggle("on", snapshot.fullAccess);
-  $("full-access-chip").setAttribute("aria-pressed", String(snapshot.fullAccess));
-  $("reads-without-phone").checked = snapshot.readsWithoutPhone;
 
   if (!$("phones-pop").hidden && !phonesPopPairing) renderPhonesPop();
   renderCapabilities();
@@ -674,30 +669,6 @@ $("autostart").onchange = async (event) => {
   }
 };
 invoke("autostart").then((on) => ($("autostart").checked = on)).catch(() => {});
-
-// Full access, one tap next to "+": turning it on shows what it means first; turning it off needs no question.
-$("full-access-chip").onclick = async () => {
-  const on = !snapshot.fullAccess;
-  if (on && !(await WiqoDialog.confirm({
-    title: "Tam yetki açılsın mı?",
-    message: "Wiqo, bu bilgisayarda dosyaları taşıyıp kopyalayabilir, uygulamaları açıp kapatabilir ve silme dahil adımları sana sormadan yapar. İstediğin an bu düğmeyle kapatabilirsin.",
-    confirm: "Tam yetkiyi aç",
-    cancel: "Vazgeç",
-    danger: true
-  }))) return;
-  try {
-    snapshot = await invoke("set_full_access", { on });
-    render();
-    toast(on ? "Tam yetki açık." : "Tam yetki kapandı.");
-  } catch (error) {
-    toast(`Ayarlanamadı: ${error}`, "bad");
-  }
-};
-
-$("reads-without-phone").onchange = async (event) => {
-  snapshot = await invoke("set_reads_without_phone", { on: event.target.checked });
-  render();
-};
 
 // ----- status and activity -----
 

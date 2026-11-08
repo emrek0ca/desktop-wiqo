@@ -1,5 +1,14 @@
-//! Files and folders: list, read, write, move, copy, delete, and the Desktop-only variants. Every change is read back before it is reported, a replaced file is
-//! backed up first, and a verified change leaves an undo record (undo.rs).
+//! Files and folders: list, read, write, move, copy, delete. Every change is read back before it is reported, a replaced file is
+//! backed up first, and a verified change leaves an undo record (undo.rs). This folder is the whole file family: file operations (here), `documents`,
+//! `search`, `transfer` (to and from the phone), `utility` (one-sentence chores), `convert` and `plan` (several file steps in one call).
+
+mod convert;
+mod documents;
+mod plan;
+mod search;
+mod transfer;
+pub(crate) mod undo;
+mod utility;
 
 use std::fs;
 use std::io::Read as _;
@@ -9,20 +18,34 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use wiqo_contract::{is_valid_file_name, FilePolicy};
+use wiqo_contract::FilePolicy;
 use wiqo_core::engine::{Context, Lane};
 use wiqo_core::wire::WireError;
 
 use crate::fsx::{self, entry, is_dir, is_regular_file, is_symlink, Entry};
 use crate::op::{data, error, payload, permission, tool_failure, Blocking, Done, Result};
-use crate::{undo, Op};
+use crate::Op;
 
 const MAX_LOCAL_READ_BYTES: u64 = 512 * 1024;
-const MAX_DESKTOP_READ_BYTES: u64 = 200_000;
 const MAX_TEXT_CHARS: usize = 200_000;
 const BACKUPS_KEPT_PER_FILE: usize = 10;
 
+/// Every operation of the file family: the plain file operations here, then documents, search, transfers, chores, conversion and file plans.
 pub(crate) fn operations() -> Vec<Op> {
+    [
+        own_operations(),
+        search::operations(),
+        transfer::operations(),
+        utility::operations(),
+        convert::operations(),
+        plan::operations(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn own_operations() -> Vec<Op> {
     let read = Lane::ReadOnly;
     let write = Lane::SideEffect;
     vec![
@@ -55,31 +78,6 @@ pub(crate) fn operations() -> Vec<Op> {
             name: "deleteFile",
             lane: write,
             run: delete_file,
-        }),
-        Arc::new(Blocking {
-            name: "listDesktopFiles",
-            lane: read,
-            run: list_desktop_files,
-        }),
-        Arc::new(Blocking {
-            name: "readDesktopFile",
-            lane: read,
-            run: read_desktop_file,
-        }),
-        Arc::new(Blocking {
-            name: "moveDesktopFile",
-            lane: write,
-            run: |ctx, value| move_desktop_file(ctx, value, "taşındı"),
-        }),
-        Arc::new(Blocking {
-            name: "renameDesktopFile",
-            lane: write,
-            run: |ctx, value| move_desktop_file(ctx, value, "yeniden adlandırıldı"),
-        }),
-        Arc::new(Blocking {
-            name: "saveTextFile",
-            lane: write,
-            run: save_text_file,
         }),
     ]
 }
@@ -148,10 +146,15 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Moves a file or folder; across volumes (where rename cannot work) it copies and then removes the original.
 pub(crate) fn move_across(from: &Path, to: &Path) -> std::io::Result<()> {
+    move_tracked(from, to, &mut |_| {})
+}
+
+/// A move that tells `copied` how many bytes it has copied when the move crosses disks (a rename on the same disk copies nothing).
+fn move_tracked(from: &Path, to: &Path, copied: &mut dyn FnMut(u64)) -> std::io::Result<()> {
     if fs::rename(from, to).is_ok() {
         return Ok(());
     }
-    copy_recursive(from, to)?;
+    copy_tracked(from, to, copied)?;
     if from.is_dir() {
         fs::remove_dir_all(from)
     } else {
@@ -159,17 +162,48 @@ pub(crate) fn move_across(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-pub(crate) fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+/// Files above this are copied in pieces so the copy can say how far it is; smaller ones keep the system's own fast copy.
+const TRACKED_COPY_FROM: u64 = 64 * 1024 * 1024;
+
+fn copy_tracked(from: &Path, to: &Path, copied: &mut dyn FnMut(u64)) -> std::io::Result<()> {
     if from.is_dir() {
         fs::create_dir_all(to)?;
         for child in fs::read_dir(from)? {
             let child = child?;
-            copy_recursive(&child.path(), &to.join(child.file_name()))?;
+            copy_tracked(&child.path(), &to.join(child.file_name()), copied)?;
         }
-        Ok(())
-    } else {
-        fs::copy(from, to).map(|_| ())
+        return Ok(());
     }
+    let length = fs::metadata(from)?.len();
+    if length < TRACKED_COPY_FROM {
+        fs::copy(from, to)?;
+        copied(length);
+        return Ok(());
+    }
+    let (mut source, mut target) = (fs::File::open(from)?, fs::File::create(to)?);
+    let mut buffer = vec![0; 8 * 1024 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut source, &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        std::io::Write::write_all(&mut target, &buffer[..read])?;
+        copied(read as u64);
+    }
+    target.sync_all()?;
+    fs::set_permissions(to, fs::metadata(from)?.permissions())
+}
+
+/// The bytes under a path: what a copy of it has to move.
+pub(crate) fn tree_bytes(path: &Path) -> u64 {
+    walkdir::WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|item| item.ok())
+        .filter(|item| item.file_type().is_file())
+        .filter_map(|item| item.metadata().ok())
+        .map(|meta| meta.len())
+        .sum()
 }
 
 /// Where the previous version of a file goes before Wiqo replaces it, so an edit can be undone by hand. A failed backup stops the overwrite.
@@ -205,10 +239,12 @@ pub(crate) fn back_up(ctx: &Context, file: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Reads the committed file back before reporting success; the evidence is metadata only.
+/// Reads the committed file back before reporting success; the evidence is metadata only. `requested` is the path the call named: when the name was
+/// taken and the file landed beside it, the receipt carries both (`requested_path`), the same way a copy or move that was renamed does.
 fn verified_file_result(
     path: &Path,
-    expected_content: Option<&str>,
+    requested: &Path,
+    expected_content: Option<&[u8]>,
     undo_id: Option<String>,
 ) -> Result<Done> {
     let failure = || {
@@ -221,12 +257,15 @@ fn verified_file_result(
         .filter(|resolved| is_regular_file(resolved))
         .ok_or_else(failure)?;
     if let Some(expected) = expected_content {
-        if fs::read(&resolved).map_err(|_| failure())? != expected.as_bytes() {
+        if fs::read(&resolved).map_err(|_| failure())? != expected {
             return Err(failure());
         }
     }
     let mut item = entry(&resolved).ok_or_else(failure)?;
     item.undo_id = undo_id;
+    if requested != path {
+        item.requested_path = Some(file_path_text(requested));
+    }
     let message = format!("Doğrulandı: {} · {} bayt", item.path, item.byte_count);
     Ok(Done::new(message, Some(data("files", vec![item]))))
 }
@@ -301,7 +340,7 @@ pub(crate) fn list_files(_ctx: &Context, value: &Value) -> Result<Done> {
         if files > 0 {
             parts.push(format!(
                 "{files} dosya ({})",
-                crate::utility::human(bytes.max(0) as u64)
+                crate::fsx::human(bytes.max(0) as u64)
             ));
         }
         format!("{} öğe: {}", page.len(), parts.join(", "))
@@ -337,8 +376,8 @@ pub(crate) fn read_file(_ctx: &Context, value: &Value) -> Result<Done> {
     }
     let mime = fsx::mime_type(&file);
     // PDF, Word and Excel come back as base64, which the server drops before the model sees it: the text is extracted instead.
-    if crate::documents::is_document(&file) {
-        let extracted = crate::documents::extract_text(&file)?;
+    if documents::is_document(&file) {
+        let extracted = documents::extract_text(&file)?;
         let truncated = extracted.chars().count() > MAX_TEXT_CHARS;
         let text: String = extracted.chars().take(MAX_TEXT_CHARS).collect();
         return Ok(Done::new(
@@ -350,7 +389,9 @@ pub(crate) fn read_file(_ctx: &Context, value: &Value) -> Result<Done> {
         ));
     }
     // The byte limit is on what goes back raw: a document above comes back as its text whatever the size of the file, and a long text file as its beginning.
-    let read_failed = |source: std::io::Error| fsx::local_file_error("FILE_READ_FAILED", "Dosya okunamadı.", &source);
+    let read_failed = |source: std::io::Error| {
+        fsx::local_file_error("FILE_READ_FAILED", "Dosya okunamadı.", &source)
+    };
     let size = fs::metadata(&file).map_err(read_failed)?.len();
     if size > MAX_LOCAL_READ_BYTES {
         if !fsx::is_likely_text(&file) {
@@ -386,7 +427,7 @@ pub(crate) fn read_file(_ctx: &Context, value: &Value) -> Result<Done> {
     Ok(Done::new("Dosya okundu.", Some(data("fileData", content))))
 }
 
-fn file_path_text(path: &Path) -> String {
+pub(crate) fn file_path_text(path: &Path) -> String {
     dunce::simplified(path).to_string_lossy().replace('\\', "/")
 }
 
@@ -416,32 +457,60 @@ fn write_file(ctx: &Context, value: &Value) -> Result<Done> {
             "Sembolik bağlantının üzerine yazılmadı.",
         ));
     }
-    let existed = destination.exists();
-    if existed && !request.overwrite {
-        return Err(permission(
-            "FILE_EXISTS",
-            "Aynı dosya zaten var; üzerine yazma onayı verilmedi.",
-        ));
-    }
-    let before = if existed {
-        fs::read(&destination)
+    let (target, replacing) = settle_collision(&request, &destination)?;
+    // A .docx, .xlsx or .pdf path gets a real document made from the text; any other path gets the text itself.
+    let bytes = documents::bytes_for(&target, content)?;
+    let before = if replacing {
+        fs::read(&target)
             .ok()
             .filter(|bytes| bytes.len() <= 2_000_000)
     } else {
         None
     };
-    if existed {
-        back_up(ctx, &destination)?;
+    if replacing {
+        back_up(ctx, &target)?;
     }
-    write_atomic(&destination, content.as_bytes()).map_err(|source| {
+    write_atomic(&target, &bytes).map_err(|source| {
         fsx::local_file_error("FILE_WRITE_FAILED", "Dosya yazılamadı.", &source)
     })?;
-    let undo_id = if !existed || before.is_some() {
-        undo::register(ctx, &destination.to_string_lossy(), before.as_deref(), None)
+    let undo_id = if !replacing || before.is_some() {
+        undo::register(ctx, &target.to_string_lossy(), before.as_deref(), None)
     } else {
         None
     };
-    verified_file_result(&destination, Some(content), undo_id)
+    verified_file_result(&target, &destination, Some(&bytes), undo_id)
+}
+
+/// What an operation that makes a file does when the name is taken. One rule for every such operation: the policy the call names, otherwise both files
+/// stay (the new one lands under the first free "ad (2)") unless `overwrite` says replace. Returns where to put the file and whether an existing file is
+/// being replaced; a taken name is never a dead end.
+fn settle_collision(request: &FileOperation, destination: &Path) -> Result<(PathBuf, bool)> {
+    let policy = request.collision_policy.unwrap_or(if request.overwrite {
+        CollisionPolicy::Replace
+    } else {
+        CollisionPolicy::Rename
+    });
+    if policy == CollisionPolicy::Replace && !request.overwrite {
+        return Err(error(
+            "OVERWRITE_REQUIRED",
+            "Mevcut dosyayı değiştirmek için overwrite=true gerekir.",
+            "validation",
+        ));
+    }
+    if !destination.exists() {
+        return Ok((destination.to_path_buf(), false));
+    }
+    match policy {
+        CollisionPolicy::Fail => Err(error(
+            "FILE_EXISTS",
+            "Hedefte aynı adlı dosya var; hiçbir dosya değiştirilmedi.",
+            "validation",
+        )),
+        CollisionPolicy::Rename => fsx::free_name(destination)
+            .map(|target| (target, false))
+            .ok_or_else(|| tool_failure("FILE_EXISTS", "Hedefte boş dosya adı bulunamadı.")),
+        CollisionPolicy::Replace => Ok((destination.to_path_buf(), true)),
+    }
 }
 
 // ----- move / copy -----
@@ -519,47 +588,8 @@ fn transfer(ctx: &Context, request: &FileOperation, copy: bool) -> Result<PathBu
             "Klasör işlemi için recursive=true açıkça belirtilmeli.",
         ));
     }
-    let policy = request.collision_policy.unwrap_or(if request.overwrite {
-        CollisionPolicy::Replace
-    } else {
-        CollisionPolicy::Rename
-    });
-    if policy == CollisionPolicy::Replace && !request.overwrite {
-        return Err(error(
-            "OVERWRITE_REQUIRED",
-            "Mevcut dosyayı değiştirmek için overwrite=true gerekir.",
-            "validation",
-        ));
-    }
-    let exists = destination.exists();
-    if exists && policy == CollisionPolicy::Fail {
-        return Err(error(
-            "FILE_EXISTS",
-            "Hedefte aynı adlı dosya var; hiçbir dosya değiştirilmedi.",
-            "validation",
-        ));
-    }
-    let mut target = destination.clone();
-    if exists && policy == CollisionPolicy::Rename {
-        let extension = destination
-            .extension()
-            .map(|ext| ext.to_string_lossy().to_string());
-        let stem = destination
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .unwrap_or_default();
-        target = (2..=10_000)
-            .map(|suffix| {
-                let name = match &extension {
-                    Some(ext) => format!("{stem} ({suffix}).{ext}"),
-                    None => format!("{stem} ({suffix})"),
-                };
-                destination.with_file_name(name)
-            })
-            .find(|candidate| fs::symlink_metadata(candidate).is_err())
-            .ok_or_else(|| tool_failure("FILE_EXISTS", "Hedefte boş dosya adı bulunamadı."))?;
-    }
-    if exists && policy == CollisionPolicy::Replace {
+    let (target, replacing) = settle_collision(request, &destination)?;
+    if replacing {
         if !is_dir(&destination) {
             back_up(ctx, &destination)?;
         }
@@ -576,10 +606,16 @@ fn transfer(ctx: &Context, request: &FileOperation, copy: bool) -> Result<PathBu
             )
         })?;
     }
+    let total = tree_bytes(&source);
+    let mut done = 0;
+    let mut copied = |bytes: u64| {
+        done += bytes;
+        ctx.progress(done, total);
+    };
     let step = if copy {
-        copy_recursive(&source, &target)
+        copy_tracked(&source, &target, &mut copied)
     } else {
-        move_across(&source, &target)
+        move_tracked(&source, &target, &mut copied)
     };
     step.map_err(|source_error| {
         fsx::local_file_error(
@@ -772,190 +808,27 @@ fn delete_file(ctx: &Context, value: &Value) -> Result<Done> {
     ))
 }
 
-// ----- Desktop-only operations -----
-
-fn safe_desktop_path(name: &str) -> Option<PathBuf> {
-    if !is_valid_file_name(name) {
-        return None;
-    }
-    Some(fsx::desktop_dir()?.join(name.trim()))
-}
-
-fn is_direct_desktop_entry(path: &Path, desktop: &Path) -> bool {
-    let (Ok(resolved_desktop), Some(parent)) = (dunce::canonicalize(desktop), path.parent()) else {
-        return false;
-    };
-    dunce::canonicalize(parent)
-        .map(|resolved| resolved == resolved_desktop)
-        .unwrap_or(false)
-}
-
-fn desktop_unavailable() -> WireError {
-    tool_failure("DESKTOP_UNAVAILABLE", "Masaüstü klasörüne erişilemedi.")
-}
-
-fn list_desktop_files(_ctx: &Context, _value: &Value) -> Result<Done> {
-    let desktop = fsx::desktop_dir()
-        .filter(|path| path.is_dir())
-        .ok_or_else(desktop_unavailable)?;
-    let policy = FilePolicy::get();
-    let mut files: Vec<(String, i64, Option<String>, bool)> = fs::read_dir(&desktop)
-        .map_err(|_| tool_failure("DESKTOP_LIST_FAILED", "Masaüstü dosyaları listelenemedi."))?
-        .filter_map(|item| item.ok())
-        .filter_map(|item| {
-            let name = item.file_name().to_string_lossy().to_string();
-            if name.starts_with('.')
-                || !is_valid_file_name(&name)
-                || policy.is_sensitive(&name)
-                || policy.is_sensitive(&dunce::canonicalize(item.path()).ok()?.to_string_lossy())
-            {
-                return None;
-            }
-            let meta = fs::metadata(item.path()).ok()?;
-            Some((
-                name,
-                if meta.is_dir() { 0 } else { meta.len() as i64 },
-                meta.modified().ok().map(fsx::iso),
-                meta.is_dir(),
-            ))
-        })
-        .collect();
-    files.sort_by(|a, b| fsx::natural_cmp(&a.0, &b.0));
-    files.truncate(100);
-    let count = files.len();
-    let list: Vec<Value> = files
-        .into_iter()
-        .map(|(name, size, modified, directory)| {
-            let mut item = json!({ "filename": name, "byteCount": size, "isDirectory": directory });
-            if let Some(modified) = modified {
-                item["modifiedAt"] = json!(modified);
-            }
-            item
-        })
-        .collect();
-    Ok(Done::new(
-        format!("Masaüstünde {count} öğe bulundu."),
-        Some(data("desktopFiles", list)),
-    ))
-}
-
-fn file_name_payload(value: &Value) -> Result<String> {
-    payload(value, "fileName", "dosya adı")
-}
-
-fn read_desktop_file(_ctx: &Context, value: &Value) -> Result<Done> {
-    let filename = file_name_payload(value)?;
-    let policy = FilePolicy::get();
-    if policy.is_sensitive(&filename) {
-        return Err(fsx::sensitive_blocked("dosyalar"));
-    }
-    let desktop = fsx::desktop_dir().ok_or_else(desktop_unavailable)?;
-    let missing = || {
-        fsx::missing_path_error(
-            &format!("~/Desktop/{filename}"),
-            &format!("Masaüstünde \"{filename}\" bulunamadı."),
-        )
-    };
-    let path = safe_desktop_path(&filename)
-        .filter(|path| is_direct_desktop_entry(path, &desktop) && path.exists())
-        .ok_or_else(missing)?;
-    if policy.is_sensitive(
-        &dunce::canonicalize(&path)
-            .unwrap_or_else(|_| path.clone())
-            .to_string_lossy(),
-    ) {
-        return Err(fsx::sensitive_blocked("dosyalar"));
-    }
-    let meta =
-        fs::metadata(&path).map_err(|_| tool_failure("FILE_READ_FAILED", "Dosya okunamadı."))?;
-    if meta.is_dir() || !meta.is_file() || meta.len() > MAX_DESKTOP_READ_BYTES {
-        return Err(tool_failure(
-            "FILE_TOO_LARGE",
-            "Yalnızca 200 KB veya daha küçük metin dosyaları okunabilir.",
-        ));
-    }
-    let content =
-        fsx::read_text(&path).map_err(|_| tool_failure("FILE_READ_FAILED", "Dosya okunamadı."))?;
-    Ok(Done::new(
-        format!("{filename} okundu."),
-        Some(data(
-            "fileContent",
-            json!({ "filename": filename, "content": content }),
-        )),
-    ))
-}
-
-#[derive(Deserialize)]
-struct DesktopMove {
-    source: String,
-    destination: String,
-}
-
-fn move_desktop_file(_ctx: &Context, value: &Value, verb: &str) -> Result<Done> {
-    let request: DesktopMove = payload(value, "fileMove", "dosya taşıma")?;
-    let desktop = fsx::desktop_dir().ok_or_else(desktop_unavailable)?;
-    let missing = || {
-        fsx::missing_path_error(
-            &format!("~/Desktop/{}", request.source),
-            &format!("Masaüstünde \"{}\" bulunamadı.", request.source),
-        )
-    };
-    let source = safe_desktop_path(&request.source)
-        .filter(|path| is_direct_desktop_entry(path, &desktop) && path.exists())
-        .ok_or_else(missing)?;
-    let destination = safe_desktop_path(&request.destination)
-        .filter(|path| is_direct_desktop_entry(path, &desktop))
-        .ok_or_else(missing)?;
-    if !is_regular_file(&source) {
-        return Err(tool_failure(
-            "FILE_NOT_REGULAR",
-            "Yalnızca normal dosyalar taşınabilir.",
-        ));
-    }
-    if destination.exists() {
-        return Err(tool_failure(
-            "FILE_EXISTS",
-            "Hedef dosya zaten var; üzerine yazılmadı.",
-        ));
-    }
-    move_across(&source, &destination).map_err(|_| {
-        tool_failure(
-            "FILE_MOVE_FAILED",
-            "Dosya taşınamadı veya yeniden adlandırılamadı.",
-        )
-    })?;
-    Ok(Done::message(format!("Dosya {verb}.")))
-}
-
-#[derive(Deserialize)]
-struct TextFile {
-    filename: String,
-    content: String,
-}
-
-fn save_text_file(ctx: &Context, value: &Value) -> Result<Done> {
-    let file: TextFile = payload(value, "textFile", "dosya")?;
-    if !is_valid_file_name(&file.filename) {
-        return Err(tool_failure("INVALID_FILENAME", "Dosya adı geçersiz."));
-    }
-    let desktop = fsx::desktop_dir()
-        .filter(|path| path.is_dir())
-        .ok_or_else(desktop_unavailable)?;
-    let path = desktop.join(file.filename.trim());
-    if !is_direct_desktop_entry(&path, &desktop) || fs::symlink_metadata(&path).is_ok() {
-        return Err(tool_failure(
-            "FILE_EXISTS",
-            "Aynı adlı dosya zaten var; üzerine yazılmadı.",
-        ));
-    }
-    write_atomic(&path, file.content.as_bytes())
-        .map_err(|_| tool_failure("FILE_WRITE_FAILED", "Dosya yazılamadı."))?;
-    let undo_id = undo::register(ctx, &path.to_string_lossy(), None, None);
-    verified_file_result(&path, Some(&file.content), undo_id)
-}
-
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tracked_copy_counts_every_byte_and_keeps_the_content() {
+        let dir = std::env::temp_dir().join(format!("wiqo-copy-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("in/alt")).unwrap();
+        fs::write(dir.join("in/a.txt"), "12345").unwrap();
+        fs::write(dir.join("in/alt/b.txt"), "678").unwrap();
+        let mut counted = 0;
+        copy_tracked(&dir.join("in"), &dir.join("out"), &mut |bytes| {
+            counted += bytes
+        })
+        .unwrap();
+        assert_eq!(counted, tree_bytes(&dir.join("in")));
+        assert_eq!(counted, 8);
+        assert_eq!(
+            fs::read_to_string(dir.join("out/alt/b.txt")).unwrap(),
+            "678"
+        );
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -988,12 +861,36 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "bir");
         let first_undo = files_of(&done)[0]["undoId"].as_str().map(str::to_string);
         assert!(first_undo.is_some());
+        // A taken name is not a dead end: without `overwrite` both files stay and the receipt names the one that was made.
+        let beside = write_file(&ctx, &op(&file, json!({ "content": "iki" }))).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "bir");
+        assert_eq!(fs::read_to_string(dir.join("not (2).txt")).unwrap(), "iki");
+        assert_eq!(files_of(&beside)[0]["name"], "not (2).txt");
+        assert!(files_of(&beside)[0]["requestedPath"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/not.txt")));
         assert_eq!(
-            write_file(&ctx, &op(&file, json!({ "content": "iki" })))
-                .unwrap_err()
-                .code,
+            write_file(
+                &ctx,
+                &op(&file, json!({ "content": "x", "collisionPolicy": "fail" }))
+            )
+            .unwrap_err()
+            .code,
             "FILE_EXISTS"
         );
+        assert_eq!(
+            write_file(
+                &ctx,
+                &op(
+                    &file,
+                    json!({ "content": "x", "collisionPolicy": "replace" })
+                )
+            )
+            .unwrap_err()
+            .code,
+            "OVERWRITE_REQUIRED"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "bir");
         let second = write_file(
             &ctx,
             &op(&file, json!({ "content": "iki", "overwrite": true })),
@@ -1110,7 +1007,10 @@ mod tests {
         let head = read_file(&ctx, &op(&dir.join("big.txt"), json!({}))).unwrap();
         let head = &head.data.unwrap()["value"];
         assert_eq!(head["truncated"], true);
-        assert_eq!(head["text"].as_str().unwrap().len(), MAX_LOCAL_READ_BYTES as usize);
+        assert_eq!(
+            head["text"].as_str().unwrap().len(),
+            MAX_LOCAL_READ_BYTES as usize
+        );
         fs::write(dir.join("big.bin"), vec![0u8; 600_000]).unwrap();
         assert_eq!(
             read_file(&ctx, &op(&dir.join("big.bin"), json!({})))
@@ -1121,7 +1021,11 @@ mod tests {
         // Cut inside a letter, a long Turkish text still reads as UTF-8.
         fs::write(dir.join("uzun.txt"), "ş".repeat(300_000)).unwrap();
         let turkish = read_file(&ctx, &op(&dir.join("uzun.txt"), json!({}))).unwrap();
-        assert!(turkish.data.unwrap()["value"]["text"].as_str().unwrap().chars().all(|letter| letter == 'ş'));
+        assert!(turkish.data.unwrap()["value"]["text"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .all(|letter| letter == 'ş'));
         assert_eq!(
             read_file(&ctx, &op(&dir.join("id_rsa"), json!({})))
                 .unwrap_err()

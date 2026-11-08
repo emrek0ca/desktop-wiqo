@@ -81,7 +81,12 @@ async fn capture(value: &Value) -> Result<Done> {
             .as_deref()
             .map(|target| save(&picture, target))
             .transpose()?;
+        let text = screen_text(&picture);
         let mut done = encode(picture, width_limit)?;
+        // The words on the screen travel with the picture, so "what is on my screen" is answered from this one step.
+        if let (Some(data), false) = (done.data.as_mut(), text.is_empty()) {
+            data["value"]["text"] = json!(text);
+        }
         if let Some(path) = saved {
             let name = path
                 .file_name()
@@ -99,7 +104,36 @@ async fn capture(value: &Value) -> Result<Done> {
     .map_err(|_| tool_failure("SCREEN_CAPTURE_FAILED", "Ekran görüntüsü alınamadı."))?
 }
 
-/// Saves the full-size picture as PNG: into a folder under a dated name (a taken name gets " 2"), or at the file path given.
+/// Reading the words is a help, never worth failing the screenshot for: a late or empty reading leaves the picture alone.
+const READ_TEXT_FOR: std::time::Duration = std::time::Duration::from_secs(3);
+const MAX_SCREEN_TEXT: usize = 6_000;
+
+/// The text on the picture, read by the system's own recogniser (macOS; empty elsewhere), at most a few thousand characters.
+fn screen_text(picture: &DynamicImage) -> String {
+    if !cfg!(target_os = "macos") {
+        return String::new();
+    }
+    let path = std::env::temp_dir().join(format!("wiqo-screen-{}.png", uuid::Uuid::new_v4()));
+    if picture
+        .save_with_format(&path, image::ImageFormat::Png)
+        .is_err()
+    {
+        return String::new();
+    }
+    let (send, receive) = std::sync::mpsc::channel();
+    let picture_path = path.clone();
+    std::thread::spawn(move || {
+        let _ = send.send(crate::ocr::read(&picture_path));
+        let _ = std::fs::remove_file(&picture_path);
+    });
+    let words = receive.recv_timeout(READ_TEXT_FOR).unwrap_or_default();
+    crate::ocr::as_text(&words)
+        .chars()
+        .take(MAX_SCREEN_TEXT)
+        .collect()
+}
+
+/// Saves the full-size picture as PNG: into a folder under a dated name (a taken name gets " (2)"), or at the file path given.
 fn save(picture: &DynamicImage, target: &str) -> Result<std::path::PathBuf> {
     let invalid = || {
         tool_failure(
@@ -110,9 +144,9 @@ fn save(picture: &DynamicImage, target: &str) -> Result<std::path::PathBuf> {
     let resolved = crate::fsx::resolve(target, true).ok_or_else(invalid)?;
     let path = if crate::fsx::is_dir(&resolved) {
         let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M.%S");
-        crate::utility::free_path(&resolved.join(format!("Ekran görüntüsü {stamp}.png")))
+        crate::fsx::free_path(&resolved.join(format!("Ekran görüntüsü {stamp}.png")))
     } else {
-        crate::utility::free_path(&resolved.with_extension("png"))
+        crate::fsx::free_path(&resolved.with_extension("png"))
     };
     if wiqo_contract::FilePolicy::get().is_sensitive(&path.to_string_lossy()) {
         return Err(crate::fsx::sensitive_blocked("dosyalar"));

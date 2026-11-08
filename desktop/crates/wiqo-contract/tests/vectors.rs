@@ -2,8 +2,7 @@
 
 use serde_json::Value;
 use wiqo_contract::{
-    canonical_json, command_signature, terminal_grant_signature, verify_signature, ErrorCodes,
-    Manifest, Platform,
+    canonical_json, command_signature, verify_signature, ErrorCodes, Manifest, Platform,
 };
 
 fn vectors() -> Value {
@@ -29,30 +28,6 @@ fn canonical_json_matches_every_reference_vector() {
             "input {}",
             case["input"]
         );
-    }
-}
-
-#[test]
-fn terminal_grant_signatures_match() {
-    let vectors = vectors();
-    for grant in vectors["terminalGrants"].as_array().unwrap() {
-        let signature = terminal_grant_signature(
-            grant["token"].as_str().unwrap(),
-            grant["grantId"].as_str().unwrap(),
-            grant["rootDirectory"].as_str().unwrap(),
-            grant["mode"].as_str().unwrap(),
-            grant["expiresAt"].as_u64().unwrap(),
-        );
-        assert_eq!(
-            signature,
-            grant["signature"].as_str().unwrap(),
-            "grant {}",
-            grant["grantId"]
-        );
-        assert!(verify_signature(
-            &signature,
-            grant["signature"].as_str().unwrap()
-        ));
     }
 }
 
@@ -93,9 +68,9 @@ fn a_wrong_or_malformed_signature_is_refused() {
 #[test]
 fn the_manifest_and_error_codes_load_and_agree() {
     let manifest = Manifest::get();
-    assert_eq!(manifest.operations().len(), 56);
-    assert_eq!(manifest.for_platform(Platform::MacOs).count(), 56);
-    assert_eq!(manifest.for_platform(Platform::Windows).count(), 40);
+    assert_eq!(manifest.operations().len(), 46);
+    assert_eq!(manifest.for_platform(Platform::MacOs).count(), 46);
+    assert_eq!(manifest.for_platform(Platform::Windows).count(), 36);
     let open = manifest.operation("openURL").unwrap();
     assert!(!open.is_destructive);
     assert!(manifest.supports("getSystemStatus", Platform::Windows));

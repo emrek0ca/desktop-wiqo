@@ -87,7 +87,7 @@ fn apple_script(source: &str) -> std::result::Result<String, String> {
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
     Err(
-        if stderr.contains("-1743") || stderr.contains("-1719") || stderr.contains("not allowed") {
+        if crate::applescript::refused(&stderr) || stderr.contains("-1719") {
             "Bilgisayardaki Wiqo penceresinde İzinler bölümünden Erişilebilirlik ve Uygulamaları kontrol izinlerini ver."
                 .into()
         } else {
@@ -584,7 +584,7 @@ fn speak(text: &str) -> Result<Done> {
     std::fs::write(&input, text)
         .map_err(|_| tool_failure("SPEAK_FAILED", "Metin hazırlanamadı."))?;
     let (output, out) = if cfg!(target_os = "macos") {
-        let output = crate::utility::free_path(&desktop.join(format!("Wiqo ses {stamp}.m4a")));
+        let output = crate::fsx::free_path(&desktop.join(format!("Wiqo ses {stamp}.m4a")));
         let out = run(
             "/usr/bin/say",
             &[
@@ -598,7 +598,7 @@ fn speak(text: &str) -> Result<Done> {
         );
         (output, out)
     } else if cfg!(windows) {
-        let output = crate::utility::free_path(&desktop.join(format!("Wiqo ses {stamp}.wav")));
+        let output = crate::fsx::free_path(&desktop.join(format!("Wiqo ses {stamp}.wav")));
         let script = format!(
             "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('{}'); $s.Speak([IO.File]::ReadAllText('{}')); $s.Dispose()",
             output.to_string_lossy().replace('\'', "''"),
@@ -611,7 +611,7 @@ fn speak(text: &str) -> Result<Done> {
         );
         (output, out)
     } else {
-        let output = crate::utility::free_path(&desktop.join(format!("Wiqo ses {stamp}.wav")));
+        let output = crate::fsx::free_path(&desktop.join(format!("Wiqo ses {stamp}.wav")));
         let out = run(
             "espeak-ng",
             &[

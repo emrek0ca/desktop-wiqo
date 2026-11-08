@@ -330,13 +330,11 @@ fn office_app(kind: Kind, source: &Path, output: &Path) -> std::result::Result<(
             let stderr = result
                 .map(|r| String::from_utf8_lossy(&r.stderr).to_string())
                 .unwrap_or_default();
-            last = Some(
-                if stderr.contains("-1743") || stderr.contains("not allowed") {
-                    format!("{app} için Wiqo'ya Otomasyon izni ver (Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon).")
-                } else {
-                    format!("{app} dosyayı PDF'e çeviremedi.")
-                },
-            );
+            last = Some(if crate::applescript::refused(&stderr) {
+                format!("{app} için Wiqo'ya Otomasyon izni ver (Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon).")
+            } else {
+                format!("{app} dosyayı PDF'e çeviremedi.")
+            });
         }
         return Err(last.unwrap_or_else(|| {
             "Bu dosyayı PDF'e çevirmek için Pages/Numbers/Keynote, Microsoft Office veya LibreOffice kurulu olmalı.".into()

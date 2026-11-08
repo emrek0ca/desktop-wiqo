@@ -260,34 +260,14 @@ impl PairedPhones {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
     #[serde(default)]
     pub connection_stopped: bool,
-    /// The owner allows the server's PC agent to run commands here without a phone confirmation each time. Off until the owner turns it on.
-    #[serde(default)]
-    pub full_access: bool,
     /// Capabilities (contracts/companion/operations.json) the owner switched off.
     #[serde(default)]
     pub disabled_capabilities: BTreeSet<String>,
-    /// The server's agent may read in the own folders without the phone in the loop (grants.rs `read_without_phone`). On unless turned off.
-    #[serde(default = "on")]
-    pub reads_without_phone: bool,
-}
-
-fn on() -> bool {
-    true
-}
-
-impl Default for SettingsData {
-    fn default() -> Self {
-        SettingsData {
-            connection_stopped: false,            full_access: false,
-            disabled_capabilities: BTreeSet::new(),
-            reads_without_phone: true,
-        }
-    }
 }
 
 pub struct Settings {
@@ -306,14 +286,6 @@ impl Settings {
 
     pub fn snapshot(&self) -> SettingsData {
         self.data.read().expect("settings lock").clone()
-    }
-
-    pub fn full_access(&self) -> bool {
-        self.data.read().expect("settings lock").full_access
-    }
-
-    pub fn reads_without_phone(&self) -> bool {
-        self.data.read().expect("settings lock").reads_without_phone
     }
 
     pub fn capability_enabled(&self, capability: &str) -> bool {
@@ -380,7 +352,6 @@ mod tests {
         let settings = Settings::open(&dir);
         settings
             .update(|data| {
-                data.full_access = true;
                 data.connection_stopped = true;
                 data.disabled_capabilities
                     .insert("device.files.delete".into());
@@ -393,7 +364,6 @@ mod tests {
         assert!(reopened.remove("a").unwrap());
         assert!(PairedPhones::open(&dir).list().is_empty());
         let settings = Settings::open(&dir);
-        assert!(settings.full_access());
         assert!(settings.snapshot().connection_stopped);
         assert!(!settings.capability_enabled("device.files.delete"));
         assert!(settings.capability_enabled("device.files.read"));

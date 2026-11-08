@@ -6,7 +6,6 @@
 pub mod api;
 pub mod codes;
 pub mod engine;
-pub mod grants;
 pub mod ledger;
 pub mod relay;
 pub mod storage;

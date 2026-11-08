@@ -578,13 +578,28 @@ async fn control(request: Control) -> std::result::Result<Value, (Option<Value>,
         }
         "close_other_tabs" => {
             if running_now.is_none() {
-                return Err((None, tool_failure("APPLICATION_NOT_RUNNING", format!("{name} açık değil; kapatılacak sekme yok."))));
+                return Err((
+                    None,
+                    tool_failure(
+                        "APPLICATION_NOT_RUNNING",
+                        format!("{name} açık değil; kapatılacak sekme yok."),
+                    ),
+                ));
             }
             let app = application.clone();
             let keep = request.keep.clone().unwrap_or_default();
             match blocking(move || sys::close_other_tabs(&app, keep.trim())).await {
                 Some(Ok(closed)) => {
-                    let mut value = content("close_other_tabs", &name, bundle_ref, "running", "running", closed.count > 0, true, None);
+                    let mut value = content(
+                        "close_other_tabs",
+                        &name,
+                        bundle_ref,
+                        "running",
+                        "running",
+                        closed.count > 0,
+                        true,
+                        None,
+                    );
                     value["closedTabs"] = json!(closed.count);
                     value["keptTab"] = json!(closed.kept);
                     Ok(value)
@@ -851,7 +866,8 @@ impl Operation for ControlApplication {
             payload(value, "applicationControl", "uygulama eylemi");
         let request = match parsed {
             Ok(request)
-                if ["open", "activate", "new_tab", "close_other_tabs", "quit"].contains(&request.action.as_str())
+                if ["open", "activate", "new_tab", "close_other_tabs", "quit"]
+                    .contains(&request.action.as_str())
                     && !request.target.trim().is_empty() =>
             {
                 request
@@ -884,7 +900,10 @@ impl Operation for ControlApplication {
                 "new_tab" => format!("{name} içinde yeni sekme açıldı; uygulama öne geldi."),
                 "close_other_tabs" => match value["closedTabs"].as_u64() {
                     Some(0) => format!("{name} ön penceresinde kapatılacak başka sekme yoktu."),
-                    Some(count) => format!("{name} ön penceresinde {count} sekme kapatıldı; kalan sekme: {}.", value["keptTab"].as_str().unwrap_or("öndeki sekme")),
+                    Some(count) => format!(
+                        "{name} ön penceresinde {count} sekme kapatıldı; kalan sekme: {}.",
+                        value["keptTab"].as_str().unwrap_or("öndeki sekme")
+                    ),
                     None => format!("{name} ön penceresindeki diğer sekmeler kapatıldı."),
                 },
                 _ if value["changed"] == false => format!("{name} zaten açık değildi."),
@@ -984,8 +1003,12 @@ pub(crate) fn targets() -> Vec<Value> {
         used_names.insert(normalized);
         let actions: &[&str] = match bundle {
             Some("com.apple.finder") => &["open", "activate"],
-            Some(id) if TAB_SCRIPTABLE.contains(&id) => &["open", "activate", "new_tab", "close_other_tabs", "quit"],
-            Some(id) if BROWSERS.contains(&id) || WINDOWS_BROWSERS.contains(&id) => &["open", "activate", "new_tab", "quit"],
+            Some(id) if TAB_SCRIPTABLE.contains(&id) => {
+                &["open", "activate", "new_tab", "close_other_tabs", "quit"]
+            }
+            Some(id) if BROWSERS.contains(&id) || WINDOWS_BROWSERS.contains(&id) => {
+                &["open", "activate", "new_tab", "quit"]
+            }
             _ => &["open", "activate", "quit"],
         };
         out.push(json!({ "name": name, "bundleIdentifier": bundle.unwrap_or(""), "isRunning": is_running, "supportedActions": actions, "category": category.unwrap_or("") }));

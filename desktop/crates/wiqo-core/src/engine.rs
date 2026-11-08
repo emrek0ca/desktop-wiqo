@@ -16,7 +16,6 @@ use uuid::Uuid;
 use wiqo_contract::{canonical_json, Manifest, Platform};
 
 use crate::codes;
-use crate::grants::Access;
 use crate::ledger::Ledger;
 use crate::storage::{CredentialStore, DataDir, Settings};
 use crate::wire::{CommandResult, CommandStatus, Request, WireError};
@@ -65,12 +64,80 @@ pub struct Context {
     pub services: Arc<Services>,
 }
 
+/// How far a long command has come (a big copy, a zip): what the panel and the phone's step line show while it runs.
+#[derive(Clone, Copy, Debug)]
+pub struct Progress {
+    pub done: u64,
+    pub total: u64,
+    started: std::time::Instant,
+}
+
+impl Progress {
+    pub fn percent(&self) -> u64 {
+        (self.done.min(self.total) * 100)
+            .checked_div(self.total)
+            .unwrap_or(0)
+    }
+
+    /// The time left at the pace so far; nothing until there is a pace to go by.
+    pub fn remaining(&self) -> Option<Duration> {
+        let elapsed = self.started.elapsed();
+        if self.done == 0 || self.done >= self.total || elapsed < Duration::from_secs(1) {
+            return None;
+        }
+        Some(elapsed.mul_f64((self.total - self.done) as f64 / self.done as f64))
+    }
+
+    /// "%45 · ~20 sn kaldı", for the end of a step's line.
+    pub fn words(&self) -> String {
+        match self.remaining().map(|left| left.as_secs().max(1)) {
+            Some(seconds) if seconds >= 90 => {
+                format!("%{} · ~{} dk kaldı", self.percent(), seconds.div_ceil(60))
+            }
+            Some(seconds) => format!("%{} · ~{seconds} sn kaldı", self.percent()),
+            None => format!("%{}", self.percent()),
+        }
+    }
+}
+
+fn progress_board() -> &'static Mutex<HashMap<Uuid, Progress>> {
+    static BOARD: std::sync::OnceLock<Mutex<HashMap<Uuid, Progress>>> = std::sync::OnceLock::new();
+    BOARD.get_or_init(Default::default)
+}
+
+impl Context {
+    /// Reports how much of the command's work is done (bytes, files: any unit, `total` the whole of it).
+    pub fn progress(&self, done: u64, total: u64) {
+        let mut board = progress_board().lock().expect("progress lock");
+        let started = board
+            .get(&self.command_id)
+            .map_or_else(std::time::Instant::now, |known| known.started);
+        board.insert(
+            self.command_id,
+            Progress {
+                done,
+                total,
+                started,
+            },
+        );
+    }
+}
+
+/// The progress a running command reported last, if it reports any.
+pub fn progress_of(command_id: Uuid) -> Option<Progress> {
+    progress_board()
+        .lock()
+        .expect("progress lock")
+        .get(&command_id)
+        .copied()
+}
+
 /// The desktop's own state that operations need: where it keeps files, and the tokens for talking to the server (saving an artifact downloads it from there).
 pub struct Services {
     pub data_dir: DataDir,
     pub credentials: Arc<CredentialStore>,
-    /// The phone's task grant for the server's agent (and the signal to register again).
-    pub access: Arc<Access>,
+    /// Rung when something the server reads from the registration changed: the desktop registers again.
+    pub announce: Arc<tokio::sync::Notify>,
 }
 
 impl Services {
@@ -82,7 +149,7 @@ impl Services {
         Arc::new(Services {
             credentials: Arc::new(CredentialStore::open(&dir)),
             data_dir: dir,
-            access: Arc::new(Access::default()),
+            announce: Default::default(),
         })
     }
 }
@@ -107,12 +174,6 @@ pub trait Operation: Send + Sync {
     }
 
     async fn run(&self, ctx: &Context, payload: &Value) -> Outcome;
-}
-
-/// Asks the person at this computer to allow one step of the server's agent ("PC'de onayla"). `false` (or no answer in time) refuses it.
-#[async_trait]
-pub trait Approver: Send + Sync {
-    async fn approve(&self, kind: &str, detail: &str) -> bool;
 }
 
 /// The name a person reads for a capability (the server shows it to the model and in the phone's PC sheet).
@@ -190,17 +251,6 @@ pub fn describe(payload: &Value) -> String {
     text.chars().take(120).collect()
 }
 
-/// Who asked: a paired phone (its signature was checked) or the server's PC agent (allowed only while the owner has full access on).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Origin {
-    Phone {
-        pairing_id: String,
-    },
-    Agent,
-    /// The person typed the request in this computer's own window (the chat): like a phone's task, it authorizes the step.
-    Local,
-}
-
 pub struct Engine {
     platform: Platform,
     settings: Arc<Settings>,
@@ -208,7 +258,6 @@ pub struct Engine {
     services: Arc<Services>,
     targets: Option<fn() -> Vec<Value>>,
     terminal: Option<Arc<dyn crate::terminal::Terminal>>,
-    approver: Option<Arc<dyn Approver>>,
     blockers: Option<Arc<dyn Fn() -> HashMap<String, String> + Send + Sync>>,
     operations: HashMap<&'static str, Arc<dyn Operation>>,
     readers: Arc<Semaphore>,
@@ -230,7 +279,6 @@ impl Engine {
             services,
             targets: None,
             terminal: None,
-            approver: None,
             blockers: None,
             operations: HashMap::new(),
             readers: Arc::new(Semaphore::new(READ_LANES)),
@@ -268,10 +316,6 @@ impl Engine {
         blockers: Arc<dyn Fn() -> HashMap<String, String> + Send + Sync>,
     ) {
         self.blockers = Some(blockers);
-    }
-
-    pub fn set_approver(&mut self, approver: Arc<dyn Approver>) {
-        self.approver = Some(approver);
     }
 
     pub fn platform(&self) -> Platform {
@@ -330,7 +374,7 @@ impl Engine {
             .collect()
     }
 
-    pub async fn execute(&self, request: &Request, origin: &Origin) -> CommandResult {
+    pub async fn execute(&self, request: &Request) -> CommandResult {
         let started = Utc::now();
         let id = request.id;
         let denied = |code: &str, message: &str| {
@@ -370,17 +414,6 @@ impl Engine {
                 started,
             );
         };
-        // The server's agent runs here with "Tam yetki" on, or inside the phone's task grant.
-        let phone_free_read = self.settings.reads_without_phone()
-            && crate::grants::read_without_phone(&request.kind, &request.payload);
-        if *origin == Origin::Agent && !self.settings.full_access() && !phone_free_read {
-            if self.services.access.active().is_none() {
-                return denied(codes::FULL_ACCESS_DISABLED, "Bu bilgisayarda tam yetki kapalı ve geçerli bir görev izni yok; telefondan onaylanmadan ajan komut çalıştıramaz.");
-            }
-            if let Some(reason) = self.services.access.denial(&request.kind, &request.payload) {
-                return denied(codes::AGENT_SCOPE, &reason);
-            }
-        }
         if !self.settings.capability_enabled(&entry.capability) {
             return denied(
                 codes::CAPABILITY_DISABLED,
@@ -438,6 +471,7 @@ impl Engine {
             .await;
         self.ledger.record(id, digest, result.clone());
         self.running.lock().expect("running lock").remove(&id);
+        progress_board().lock().expect("progress lock").remove(&id);
         let _ = sender.send(result.clone());
         result
     }
@@ -524,6 +558,30 @@ pub fn request_digest(request: &Request) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn progress_says_how_far_and_how_long() {
+        let ctx = Context::for_tests();
+        assert!(progress_of(ctx.command_id).is_none());
+        ctx.progress(0, 200);
+        assert_eq!(progress_of(ctx.command_id).unwrap().words(), "%0");
+        let mut known = progress_of(ctx.command_id).unwrap();
+        known.started -= Duration::from_secs(10);
+        known.done = 50;
+        assert_eq!(known.percent(), 25);
+        assert_eq!(known.words(), "%25 · ~30 sn kaldı");
+        known.started -= Duration::from_secs(50);
+        assert_eq!(known.words(), "%25 · ~3 dk kaldı");
+        assert_eq!(
+            Progress {
+                done: 5,
+                total: 0,
+                started: std::time::Instant::now()
+            }
+            .percent(),
+            0
+        );
+    }
+
     use super::*;
     use crate::storage::DataDir;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -557,7 +615,7 @@ mod tests {
         let services = Arc::new(Services {
             data_dir: dir.clone(),
             credentials: Arc::new(CredentialStore::open(&dir)),
-            access: Arc::new(Access::default()),
+            announce: Default::default(),
         });
         (dir, services)
     }
@@ -593,24 +651,18 @@ mod tests {
         }
     }
 
-    fn phone() -> Origin {
-        Origin::Phone {
-            pairing_id: "p".into(),
-        }
-    }
-
     #[tokio::test]
     async fn a_command_runs_once_and_a_repeat_gets_the_stored_answer() {
         let (engine, runs) = engine(Duration::ZERO);
         let ping = request("ping");
-        let first = engine.execute(&ping, &phone()).await;
-        let second = engine.execute(&ping, &phone()).await;
+        let first = engine.execute(&ping).await;
+        let second = engine.execute(&ping).await;
         assert_eq!(first.status, CommandStatus::Completed);
         assert_eq!(first, second);
         assert_eq!(runs.load(Ordering::SeqCst), 1);
         let mut other = ping.clone();
         other.payload = json!({"kind": "url", "value": "x"});
-        let refused = engine.execute(&other, &phone()).await;
+        let refused = engine.execute(&other).await;
         assert_eq!(refused.error.unwrap().code, codes::INVALID_PAYLOAD);
     }
 
@@ -619,11 +671,7 @@ mod tests {
         let (engine, runs) = engine(Duration::from_millis(100));
         let engine = Arc::new(engine);
         let ping = request("ping");
-        let origin = phone();
-        let (a, b) = tokio::join!(
-            engine.execute(&ping, &origin),
-            engine.execute(&ping, &origin)
-        );
+        let (a, b) = tokio::join!(engine.execute(&ping), engine.execute(&ping));
         assert_eq!(a.status, CommandStatus::Completed);
         assert_eq!(a, b);
         assert_eq!(runs.load(Ordering::SeqCst), 1);
@@ -634,7 +682,7 @@ mod tests {
         let (engine, _) = engine(Duration::ZERO);
         assert_eq!(
             engine
-                .execute(&request("noSuchThing"), &phone())
+                .execute(&request("noSuchThing"))
                 .await
                 .error
                 .unwrap()
@@ -643,45 +691,12 @@ mod tests {
         );
         assert_eq!(
             engine
-                .execute(&request("getSystemStatus"), &phone())
+                .execute(&request("getSystemStatus"))
                 .await
                 .error
                 .unwrap()
                 .code,
             codes::UNSUPPORTED_OPERATION
-        );
-        // Reads without the phone are on by default (ping is one); with them off, the agent needs full access.
-        assert_eq!(
-            engine
-                .execute(&request("ping"), &Origin::Agent)
-                .await
-                .status,
-            CommandStatus::Completed
-        );
-        engine
-            .settings()
-            .update(|data| data.reads_without_phone = false)
-            .unwrap();
-        let agent = engine.execute(&request("ping"), &Origin::Agent).await;
-        assert_eq!(
-            (agent.status, agent.error.unwrap().code),
-            (
-                CommandStatus::Denied,
-                codes::FULL_ACCESS_DISABLED.to_string()
-            )
-        );
-        engine
-            .settings()
-            .update(|data| {
-                data.full_access = true;
-            })
-            .unwrap();
-        assert_eq!(
-            engine
-                .execute(&request("ping"), &Origin::Agent)
-                .await
-                .status,
-            CommandStatus::Completed
         );
         engine
             .settings()
@@ -690,12 +705,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            engine
-                .execute(&request("ping"), &phone())
-                .await
-                .error
-                .unwrap()
-                .code,
+            engine.execute(&request("ping")).await.error.unwrap().code,
             codes::CAPABILITY_DISABLED
         );
     }
@@ -729,7 +739,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_command_over_its_budget_answers_timeout_and_keeps_its_lane_until_it_ends() {
         let (engine, _) = engine(Duration::from_secs(200));
-        let result = engine.execute(&request("ping"), &phone()).await;
+        let result = engine.execute(&request("ping")).await;
         assert_eq!(result.error.unwrap().code, codes::COMMAND_TIMEOUT);
     }
 }

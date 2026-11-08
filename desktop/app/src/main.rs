@@ -75,12 +75,6 @@ fn cancel_pairing(app: State<'_, App>) -> Reply<()> {
 }
 
 #[tauri::command]
-fn set_full_access(app: State<'_, App>, on: bool) -> Reply<Snapshot> {
-    app.desktop.set_full_access(on).map_err(text)?;
-    Ok(app.desktop.snapshot())
-}
-
-#[tauri::command]
 fn set_capability(app: State<'_, App>, id: String, enabled: bool) -> Reply<Snapshot> {
     app.desktop.set_capability(&id, enabled).map_err(text)?;
     Ok(app.desktop.snapshot())
@@ -669,12 +663,6 @@ fn answer_approval(app: State<'_, App>, id: String, allow: bool) {
 }
 
 #[tauri::command]
-fn set_reads_without_phone(app: State<'_, App>, on: bool) -> Reply<Snapshot> {
-    app.desktop.set_reads_without_phone(on).map_err(text)?;
-    Ok(app.desktop.snapshot())
-}
-
-#[tauri::command]
 fn working(app: State<'_, App>) -> Vec<wiqo_agent::WorkItem> {
     app.desktop.working()
 }
@@ -868,7 +856,9 @@ fn tray(handle: &AppHandle) -> tauri::Result<()> {
                     desktop.disconnect();
                     let _ = pause_item.set_text("Bağlantıyı başlat");
                 } else {
-                    tauri::async_runtime::spawn(async move { desktop.connect(); });
+                    tauri::async_runtime::spawn(async move {
+                        desktop.connect();
+                    });
                     let _ = pause_item.set_text("Bağlantıyı durdur");
                 }
                 let _ = app.emit("wiqo", Event::Phones);
@@ -978,7 +968,6 @@ fn main() {
             snapshot,
             start_pairing,
             cancel_pairing,
-            set_full_access,
             set_capability,
             remove_phone,
             set_connected,
@@ -1029,7 +1018,6 @@ fn main() {
             open_link,
             undo_record,
             symbol,
-            set_reads_without_phone,
             working,
             hide_panel,
             hide_cursor,
@@ -1074,7 +1062,13 @@ fn main() {
             let handle = app.handle().clone();
             let mut events = desktop.events();
             let sync = desktop.clone();
-            tauri::async_runtime::spawn(async move { sync.watch_runs().await; });
+            tauri::async_runtime::spawn(async move {
+                sync.watch_runs().await;
+            });
+            let phones = desktop.clone();
+            tauri::async_runtime::spawn(async move {
+                phones.serve_relay().await;
+            });
             let connected = desktop.clone();
             tauri::async_runtime::spawn(async move {
                 connected.restore_connection().await;

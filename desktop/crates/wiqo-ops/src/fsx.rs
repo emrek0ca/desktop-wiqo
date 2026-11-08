@@ -170,6 +170,51 @@ pub fn is_regular_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// The first free name beside `path` ("ad (2).uzantı", "ad (3).uzantı", ...), or `None` when none of the first 10 000 is free. Every operation that
+/// makes a new file uses this when the name is taken and the person did not ask to replace it: nothing is lost and nothing fails.
+pub fn free_name(path: &Path) -> Option<PathBuf> {
+    let extension = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string());
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_default();
+    (2..=10_000)
+        .map(|suffix| {
+            let name = match &extension {
+                Some(ext) => format!("{stem} ({suffix}).{ext}"),
+                None => format!("{stem} ({suffix})"),
+            };
+            path.with_file_name(name)
+        })
+        .find(|candidate| fs::symlink_metadata(candidate).is_err())
+}
+
+/// The path itself when it is free, otherwise the first free "ad (2).uzantı" beside it (the path itself when none is): where a result file goes.
+pub fn free_path(path: &Path) -> PathBuf {
+    if fs::symlink_metadata(path).is_err() {
+        return path.to_path_buf();
+    }
+    free_name(path).unwrap_or_else(|| path.to_path_buf())
+}
+
+/// A byte count the way a person reads it ("1,5 MB").
+pub fn human(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["bayt", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} bayt")
+    } else {
+        format!("{:.1} {}", value, UNITS[unit]).replace('.', ",")
+    }
+}
+
 /// Creates the missing folders above `raw` (a file or folder about to be written there), so "~/Desktop/Raporlar/not.txt" works without a separate
 /// createFolder step. Only inside the home folder, never through a link, never into a sensitive place, and at most four new levels; `false` when it
 /// would not or could not.

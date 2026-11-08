@@ -120,7 +120,8 @@
       "payloadKind" : "brightness",
       "requiresUserPresence" : false,
       "supportedPlatforms" : [
-        "macOS"
+        "macOS",
+        "windows"
       ],
       "timeoutClass" : "short",
       "verificationRule" : "system_state"
@@ -194,20 +195,6 @@
       ],
       "timeoutClass" : "short",
       "verificationRule" : "application_state"
-    },
-    {
-      "authority" : "device.files.write",
-      "capability" : "device.files.write",
-      "isDestructive" : false,
-      "operation" : "saveTextFile",
-      "payloadKind" : "textFile",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "medium",
-      "verificationRule" : "filesystem_state"
     },
     {
       "authority" : "runtime.status",
@@ -323,7 +310,8 @@
       "payloadKind" : "none",
       "requiresUserPresence" : true,
       "supportedPlatforms" : [
-        "macOS"
+        "macOS",
+        "windows"
       ],
       "timeoutClass" : "short",
       "verificationRule" : "clipboard_snapshot"
@@ -355,62 +343,6 @@
       "verificationRule" : "provider_acknowledgement"
     },
     {
-      "authority" : "device.files.list",
-      "capability" : "device.files.list",
-      "isDestructive" : false,
-      "operation" : "listDesktopFiles",
-      "payloadKind" : "none",
-      "requiresUserPresence" : false,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "medium",
-      "verificationRule" : "filesystem_snapshot"
-    },
-    {
-      "authority" : "device.files.read",
-      "capability" : "device.files.read",
-      "isDestructive" : false,
-      "operation" : "readDesktopFile",
-      "payloadKind" : "fileName",
-      "requiresUserPresence" : false,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "medium",
-      "verificationRule" : "filesystem_snapshot"
-    },
-    {
-      "authority" : "device.files.move",
-      "capability" : "device.files.move",
-      "isDestructive" : true,
-      "operation" : "moveDesktopFile",
-      "payloadKind" : "fileMove",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "short",
-      "verificationRule" : "provider_acknowledgement"
-    },
-    {
-      "authority" : "device.files.move",
-      "capability" : "device.files.move",
-      "isDestructive" : true,
-      "operation" : "renameDesktopFile",
-      "payloadKind" : "fileMove",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "short",
-      "verificationRule" : "provider_acknowledgement"
-    },
-    {
       "authority" : "artifact.save",
       "capability" : "artifact.save",
       "isDestructive" : true,
@@ -423,33 +355,6 @@
       ],
       "timeoutClass" : "long",
       "verificationRule" : "filesystem_state"
-    },
-    {
-      "authority" : "document.read",
-      "capability" : "document.read",
-      "isDestructive" : false,
-      "operation" : "readDocument",
-      "payloadKind" : "fileName",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "long",
-      "verificationRule" : "filesystem_snapshot"
-    },
-    {
-      "authority" : "document.edit",
-      "capability" : "document.edit",
-      "isDestructive" : true,
-      "operation" : "editDocument",
-      "payloadKind" : "document",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS"
-      ],
-      "timeoutClass" : "long",
-      "verificationRule" : "document_content"
     },
     {
       "authority" : "device.files.list",
@@ -518,7 +423,7 @@
         "macOS",
         "windows"
       ],
-      "timeoutClass" : "medium",
+      "timeoutClass" : "long",
       "verificationRule" : "filesystem_state"
     },
     {
@@ -578,19 +483,6 @@
       "verificationRule" : "filesystem_state"
     },
     {
-      "authority" : "device.files.list",
-      "capability" : "device.files.list",
-      "isDestructive" : true,
-      "operation" : "grantAgentAccess",
-      "payloadKind" : "agentGrant",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS"
-      ],
-      "timeoutClass" : "short",
-      "verificationRule" : "agent_grant"
-    },
-    {
       "authority" : "device.files.delete",
       "capability" : "device.files.delete",
       "isDestructive" : true,
@@ -613,6 +505,20 @@
       "requiresUserPresence" : true,
       "supportedPlatforms" : [
         "macOS"
+      ],
+      "timeoutClass" : "long",
+      "verificationRule" : "process_exit"
+    },
+    {
+      "authority" : "device.code.execute",
+      "capability" : "device.code.execute",
+      "isDestructive" : true,
+      "operation" : "terminal",
+      "payloadKind" : "terminal",
+      "requiresUserPresence" : true,
+      "supportedPlatforms" : [
+        "macOS",
+        "windows"
       ],
       "timeoutClass" : "long",
       "verificationRule" : "process_exit"
@@ -643,32 +549,6 @@
       ],
       "timeoutClass" : "long",
       "verificationRule" : "provider_acknowledgement"
-    },
-    {
-      "authority" : "device.ui.control",
-      "capability" : "device.ui.control",
-      "isDestructive" : false,
-      "operation" : "controlUIElement",
-      "payloadKind" : "uiElement",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS"
-      ],
-      "timeoutClass" : "short",
-      "verificationRule" : "ui_observation"
-    },
-    {
-      "authority" : "device.screen.click",
-      "capability" : "device.screen.click",
-      "isDestructive" : true,
-      "operation" : "clickScreen",
-      "payloadKind" : "screenClick",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS"
-      ],
-      "timeoutClass" : "short",
-      "verificationRule" : "ui_observation"
     },
     {
       "authority" : "device.app.list",
@@ -725,20 +605,6 @@
       ],
       "timeoutClass" : "medium",
       "verificationRule" : "browser_state"
-    },
-    {
-      "authority" : "local.analysis",
-      "capability" : "local.analysis",
-      "isDestructive" : false,
-      "operation" : "localAnalyze",
-      "payloadKind" : "localAnalysis",
-      "requiresUserPresence" : true,
-      "supportedPlatforms" : [
-        "macOS",
-        "windows"
-      ],
-      "timeoutClass" : "long",
-      "verificationRule" : "structured_local_result"
     },
     {
       "authority" : "device.files.utility",

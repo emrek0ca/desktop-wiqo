@@ -8,7 +8,10 @@ desktop/
   app/                 the Tauri app: window, tray, sign-in, chat UI (app/ui), installer hooks (app/windows)
   crates/wiqo-contract the wire contract: operations, error codes, canonical JSON, signatures
   crates/wiqo-core     relay, pairing, signature checks, execution gate, ledger, storage, vault
-  crates/wiqo-ops      the operations the computer runs (files, apps, terminal, screen, documents, ...)
+  crates/wiqo-ops      the operations the computer runs, one module per area:
+                         files/    file operations, documents, search, transfers to and from the phone, one-sentence chores, conversion, file plans, undo
+                         system/   status and ping, power, volume, clipboard, media, system chores
+                         apps/ browser  terminal/  screen  desktop_control  personal (Messages, Mail, Notes, Calendar, Reminders, Shortcuts on macOS)
   crates/wiqo-agent    the runtime the window wraps (also a headless `wiqo-agent` command)
 contracts/companion/   the shared contract files the phones and the server use (kept in sync with the Wiqo app repo)
 ```
