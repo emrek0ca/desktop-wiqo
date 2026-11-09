@@ -1,5 +1,5 @@
 //! One-sentence chores on files (`fileUtility`): a new folder, a zip, merged or split PDFs, a smaller picture, duplicates, disk usage, a tidy folder, a batch
-//! rename, documents moved as one all-or-nothing step. Every path goes through the same resolution as the other file commands (no symlink targets, Turkish
+//! rename, documents moved as one all-or-nothing step, the recurring charges in bank statements and e-invoices (subscriptions.rs). Every path goes through the same resolution as the other file commands (no symlink targets, Turkish
 //! folder names translated), and nothing is overwritten: a taken name gets " (2)".
 
 use std::collections::{BTreeMap, HashMap};
@@ -31,6 +31,7 @@ mod folders;
 mod pdf;
 mod pictures;
 mod reports;
+mod subscriptions;
 mod tidy;
 
 use archive::*;
@@ -39,6 +40,7 @@ use folders::*;
 use pdf::*;
 use pictures::*;
 use reports::*;
+use subscriptions::*;
 use tidy::*;
 
 pub(crate) fn operations() -> Vec<Op> {
@@ -61,6 +63,9 @@ struct Request {
     tags: Option<Vec<String>>,
     mode: Option<String>,
     limit: usize,
+    /// A batch (organize, batchRename, moveDocuments) only says what it would do and touches nothing: the desktop asks it before the person's
+    /// yes, so the question lists the files and where each goes ("Önce prova").
+    preview: bool,
 }
 
 impl Default for Request {
@@ -74,8 +79,37 @@ impl Default for Request {
             tags: None,
             mode: None,
             limit: 50,
+            preview: false,
         }
     }
+}
+
+/// What a batch (organize, batchRename, moveDocuments) would do, asked by the desktop before the person's yes so the question can list it;
+/// `None` for any other step or when it cannot say. Nothing on disk is touched.
+pub fn batch_preview(ctx: &Context, step_payload: &Value) -> Option<Value> {
+    let mut request: Request = payload(step_payload, "fileUtility", "dosya işlemi").ok()?;
+    let limit = request.limit.clamp(1, 500);
+    request.preview = true;
+    let done = match request.action.as_str() {
+        "organize" => organize(ctx, &request, limit),
+        "batchRename" => batch_rename(ctx, &request, limit),
+        "moveDocuments" => move_documents(ctx, &request, limit),
+        _ => return None,
+    }
+    .ok()?;
+    done.data.map(|data| data["value"].clone())
+}
+
+/// What a batch would do, as the desktop's question shows it: every file and where it goes, nothing touched.
+fn preview_of(moves: &[(PathBuf, PathBuf)], made: &[PathBuf]) -> Done {
+    let lines: Vec<Value> = moves
+        .iter()
+        .map(|(from, to)| json!({ "from": fsx::abbreviate(from), "to": fsx::abbreviate(to) }))
+        .collect();
+    Done::new(
+        format!("{} dosya değişecek; hiçbirine dokunulmadı.", moves.len()),
+        Some(data("filePreview", json!({ "moves": lines, "count": moves.len(), "newFolders": made.iter().map(|path| fsx::abbreviate(path)).collect::<Vec<_>>() }))),
+    )
 }
 
 fn file_utility(ctx: &Context, value: &Value) -> Result<Done> {
@@ -101,6 +135,7 @@ fn file_utility(ctx: &Context, value: &Value) -> Result<Done> {
         "setTags" => set_tags(&request),
         "organize" => organize(ctx, &request, limit),
         "batchRename" => batch_rename(ctx, &request, limit),
+        "findSubscriptions" => find_subscriptions(&request),
         _ => Err(error(
             "INVALID_PAYLOAD",
             "Bu dosya işlemi tanınmıyor.",

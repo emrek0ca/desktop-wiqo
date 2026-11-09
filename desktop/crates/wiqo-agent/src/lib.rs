@@ -312,6 +312,10 @@ impl Observer for Shared {
         let _ = self.inbox.send(Inbox::Automation(steps));
     }
 
+    fn watches(&self, watches: Vec<serde_json::Value>) {
+        let _ = self.inbox.send(Inbox::Watches(watches));
+    }
+
     fn state(&self, state: &ConnectionState) {
         *self.connection.lock().expect("connection lock") = state.clone();
         let _ = self.events.send(Event::Connection {
@@ -401,12 +405,78 @@ fn approval_request(question: &PendingApproval, seconds_left: u64) -> serde_json
     )
 }
 
+/// A task's progress as its Live Activity shows it: the step it is on, how many steps it has had, and whether it waits for a yes or ended.
+struct ActivityLine {
+    title: String,
+    detail: String,
+    steps: std::collections::BTreeMap<String, bool>,
+    failed: bool,
+    last_sent: Option<std::time::Instant>,
+}
+
+impl ActivityLine {
+    fn new(title: String) -> ActivityLine {
+        ActivityLine { title, detail: String::new(), steps: Default::default(), failed: false, last_sent: None }
+    }
+
+    fn state(&self, status: &str) -> serde_json::Value {
+        let done = self.steps.values().filter(|done| **done).count();
+        serde_json::json!({ "title": self.title, "detail": self.detail, "step": done, "total": self.steps.len(), "status": status })
+    }
+
+    /// The state to send for this event, when it changes what the activity shows and the last one is not too recent.
+    fn read(&mut self, event: &serde_json::Value) -> Option<serde_json::Value> {
+        let urgent = match event["type"].as_str() {
+            Some("step_update") => {
+                let id = event["step"]["id"].as_str().unwrap_or("").to_string();
+                let status = event["step"]["status"].as_str().unwrap_or("running");
+                if let Some(summary) = event["step"]["summary"].as_str().filter(|summary| !summary.is_empty()) {
+                    self.detail = summary.chars().take(120).collect();
+                }
+                if matches!(status, "failed" | "denied") {
+                    self.failed = true;
+                }
+                self.steps.insert(id, status == "completed");
+                false
+            }
+            Some("approval") | Some("confirmation_needed") => {
+                self.detail = "Onayını bekliyor".into();
+                return self.send("waiting", true);
+            }
+            Some("error") => {
+                self.failed = true;
+                false
+            }
+            _ => return None,
+        };
+        self.send("running", urgent)
+    }
+
+    fn send(&mut self, status: &str, urgent: bool) -> Option<serde_json::Value> {
+        if !urgent && self.last_sent.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+            return None;
+        }
+        self.last_sent = Some(std::time::Instant::now());
+        Some(self.state(status))
+    }
+
+    fn end(&self) -> serde_json::Value {
+        let mut state = self.state(if self.failed { "failed" } else { "done" });
+        if !self.failed {
+            state["detail"] = serde_json::json!("Bitti");
+        }
+        state
+    }
+}
+
 /// What the relay hands to this computer's own work.
 enum Inbox {
     /// A paired phone's checked frame.
     Phone(Request),
     /// Due automation steps: the server's step id and the step.
     Automation(Vec<(i64, serde_json::Value)>),
+    /// Signed-in pages due for a check (the server's watchers).
+    Watches(Vec<serde_json::Value>),
 }
 
 /// A phone's `remoteMessage` (frames.json): the request it would have sent to `/copilot/chat` itself.
@@ -749,6 +819,11 @@ impl Desktop {
                     tokio::spawn(async move { desktop.run_automation(steps).await });
                     continue;
                 }
+                Inbox::Watches(watches) => {
+                    let desktop = self.clone();
+                    tokio::spawn(async move { desktop.read_watches(watches).await });
+                    continue;
+                }
             };
             let value = &request.payload["value"];
             match request.kind.as_str() {
@@ -787,6 +862,24 @@ impl Desktop {
         }
     }
 
+    /// Signed-in pages the server's watchers asked to check: each is read in Wiqo's own browser profile on this computer (where the person signed in)
+    /// and what it says goes back as `watchObserved`; the server compares it with the last reading. Nothing on the page is pressed or typed.
+    async fn read_watches(self: &Arc<Self>, watches: Vec<serde_json::Value>) {
+        for watch in watches {
+            let Some(trigger) = watch["triggerId"].as_i64() else { continue };
+            let url = watch["url"].as_str().unwrap_or("").to_string();
+            let selector = watch["selector"].as_str().map(str::to_string);
+            let read = tokio::task::spawn_blocking(move || wiqo_ops::read_watched_page(&url, selector.as_deref()))
+                .await
+                .unwrap_or_else(|_| Err("BROWSER_FAILED: okunamadı".into()));
+            let answer = match read {
+                Ok(page) => serde_json::json!({ "type": "watchObserved", "triggerId": trigger, "page": page }),
+                Err(error) => serde_json::json!({ "type": "watchObserved", "triggerId": trigger, "error": error }),
+            };
+            self.runtime.outbox.deliver(&answer).await;
+        }
+    }
+
     /// One message from a phone: "aldım" first (the phone waits `ackSeconds` and then writes to the server itself), then the same turn as one typed
     /// here, with the phone's id, features and language, its steps run as that phone's, and the whole stream passed to the phone.
     async fn remote_turn(self: &Arc<Self>, request: Request) {
@@ -809,8 +902,15 @@ impl Desktop {
         let (forward, mut queue) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
         let request_id = message.request_id.clone();
         let sender = outbox.clone();
+        let title: String = message.text.chars().take(60).collect();
         let drain = tokio::spawn(async move {
+            // The phone's Live Activity for this task moves on while its app is closed: how far the task got goes to the server, which passes it
+            // to Apple as it is (rova-backend notifications/liveActivity.ts). At most every two seconds; the end at once.
+            let mut activity = ActivityLine::new(title);
             while let Some(event) = queue.recv().await {
+                if let Some(state) = activity.read(&event) {
+                    sender.deliver(&serde_json::json!({ "type": "activityUpdate", "requestId": request_id, "state": state })).await;
+                }
                 sender
                     .deliver(&wiqo_core::relay::to_phone(
                         serde_json::json!({ "kind": wiqo_contract::frames::STREAM_EVENT, "requestId": request_id, "event": event }),
@@ -818,6 +918,7 @@ impl Desktop {
                     ))
                     .await;
             }
+            sender.deliver(&serde_json::json!({ "type": "activityUpdate", "requestId": request_id, "state": activity.end() })).await;
         });
         let asker = chat::Asker::Phone {
             request: message.request,
@@ -1043,6 +1144,61 @@ impl Desktop {
         wiqo_ops::undo_file(&context, id).map_err(|error| anyhow::anyhow!(error.message))
     }
 
+    /// This computer's screen memory (wiqo_ops::screen_memory): its state, for the settings.
+    pub fn screen_memory(&self) -> serde_json::Value {
+        serde_json::to_value(wiqo_ops::screen_memory::status(self.data_path())).unwrap_or_default()
+    }
+
+    /// Turned on or off here, the only place it can be turned on. Off forgets everything read.
+    pub fn set_screen_memory(&self, on: bool) -> Result<serde_json::Value> {
+        wiqo_ops::screen_memory::set_enabled(self.data_path(), on)?;
+        Ok(self.screen_memory())
+    }
+
+    /// `action`: "pause" (for `hours`, or until resumed), "resume", "forget"; `excluded`: the applications never read.
+    pub fn screen_memory_action(&self, action: &str, hours: Option<i64>, excluded: Option<Vec<String>>) -> Result<serde_json::Value> {
+        let data = self.data_path();
+        match action {
+            "pause" => drop(wiqo_ops::screen_memory::pause(data, hours)?),
+            "resume" => drop(wiqo_ops::screen_memory::resume(data)?),
+            "forget" => wiqo_ops::screen_memory::forget(data)?,
+            "exclude" => drop(wiqo_ops::screen_memory::set_excluded(data, excluded.unwrap_or_default())?),
+            _ => anyhow::bail!("Bu ekran hafızası işlemi tanınmıyor."),
+        }
+        Ok(self.screen_memory())
+    }
+
+    /// The screen memory's reading every few seconds, off the async threads; it reads nothing while off or paused (wiqo_ops::screen_memory::tick).
+    pub async fn keep_screen_memory(self: &Arc<Self>) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            let desktop = self.clone();
+            let _ = tokio::task::spawn_blocking(move || wiqo_ops::screen_memory::tick(desktop.data_path())).await;
+        }
+    }
+
+    fn data_path(&self) -> &std::path::Path {
+        self.runtime.engine.services().data_dir.path()
+    }
+
+    /// "Bir kez göster, Wiqo öğrensin": the recording starts (a second start keeps the first). Returns when it started.
+    pub fn record_start(&self) -> String {
+        wiqo_ops::recorder::start().to_rfc3339()
+    }
+
+    /// The recording stops; its steps come back for the person to read before anything leaves the computer.
+    pub fn record_stop(&self) -> serde_json::Value {
+        serde_json::to_value(wiqo_ops::recorder::stop()).unwrap_or_default()
+    }
+
+    pub fn record_cancel(&self) {
+        wiqo_ops::recorder::cancel();
+    }
+
+    pub fn recording_since(&self) -> Option<String> {
+        wiqo_ops::recorder::recording_since().map(|at| at.to_rfc3339())
+    }
+
     /// The answer to a "PC'de onayla" card, clicked in this computer's panel.
     pub fn answer_approval(&self, id: &str, allow: bool) {
         self.answer(id, allow, "desktop");
@@ -1100,10 +1256,16 @@ impl Desktop {
             detail: detail.to_string(),
             seconds,
         });
-        if request_id.is_some() {
+        if let Some(request) = request_id {
             self.runtime
                 .outbox
                 .deliver(&approval_request(&question, seconds))
+                .await;
+            // The phone's Live Activity says it waits for a yes, with the lock screen's alert (rova-backend notifications/liveActivity.ts).
+            self.runtime
+                .outbox
+                .deliver(&serde_json::json!({ "type": "activityUpdate", "requestId": request,
+                    "state": { "detail": detail.lines().next().unwrap_or("").chars().take(120).collect::<String>(), "status": "waiting" } }))
                 .await;
         }
         let (allowed, by) = match tokio::time::timeout(Duration::from_secs(seconds), answered).await

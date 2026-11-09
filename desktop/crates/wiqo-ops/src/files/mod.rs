@@ -9,6 +9,7 @@ mod search;
 mod transfer;
 pub(crate) mod undo;
 mod utility;
+pub use utility::batch_preview;
 
 use std::fs;
 use std::io::Read as _;

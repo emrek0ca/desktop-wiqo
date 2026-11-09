@@ -1,5 +1,6 @@
 //! The operations of a Wiqo desktop. One module per area; the platform differences stay inside the module, never in the caller.
 
+pub mod activity;
 mod applescript;
 mod apps;
 mod browser;
@@ -11,6 +12,8 @@ mod op;
 mod personal;
 mod process;
 mod screen;
+pub mod recorder;
+pub mod screen_memory;
 mod system;
 pub mod terminal;
 
@@ -22,6 +25,10 @@ use wiqo_core::engine::Engine;
 pub use desktop_control::{set_cursor_sink, stop_all as stop_desktop_control, CursorEvent};
 /// Takes back a file change by its undo id (terminal sessions call this for the phone's "Geri al").
 pub use files::undo::undo_file;
+/// What a batch of file changes would do, for the question before the person's yes ("Önce prova").
+pub use files::batch_preview;
+/// A signed-in page read for a watcher (the server compares it).
+pub use browser::read_watched_page;
 pub use terminal::redact_secrets;
 
 /// Every operation this build implements, one module per area. `sessions` are the terminal sessions the `terminal` step runs in.

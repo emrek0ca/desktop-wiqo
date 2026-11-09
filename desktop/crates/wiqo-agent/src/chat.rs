@@ -616,6 +616,42 @@ impl Chat {
         .await
     }
 
+    /// The person's recipes ("Tariflerim", rova-backend agent/skills.ts): their own, recorded and imported, most used first.
+    pub async fn skills(&self) -> Result<Value> {
+        let token = self.token()?;
+        self.call(reqwest::Method::GET, "skills", None, Some(&token)).await
+    }
+
+    /// A recording made on this computer becomes a recipe: the server's model writes the request that repeats it. `events` are what the person
+    /// read and approved in the panel; `note` is their own sentence about the task, if they wrote one.
+    pub async fn skill_from_recording(&self, events: Value, note: Option<&str>) -> Result<Value> {
+        let token = self.token()?;
+        self.call(reqwest::Method::POST, "skills/from-recording", Some(json!({ "events": events, "note": note })), Some(&token)).await
+    }
+
+    /// `action`: "used" (the recipe went into the composer), "share" (its link, made once and kept), "unshare", "delete".
+    pub async fn skill_action(&self, id: u64, action: &str) -> Result<Value> {
+        let token = self.token()?;
+        let (method, path) = match action {
+            "used" => (reqwest::Method::POST, format!("skills/{id}/used")),
+            "share" => (reqwest::Method::POST, format!("skills/{id}/share")),
+            "unshare" => (reqwest::Method::DELETE, format!("skills/{id}/share")),
+            "delete" => (reqwest::Method::DELETE, format!("skills/{id}")),
+            _ => bail!("Bu tarif işlemi tanınmıyor."),
+        };
+        self.call(method, &path, None, Some(&token)).await
+    }
+
+    /// A recipe someone shared, by its code (or its link): first `preview` (what it does), then added to this person's recipes.
+    pub async fn skill_import(&self, code: &str, preview: bool) -> Result<Value> {
+        let code: String = code.rsplit('/').next().unwrap_or(code).chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_uppercase();
+        if preview {
+            return self.call(reqwest::Method::GET, &format!("skills/shared/{code}"), None, None).await;
+        }
+        let token = self.token()?;
+        self.call(reqwest::Method::POST, "skills/import", Some(json!({ "code": code })), Some(&token)).await
+    }
+
     /// Every agent of this person (the four ready-made ones included), for the agent form.
     pub async fn agent_list(&self) -> Result<Value> {
         let token = self.token()?;
@@ -907,7 +943,9 @@ impl Chat {
                 );
                 let summary = step["summary"].as_str().unwrap_or("").to_string();
                 let kind = step["type"].as_str().unwrap_or("").to_string();
-                let mut result = if needs_yes(step) && !approve(kind.clone(), summary).await {
+                // "Önce prova": a batch says what it would do before the yes is asked, so the question lists the files and where each goes.
+                let question = if needs_yes(step) { with_preview(engine, step, &summary) } else { summary.clone() };
+                let mut result = if needs_yes(step) && !approve(kind.clone(), question).await {
                     refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
                 } else {
                     run_with_progress(engine, step, &emit).await
@@ -1246,6 +1284,50 @@ fn device_context(engine: &Engine, device_id: &str) -> Value {
 }
 
 /// A step that did not run because the person said no (or did not answer in time).
+/// The question before a batch of file changes, with what it would do: the first files and where each goes, and how many more. Any other step,
+/// or a batch that cannot say, keeps its own sentence.
+pub(crate) fn with_preview(engine: &Engine, step: &Value, summary: &str) -> String {
+    const SHOWN: usize = 12;
+    if step["type"] != "fileUtility" {
+        return summary.to_string();
+    }
+    let payload = match &step["payload"] {
+        Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    let context = wiqo_core::engine::Context { command_id: Uuid::new_v4(), services: engine.services().clone() };
+    let Some(preview) = wiqo_ops::batch_preview(&context, &payload) else {
+        return summary.to_string();
+    };
+    let moves = preview["moves"].as_array().cloned().unwrap_or_default();
+    if moves.is_empty() {
+        return summary.to_string();
+    }
+    let name = |path: &str| path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
+    let lines: Vec<String> = moves
+        .iter()
+        .take(SHOWN)
+        .map(|item| {
+            let (from, to) = (item["from"].as_str().unwrap_or(""), item["to"].as_str().unwrap_or(""));
+            let (from_folder, to_folder) = (from.rsplit_once(['/', '\\']).map(|(dir, _)| dir).unwrap_or(""), to.rsplit_once(['/', '\\']).map(|(dir, _)| dir).unwrap_or(""));
+            if from_folder == to_folder {
+                format!("• {} → {}", name(from), name(to))
+            } else {
+                format!("• {} → {}/", name(from), name(to_folder))
+            }
+        })
+        .collect();
+    let more = moves.len().saturating_sub(SHOWN);
+    let folders = preview["newFolders"].as_array().map(|list| list.len()).unwrap_or(0);
+    format!(
+        "{summary}\n\nÖnce prova: {} dosya{}\n{}{}\n\nOnaylarsan tek seferde yapılır ve 7 gün içinde tek dokunuşla geri alınabilir.",
+        moves.len(),
+        if folders > 0 { format!(", {folders} yeni klasör") } else { String::new() },
+        lines.join("\n"),
+        if more > 0 { format!("\n… ve {more} dosya daha") } else { String::new() }
+    )
+}
+
 pub(crate) fn refused_step(step: &Value, message: &str) -> Value {
     json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": message, "errorCode": "DENIED_ON_PC" })
 }

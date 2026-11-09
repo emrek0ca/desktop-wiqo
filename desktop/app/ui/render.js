@@ -668,7 +668,7 @@
   }
 
   function listWidget(widget) {
-    const ICONS = { mail: "envelope", calendar: "calendar", drive: "folder", notion: "doc.text", contacts: "person.crop.circle", files: "folder", tasks: "checklist" };
+    const ICONS = { mail: "envelope", calendar: "calendar", drive: "folder", notion: "doc.text", contacts: "person.crop.circle", files: "folder", tasks: "checklist", subscriptions: "creditcard" };
     const rows = (widget.items || []).map((item) => ({
       title: item.title,
       subtitle: [item.subtitle, item.detail].filter(Boolean).join(" · ") || (item.start ? date(item.start) : ""),
@@ -899,8 +899,88 @@
         return box;
       }
       case "contact": return card(widget.title || widget.contactQuery, "Rehberdeki kişiler telefonda açılır.", "person.crop.circle");
+      case "report": return reportCard(widget);
+      case "poll": {
+        const box = card(widget.title || "Anket", widget.subtitle || "Anket", "chart.bar.doc.horizontal");
+        const list = el("ol", "poll-options");
+        for (const option of widget.options || []) list.append(el("li", "", option));
+        box.append(list);
+        return box;
+      }
       default: return card(widget.title || "Kart", widget.subtitle || widget.detail);
     }
+  }
+
+  // "Wiqo Karnesi" (rova-backend proactive/weeklyReport.ts): what Wiqo did over a week, tile by tile, and a picture of it to share.
+  function reportCard(widget) {
+    const box = card(widget.title || "Wiqo Karnesi", widget.period, "chart.bar");
+    box.classList.add("w-report");
+    const tiles = el("div", "report-tiles");
+    for (const stat of widget.stats || []) {
+      const tile = el("div", "report-tile");
+      tile.append(el("div", "report-value", stat.value), el("div", "report-label", stat.label));
+      if (stat.detail) tile.append(el("div", "report-detail muted small", stat.detail));
+      tiles.append(tile);
+    }
+    const actions = el("div", "w-actions");
+    actions.append(button("Resmini kopyala", "secondary small", async (event) => {
+      const target = event.currentTarget;
+      try {
+        const blob = await reportPicture(widget);
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        target.textContent = "Kopyalandı";
+      } catch {
+        await navigator.clipboard.writeText(`${widget.title} · ${widget.period || ""}\n${(widget.stats || []).map((stat) => `${stat.label}: ${stat.value}${stat.detail ? ` (${stat.detail})` : ""}`).join("\n")}\nwiqo.app`).catch(() => {});
+        target.textContent = "Metin kopyalandı";
+      }
+    }));
+    box.append(tiles, actions);
+    return box;
+  }
+
+  // The card as a 1080×1350 picture, the shape social posts take: the same tiles on Wiqo's colours.
+  function reportPicture(widget) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080;
+    canvas.height = 1350;
+    const g = canvas.getContext("2d");
+    const css = getComputedStyle(document.documentElement);
+    const accent = css.getPropertyValue("--accent").trim() || "#2f6df6";
+    const gradient = g.createLinearGradient(0, 0, 1080, 1350);
+    gradient.addColorStop(0, "#111827");
+    gradient.addColorStop(1, accent);
+    g.fillStyle = gradient;
+    g.fillRect(0, 0, 1080, 1350);
+    g.fillStyle = "#ffffff";
+    g.font = "700 72px -apple-system, Segoe UI, sans-serif";
+    g.fillText(widget.title || "Wiqo Karnesi", 80, 170);
+    g.globalAlpha = 0.75;
+    g.font = "400 40px -apple-system, Segoe UI, sans-serif";
+    g.fillText(widget.period || "", 80, 235);
+    g.globalAlpha = 1;
+    const stats = (widget.stats || []).slice(0, 6);
+    stats.forEach((stat, index) => {
+      const x = 80 + (index % 2) * 470;
+      const y = 320 + Math.floor(index / 2) * 300;
+      g.fillStyle = "rgba(255,255,255,0.12)";
+      g.beginPath();
+      g.roundRect(x, y, 440, 260, 36);
+      g.fill();
+      g.fillStyle = "#ffffff";
+      g.font = "700 84px -apple-system, Segoe UI, sans-serif";
+      g.fillText(String(stat.value).slice(0, 12), x + 36, y + 120);
+      g.font = "500 34px -apple-system, Segoe UI, sans-serif";
+      g.fillText(String(stat.label).slice(0, 26), x + 36, y + 180);
+      if (stat.detail) {
+        g.globalAlpha = 0.7;
+        g.font = "400 26px -apple-system, Segoe UI, sans-serif";
+        g.fillText(String(stat.detail).slice(0, 32), x + 36, y + 225);
+        g.globalAlpha = 1;
+      }
+    });
+    g.font = "600 36px -apple-system, Segoe UI, sans-serif";
+    g.fillText("wiqo", 80, 1270);
+    return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("picture"))), "image/png"));
   }
 
   // An inline app: its page runs in a sandboxed frame with no access to this window, the same kit the iPhone injects, and no network.

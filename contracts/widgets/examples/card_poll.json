@@ -1,0 +1,14 @@
+{
+  "type": "card",
+  "widgetId": "card:poll",
+  "kind": "poll",
+  "title": "Hangi gün buluşalım?",
+  "options": [
+    "Cuma akşamı",
+    "Cumartesi öğlen",
+    "Pazar kahvaltı"
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Hangi gün buluşalım?"
+}

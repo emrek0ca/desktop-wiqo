@@ -247,6 +247,11 @@
       "effect": "partial",
       "recovery": "stop"
     },
+    "BROWSER_SIGN_IN_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
     "BROWSER_SUBMIT_REQUIRED": {
       "blocked": true,
       "effect": "none",
@@ -1101,6 +1106,16 @@
       "blocked": false,
       "effect": "partial",
       "recovery": null
+    },
+    "SCREEN_MEMORY_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "retry_once"
+    },
+    "SCREEN_MEMORY_OFF": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
     },
     "SCREEN_RECORDING_PERMISSION_REQUIRED": {
       "blocked": true,

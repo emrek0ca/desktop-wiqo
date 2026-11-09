@@ -55,6 +55,7 @@ const SAFE_ERRORS = {
   BROWSER_TIMEOUT: "Tarayıcı işlemi zaman aşımına uğradı.",
   BROWSER_CANCELLED: "Tarayıcı işlemi iptal edildi.",
   BROWSER_NO_PAGE: "Önce herkese açık bir sayfa açılmalı.",
+  BROWSER_SIGN_IN_REQUIRED: "Sayfa oturum istiyor; Wiqo'nun tarayıcısında bu siteye bir kez giriş yapılmalı.",
   BROWSER_NO_HISTORY: "Bu görev tarayıcısında geri dönülecek bir sayfa yok.",
   BROWSER_FORM_BLOCKED: "Bu form güvenlik nedeniyle gönderilemez.",
   BROWSER_FIELD_BLOCKED: "Güvenlik nedeniyle bu hassas veya kişisel alanı Wiqo dolduramaz.",
@@ -847,10 +848,18 @@ async function executeSteps(message) {
 async function readPage(task, message) {
   if (!task.page.url() || task.page.url() === "about:blank") throw Object.assign(new Error(), { code: "BROWSER_NO_PAGE" });
   const offset = Number.isSafeInteger(message.offset) && message.offset >= 0 ? message.offset : 0;
-  const full = await task.page.evaluate(() => {
-    const main = document.querySelector("main, [role='main'], article") ?? document.body;
-    return (main?.innerText ?? "").replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  });
+  // A watched page (the server's signed-in watcher) that shows a password field has signed the person out: say so instead of watching a login form.
+  if (message.watch === true && await task.page.locator("input[type=password]:visible").count().catch(() => 0) > 0) {
+    throw Object.assign(new Error(), { code: "BROWSER_SIGN_IN_REQUIRED" });
+  }
+  // Only the part a watcher points at, when it names one (a price, a slot list).
+  const selector = typeof message.selector === "string" && message.selector.trim() && message.selector.length <= 200 ? message.selector.trim() : null;
+  const full = selector
+    ? (await task.page.locator(selector).first().innerText({ timeout: 8_000 }).catch(() => "")).replace(/\r\n?/g, "\n").trim()
+    : await task.page.evaluate(() => {
+      const main = document.querySelector("main, [role='main'], article") ?? document.body;
+      return (main?.innerText ?? "").replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    });
   const chunk = full.slice(offset, offset + READ_CHUNK);
   const nextOffset = offset + chunk.length < full.length ? offset + chunk.length : undefined;
   task.contentShared = true;

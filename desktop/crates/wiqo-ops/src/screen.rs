@@ -104,16 +104,26 @@ async fn capture(value: &Value) -> Result<Done> {
     .map_err(|_| tool_failure("SCREEN_CAPTURE_FAILED", "Ekran görüntüsü alınamadı."))?
 }
 
-/// Reading the words is a help, never worth failing the screenshot for: a late or empty reading leaves the picture alone.
-const READ_TEXT_FOR: std::time::Duration = std::time::Duration::from_secs(3);
+/// Reading the words is a help, never worth failing the screenshot for: a late or empty reading leaves the picture alone. Windows starts its
+/// recogniser in a PowerShell process, which takes longer.
+const READ_TEXT_FOR: std::time::Duration = std::time::Duration::from_secs(if cfg!(windows) { 10 } else { 3 });
 const MAX_SCREEN_TEXT: usize = 6_000;
+/// Windows' recogniser refuses pictures larger than this on either side.
+const OCR_MAX_SIDE: u32 = 4_000;
 
-/// The text on the picture, read by the system's own recogniser (macOS; empty elsewhere), at most a few thousand characters.
+/// The text on the picture, read by the system's own recogniser (Apple Vision on macOS, Windows.Media.Ocr on Windows), at most a few thousand characters.
 fn screen_text(picture: &DynamicImage) -> String {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(any(target_os = "macos", windows)) {
         return String::new();
     }
     let path = std::env::temp_dir().join(format!("wiqo-screen-{}.png", uuid::Uuid::new_v4()));
+    let scaled;
+    let picture = if picture.width().max(picture.height()) > OCR_MAX_SIDE {
+        scaled = picture.resize(OCR_MAX_SIDE, OCR_MAX_SIDE, image::imageops::FilterType::Triangle);
+        &scaled
+    } else {
+        picture
+    };
     if picture
         .save_with_format(&path, image::ImageFormat::Png)
         .is_err()
@@ -207,6 +217,15 @@ fn encode(picture: DynamicImage, max_width: u32) -> Result<Done> {
         "Ekran görüntüsü hazır.",
         Some(data("screenshot", content)),
     ))
+}
+
+/// What is on the main screen now, as text: the screen memory's reading (crate::screen_memory). Nothing without the permission (it is never asked
+/// for from here) or when no words could be read.
+pub(crate) fn main_screen_text() -> Option<String> {
+    ensure_permission().ok()?;
+    let picture = grab(None).ok()?;
+    let text = screen_text(&picture);
+    (!text.trim().is_empty()).then_some(text)
 }
 
 #[cfg(target_os = "macos")]

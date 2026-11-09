@@ -13,4 +13,5 @@ pub mod storage;
 pub mod terminal;
 pub mod vault;
 pub mod verify;
+pub mod wake;
 pub mod wire;

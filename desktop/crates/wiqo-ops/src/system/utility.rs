@@ -1,5 +1,5 @@
 //! `systemUtility`: small system chores the phone asks for in one sentence — dark mode, the busiest processes, battery health, two windows side by side,
-//! a text read aloud into an audio file on the Desktop.
+//! a text read aloud into an audio file on the Desktop, a search in this computer's screen memory and its pause, resume and forget (screen_memory.rs).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,9 +41,12 @@ impl Default for Request {
     }
 }
 
-fn system_utility(_ctx: &Context, value: &Value) -> Result<Done> {
+fn system_utility(ctx: &Context, value: &Value) -> Result<Done> {
     let request: Request = payload(value, "systemUtility", "sistem işlemi")?;
+    let data = ctx.services.data_dir.path();
     match request.action.as_str() {
+        "screenRecall" => crate::screen_memory::recall_report(data, request.text.as_deref().unwrap_or(""), request.mode.as_deref(), request.limit.clamp(1, 20)),
+        "screenMemory" => crate::screen_memory::manage(data, request.mode.as_deref().unwrap_or("status")),
         "darkMode" => dark_mode(request.mode.as_deref()),
         "topProcesses" => top_processes(request.limit.clamp(1, 50)),
         "battery" => battery(),
@@ -284,79 +287,22 @@ fn overview() -> Result<Done> {
 }
 
 /// What the person is looking at right now: the front application and its window, what is selected in Finder, the address of the tab in front in a browser.
-/// It is how "bunu özetle / şunu gönder" finds what "bunu" is. Read only; the clipboard is a different, explicitly permitted read.
+/// It is how "bunu özetle / şunu gönder" finds what "bunu" is. Read only; the clipboard is a different, explicitly permitted read (crate::activity).
 fn context_report() -> Result<Done> {
-    let lines = if cfg!(target_os = "macos") {
-        let source = r#"
-set out to ""
-tell application "System Events"
-  set frontProcess to first application process whose frontmost is true
-  set appName to name of frontProcess
-  set winTitle to ""
-  try
-    set winTitle to name of front window of frontProcess
-  end try
-end tell
-set out to "Ön plandaki uygulama: " & appName & linefeed & "Pencere: " & winTitle
-if appName is "Finder" then
-  try
-    tell application "Finder"
-      set picked to selection as alias list
-      set names to ""
-      repeat with item_ in picked
-        set names to names & POSIX path of item_ & linefeed
-      end repeat
-    end tell
-    if names is not "" then set out to out & linefeed & "Finder'da seçili:" & linefeed & names
-  end try
-end if
-if appName is "Safari" then
-  try
-    tell application "Safari" to set pageAddress to URL of current tab of front window
-    set out to out & linefeed & "Sekme adresi: " & pageAddress
-  end try
-end if
-if appName is "Google Chrome" then
-  try
-    tell application "Google Chrome" to set pageAddress to URL of active tab of front window
-    set out to out & linefeed & "Sekme adresi: " & pageAddress
-  end try
-end if
-return out
-"#;
-        vec![apple_script(source)
-            .map_err(|message| permission("AUTOMATION_PERMISSION_REQUIRED", message))?]
-    } else if cfg!(windows) {
-        let script = r#"Add-Type @"
-using System; using System.Runtime.InteropServices; using System.Text;
-public class WiqoFront {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int p);
-}
-"@
-$h = [WiqoFront]::GetForegroundWindow(); $sb = New-Object System.Text.StringBuilder 256
-[void][WiqoFront]::GetWindowText($h, $sb, 256); $p = 0; [void][WiqoFront]::GetWindowThreadProcessId($h, [ref]$p)
-"Ön plandaki uygulama: $((Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName)`nPencere: $($sb.ToString())""#;
-        let out = run(
-            "powershell",
-            &["-NoProfile", "-NonInteractive", "-Command", script],
-            15,
-        );
-        match out {
-            Some(out) if out.status.success() => {
-                vec![String::from_utf8_lossy(&out.stdout).trim().to_string()]
-            }
-            _ => {
-                return Err(tool_failure(
-                    "CONTEXT_FAILED",
-                    "Ön plandaki pencere okunamadı.",
-                ))
-            }
-        }
-    } else {
+    if !cfg!(any(target_os = "macos", windows)) {
         return unsupported("Ön plandaki pencereyi okumak");
+    }
+    let Some(front) = crate::activity::front() else {
+        return Err(if cfg!(target_os = "macos") {
+            permission(
+                "AUTOMATION_PERMISSION_REQUIRED",
+                "Bilgisayardaki Wiqo penceresinde İzinler bölümünden Erişilebilirlik ve Uygulamaları kontrol izinlerini ver.",
+            )
+        } else {
+            tool_failure("CONTEXT_FAILED", "Ön plandaki pencere okunamadı.")
+        });
     };
+    let lines = vec![crate::activity::lines(&front)];
     Ok(Done::new(
         "Şu an ekranda olan.",
         Some(report("context", &lines.join("\n"))),

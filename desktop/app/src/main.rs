@@ -338,6 +338,13 @@ fn open_browser(url: &str) {
 
 /// A `wiqo://oauth-callback?...` link (Google sign-in) finishes the sign-in; the window hears `signed-in` or `sign-in-failed`.
 fn handle_link(handle: &AppHandle, link: &str) {
+    // A shared recipe (rova-backend agent/skills.ts `/r/CODE` → "Wiqo'da aç"): the window opens on it, to be read before it is added.
+    if let Some(code) = link.strip_prefix("wiqo://recipe/") {
+        show_window(handle);
+        let code: String = code.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
+        let _ = handle.emit("recipe-link", code);
+        return;
+    }
     if !link.starts_with("wiqo://oauth-callback") {
         return;
     }
@@ -514,6 +521,64 @@ async fn chat_cancel(app: State<'_, App>, task: String, conversation: String) ->
 #[tauri::command]
 async fn chat_conversations(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.conversations().await.map_err(text)
+}
+
+/// Tariflerim: the person's recipes, a recording turned into one, its actions (used, share, unshare, delete) and a shared one added by code.
+#[tauri::command]
+async fn skills_list(app: State<'_, App>) -> Reply<serde_json::Value> {
+    app.desktop.chat.skills().await.map_err(text)
+}
+
+#[tauri::command]
+async fn skill_action(app: State<'_, App>, id: u64, action: String) -> Reply<serde_json::Value> {
+    app.desktop.chat.skill_action(id, &action).await.map_err(text)
+}
+
+#[tauri::command]
+async fn skill_import(app: State<'_, App>, code: String, preview: bool) -> Reply<serde_json::Value> {
+    app.desktop.chat.skill_import(&code, preview).await.map_err(text)
+}
+
+/// "Bir kez göster": start, stop (the steps come back to be read), cancel, and the steps sent to become a recipe.
+#[tauri::command]
+fn record_start(app: State<'_, App>) -> String {
+    app.desktop.record_start()
+}
+
+#[tauri::command]
+fn record_stop(app: State<'_, App>) -> serde_json::Value {
+    app.desktop.record_stop()
+}
+
+#[tauri::command]
+fn record_cancel(app: State<'_, App>) {
+    app.desktop.record_cancel()
+}
+
+#[tauri::command]
+fn recording_since(app: State<'_, App>) -> Option<String> {
+    app.desktop.recording_since()
+}
+
+#[tauri::command]
+async fn record_to_skill(app: State<'_, App>, events: serde_json::Value, note: Option<String>) -> Reply<serde_json::Value> {
+    app.desktop.chat.skill_from_recording(events, note.as_deref()).await.map_err(text)
+}
+
+/// This computer's screen memory: its state, on/off (here only), pause/resume/forget and the applications never read.
+#[tauri::command]
+fn screen_memory(app: State<'_, App>) -> serde_json::Value {
+    app.desktop.screen_memory()
+}
+
+#[tauri::command]
+fn set_screen_memory(app: State<'_, App>, on: bool) -> Reply<serde_json::Value> {
+    app.desktop.set_screen_memory(on).map_err(text)
+}
+
+#[tauri::command]
+fn screen_memory_action(app: State<'_, App>, action: String, hours: Option<i64>, excluded: Option<Vec<String>>) -> Reply<serde_json::Value> {
+    app.desktop.screen_memory_action(&action, hours, excluded).map_err(text)
 }
 
 /// The Ajanlar list: reminders, routines, watches, jobs, to-dos, goals and helpers.
@@ -960,6 +1025,17 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            skills_list,
+            skill_action,
+            skill_import,
+            record_start,
+            record_stop,
+            record_cancel,
+            recording_since,
+            record_to_skill,
+            screen_memory,
+            set_screen_memory,
+            screen_memory_action,
             start_pairing,
             cancel_pairing,
             remove_phone,
@@ -1061,6 +1137,10 @@ fn main() {
             let phones = desktop.clone();
             tauri::async_runtime::spawn(async move {
                 phones.serve_relay().await;
+            });
+            let memory = desktop.clone();
+            tauri::async_runtime::spawn(async move {
+                memory.keep_screen_memory().await;
             });
             let connected = desktop.clone();
             tauri::async_runtime::spawn(async move {

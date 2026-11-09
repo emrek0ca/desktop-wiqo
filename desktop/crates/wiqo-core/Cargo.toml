@@ -24,6 +24,7 @@ base64.workspace = true
 rand.workspace = true
 sha2.workspace = true
 hex.workspace = true
+sysinfo.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

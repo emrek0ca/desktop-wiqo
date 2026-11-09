@@ -32,6 +32,11 @@ impl DataDir {
     pub fn file(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
+
+    /// The folder itself.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {

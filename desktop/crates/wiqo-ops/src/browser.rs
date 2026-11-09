@@ -194,6 +194,30 @@ fn worker_error(error: &Value) -> WireError {
     WireError::new(code, message, category)
 }
 
+/// A signed-in page read for a watcher (rova-backend automation/pcWatches.ts): opened in a tab of Wiqo's own account profile, read (only `selector`
+/// when given) and the tab closed again. The page's address, title and text, or why it could not be read (`BROWSER_SIGN_IN_REQUIRED` when the
+/// site shows its sign-in form).
+pub fn read_watched_page(url: &str, selector: Option<&str>) -> std::result::Result<Value, String> {
+    let task = uuid::Uuid::new_v4().to_string();
+    let request = |value: Value| -> Result<Value> {
+        let envelope = ask(value)?;
+        if envelope["ok"] == true {
+            Ok(envelope["result"].clone())
+        } else {
+            Err(worker_error(&envelope["error"]))
+        }
+    };
+    let read = (|| {
+        request(json!({ "taskId": task, "action": "navigate", "url": url, "session": "account" }))?;
+        request(json!({ "taskId": task, "action": "read", "watch": true, "selector": selector }))
+    })();
+    let _ = ask(json!({ "action": "closeTask", "taskId": task }));
+    let page = read.map_err(|error| format!("{}: {}", error.code, error.message))?;
+    let text = page["text"].as_str().unwrap_or("");
+    let text = text.split_once('\n').filter(|(head, _)| head.starts_with("[EXTERNAL_CONTENT_UNTRUSTED")).map(|(_, rest)| rest).unwrap_or(text);
+    Ok(json!({ "url": page["url"], "title": page["title"], "text": text }))
+}
+
 struct Browse;
 
 #[async_trait]

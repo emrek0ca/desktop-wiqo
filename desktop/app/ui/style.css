@@ -997,3 +997,38 @@ input:focus, textarea:focus, select:focus { border-color: var(--text3); box-shad
 .settings-rows { padding: 4px 18px; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; }
 .settings-row + .settings-row { border-top: 1px solid var(--line-soft); }
+
+/* Tariflerim (recipes.js) */
+.recipes .recipe-row { padding: 6px 0; }
+.recipe-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; padding: 4px 0; color: var(--ink); }
+.recipe-main .sf { color: var(--text2); flex: none; }
+.recipe-text { min-width: 0; }
+.recipe-text .w-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recipe-actions { display: flex; gap: 2px; flex: none; }
+.inline-form { display: flex; gap: 8px; margin-top: 10px; }
+.inline-form input { flex: 1; }
+.recipes-ideas { margin-bottom: 8px; }
+.recipe-idea { display: flex; align-items: center; gap: 8px; color: var(--ink); background: var(--fill); }
+.recipe-prompt { white-space: pre-wrap; }
+.recipe-steps { margin: 0; padding-left: 20px; color: var(--text2); display: flex; flex-direction: column; gap: 4px; }
+
+/* "Bir kez göster": the recording bar and the steps to read */
+.record-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 10px; max-width: min(760px, calc(100% - 32px));
+  background: var(--canvas); border: 1px solid var(--danger-edge); border-radius: 999px; padding: 6px 8px 6px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.18); }
+.record-bar .muted.small:not(#record-time) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.record-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger-text); animation: record-pulse 1.2s ease-in-out infinite; flex: none; }
+@keyframes record-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .record-dot { animation: none; } }
+.record-steps { max-height: 320px; overflow: auto; border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 4px 10px; }
+.record-step span { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text2); overflow-wrap: anywhere; }
+
+/* Ekran hafızası (memory.js) */
+#memory-exclude-form .grow { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+#memory-exclude-form input { width: 100%; }
+
+/* Wiqo Karnesi and polls (render.js) */
+.report-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.report-tile { background: var(--fill); border-radius: var(--r-sm); padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.report-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.report-label { font-size: 12.5px; color: var(--text2); }
+.poll-options { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--ink); }

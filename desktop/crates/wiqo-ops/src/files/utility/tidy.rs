@@ -33,6 +33,22 @@ pub(super) fn organize(ctx: &Context, request: &Request, limit: usize) -> Result
     let by_month = request.mode.as_deref() == Some("month");
     let mut moved: BTreeMap<String, usize> = BTreeMap::new();
     let (mut moves, mut made) = (Vec::new(), Vec::new());
+    if request.preview {
+        let mut planned = Vec::new();
+        let mut new_folders = std::collections::BTreeSet::new();
+        for file in regular_files(&folder, false, limit) {
+            let bucket = if by_month { date(modified(&file), "%Y-%m") } else { bucket_for(&extension_of(&file)).to_string() };
+            let destination = folder.join(&bucket);
+            if !destination.exists() {
+                new_folders.insert(destination.clone());
+            }
+            planned.push((file.clone(), destination.join(name_of(&file))));
+        }
+        if planned.is_empty() {
+            return Err(fail("NOTHING_TO_ORGANIZE", "Düzenlenecek dosya yok (alt klasörlerdekilere dokunulmaz)."));
+        }
+        return Ok(preview_of(&planned, &new_folders.into_iter().collect::<Vec<_>>()));
+    }
     for file in regular_files(&folder, false, limit) {
         let bucket = if by_month {
             date(modified(&file), "%Y-%m")
@@ -92,6 +108,7 @@ pub(super) fn batch_rename(ctx: &Context, request: &Request, limit: usize) -> Re
     files.sort_by_key(|path| modified(path));
     let width = files.len().to_string().len();
     let mut renamed: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut planned: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (index, file) in files.iter().enumerate() {
         let mut base = pattern
             .replace("{n}", &format!("{:0width$}", index + 1))
@@ -113,10 +130,20 @@ pub(super) fn batch_rename(ctx: &Context, request: &Request, limit: usize) -> Re
             Some(ext) if !ext.is_empty() => format!("{base}.{ext}"),
             _ => base,
         };
+        if request.preview {
+            planned.push((file.clone(), folder.join(name)));
+            continue;
+        }
         let destination = free_path(&folder.join(name));
         if fs::rename(file, &destination).is_ok() {
             renamed.push((destination, file.clone()));
         }
+    }
+    if request.preview {
+        if planned.is_empty() {
+            return Err(fail("RENAME_FAILED", "Yeniden adlandırılacak dosya yok."));
+        }
+        return Ok(preview_of(&planned, &[]));
     }
     if renamed.is_empty() {
         return Err(fail("RENAME_FAILED", "Yeniden adlandırılacak dosya yok."));

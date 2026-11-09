@@ -7577,6 +7577,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sysinfo",
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",

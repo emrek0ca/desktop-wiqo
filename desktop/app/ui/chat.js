@@ -812,5 +812,13 @@
   refreshAccount();
   render(true);
   // The Ajanlar page opens a teammate's direct chat here: it is Wiqo's own chat, the server resolves the agent from the conversation id.
-  window.WiqoChat = { open };
+  // A recipe goes into the composer to be read and sent by the person, never sent for them (recipes.js).
+  function compose(text) {
+    window.showSection("chat");
+    input.value = text;
+    autosize();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+  window.WiqoChat = { open, compose };
 })();

@@ -50,6 +50,9 @@ pub trait Observer: Send + Sync {
     /// Due automation steps the server handed over on this desktop's own question (`automationPull`): each in the chat's step shape, to run
     /// and answer with `automation_done`.
     fn automation(&self, _steps: Vec<(i64, Value)>) {}
+    /// Signed-in pages due for a check, handed over with the same answer (`{triggerId, kind, url, selector}`): read each in Wiqo's own browser
+    /// profile and answer with `watchObserved`. The server compares; nothing is decided here.
+    fn watches(&self, _watches: Vec<Value>) {}
     /// A command started (`key` is its relay id; `detail` a short line about what it touches) and, later, ended.
     /// `task` groups the commands of one task: the run id the server sends, or a terminal session's grant id.
     fn started(&self, _key: &str, _kind: &str, _detail: &str, _task: Option<&str>) {}
@@ -105,6 +108,7 @@ fn registration(runtime: &Runtime) -> Value {
         "applicationTargets": engine.application_targets(),
         "authorities": engine.authorities(),
         "cloudFolders": crate::cloud_folders::cloud_folders(),
+        "wake": crate::wake::wake_targets(),
     })
 }
 
@@ -112,8 +116,8 @@ enum Incoming {
     PairingRevoked(String),
     /// A frame from a phone, through the server's pipe (contracts/companion/frames.json).
     Frame(Value),
-    /// The answer to this desktop's `automationPull`.
-    AutomationSteps(Vec<(i64, Value)>),
+    /// The answer to this desktop's `automationPull`: due automation steps and due signed-in page checks.
+    AutomationSteps(Vec<(i64, Value)>, Vec<Value>),
     Ignored,
 }
 
@@ -131,6 +135,16 @@ fn parse_incoming(text: &str) -> Incoming {
                     steps
                         .iter()
                         .filter_map(|item| Some((item["stepId"].as_i64()?, item["step"].clone())))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            value["watches"]
+                .as_array()
+                .map(|watches| {
+                    watches
+                        .iter()
+                        .filter(|watch| watch["triggerId"].is_i64() && watch["url"].as_str().is_some_and(|url| url.starts_with("https://")))
+                        .cloned()
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -414,9 +428,12 @@ impl Relay {
 
     fn dispatch(&self, text: &str) {
         match parse_incoming(text) {
-            Incoming::AutomationSteps(steps) => {
+            Incoming::AutomationSteps(steps, watches) => {
                 if !steps.is_empty() {
                     self.observer.automation(steps);
+                }
+                if !watches.is_empty() {
+                    self.observer.watches(watches);
                 }
             }
             Incoming::Frame(frame) => {
@@ -569,11 +586,16 @@ mod frame_tests {
         match parse_incoming(
             r#"{"type":"automationSteps","steps":[{"stepId":4,"step":{"id":"c"}},{"step":{}}]}"#,
         ) {
-            Incoming::AutomationSteps(steps) => assert_eq!(
-                steps,
-                vec![(4, json!({ "id": "c" }))],
-                "a step without its id is dropped"
-            ),
+            Incoming::AutomationSteps(steps, watches) => {
+                assert_eq!(steps, vec![(4, json!({ "id": "c" }))], "a step without its id is dropped");
+                assert!(watches.is_empty());
+            }
+            _ => panic!("automationSteps"),
+        }
+        match parse_incoming(
+            r#"{"type":"automationSteps","steps":[],"watches":[{"triggerId":7,"kind":"page","url":"https://mhrs.gov.tr/"},{"triggerId":8,"url":"http://x.test"}]}"#,
+        ) {
+            Incoming::AutomationSteps(_, watches) => assert_eq!(watches.len(), 1, "only an https page with its trigger is read"),
             _ => panic!("automationSteps"),
         }
         assert_eq!(to_phone(json!({"kind":"ack"}), Some("a1"))["notify"], "a1");

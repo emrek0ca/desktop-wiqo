@@ -1,0 +1,30 @@
+{
+  "type": "card",
+  "widgetId": "card:report",
+  "kind": "report",
+  "title": "Wiqo Karnesi",
+  "period": "3–9 Kasım",
+  "stats": [
+    {
+      "label": "Biten iş",
+      "value": "14"
+    },
+    {
+      "label": "Kazanılan zaman",
+      "value": "3 sa 10 dk",
+      "detail": "iş başına tahmini süreyle"
+    },
+    {
+      "label": "PC'de düzenlenen dosya",
+      "value": "212"
+    },
+    {
+      "label": "Abonelik",
+      "value": "6",
+      "detail": "aylık 1.240 ₺"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Wiqo Karnesi"
+}

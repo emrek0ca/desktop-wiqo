@@ -133,6 +133,7 @@
           <div id="chat-empty" class="chat-empty">
             <span class="mark empty-logo"></span>
             <h2>Ne yapalım?</h2>
+            <div id="recipe-ideas" class="ideas recipes-ideas" hidden></div>
             <div class="ideas">
               <button class="idea">Masaüstündeki PDF'leri bir klasörde topla</button>
               <button class="idea">İndirilenler'de en büyük 10 dosyayı göster</button>
@@ -233,6 +234,42 @@
           <div class="card"><ul id="system-permissions" class="list perms"></ul></div>
         </section>
 
+        <section class="settings-section" id="recipes-section">
+          <div class="row-head">
+            <h3 class="settings-head">Tariflerim</h3>
+            <button id="record-open" class="secondary small"><span data-symbol="record.circle" data-size="13" data-weight="0"></span>Bir kez göster, öğreneyim</button>
+          </div>
+          <p class="muted small">Tek dokunuşla tekrar kullandığın istekler. Bir işi bilgisayarda bir kez yap, Wiqo izlesin ve tarife çevirsin; ya da sohbette "bunu tarif olarak kaydet" de.</p>
+          <div id="recipes-empty" class="card muted small" hidden>Henüz tarif yok.</div>
+          <div class="card"><ul id="recipes-list" class="list recipes"></ul></div>
+          <form id="recipe-import-form" class="inline-form">
+            <input id="recipe-code" type="text" maxlength="80" placeholder="Paylaşılan tarif kodu ya da bağlantısı" aria-label="Tarif kodu">
+            <button class="secondary small" type="submit">Kodla ekle</button>
+          </form>
+          <p id="recipes-error" class="error small" hidden></p>
+        </section>
+
+        <section class="settings-section" id="memory-section">
+          <h3 class="settings-head">Ekran hafızası</h3>
+          <div class="card settings-rows">
+            <label class="settings-row toggle-row">
+              <div><div>Bilgisayarda gördüklerimi hatırla</div><div class="muted small">Ekrandaki yazılar bu bilgisayarda saklanır (14 gün), hiçbir yere gönderilmez. "Geçen hafta gördüğüm tablo neydi?" diye sorabilirsin; yalnız bulunan kısa parça kullanılır. Gizli pencereler ve şifre yöneticileri hiç okunmaz.</div></div>
+              <input id="memory-enabled" type="checkbox" class="switch">
+            </label>
+            <div class="settings-row" id="memory-state-row" hidden>
+              <div><div id="memory-state" class="w-title">—</div><div id="memory-detail" class="muted small"></div></div>
+              <div class="hero-actions">
+                <button id="memory-pause" class="secondary small">Duraklat</button>
+                <button id="memory-forget" class="secondary small danger-text">Hepsini sil</button>
+              </div>
+            </div>
+            <form class="settings-row" id="memory-exclude-form" hidden>
+              <div class="grow"><div>Hiç okunmayacak uygulamalar</div><input id="memory-excluded" type="text" placeholder="Örn. Mail, WhatsApp" aria-label="Okunmayacak uygulamalar"></div>
+              <button class="secondary small" type="submit">Kaydet</button>
+            </form>
+          </div>
+        </section>
+
         <section class="settings-section">
           <h3 class="settings-head">Rutinler</h3>
           <div id="agents-empty" class="card muted small" hidden>Henüz bir şey yok. Wiqo'ya “yarın 11'de toplantıyı hatırlat” de; burada görünür.</div>
@@ -292,6 +329,41 @@
     </form>
   </div>
 
+  <!-- "Bir kez göster": the recording in progress, then its steps to read before they leave the computer. -->
+  <div id="record-bar" class="record-bar" hidden>
+    <span class="record-dot"></span><span>Wiqo izliyor</span><span id="record-time" class="muted small">0:00</span>
+    <span class="muted small">İşi bir kez baştan sona yap. Yazdığın tuşlar ve panodaki metin kaydedilmez.</span>
+    <span class="spacer"></span>
+    <button id="record-cancel" class="link small">Vazgeç</button>
+    <button id="record-stop" class="primary small">Bitir</button>
+  </div>
+  <div id="record-review" class="modal" hidden>
+    <form id="record-review-form" class="modal-card">
+      <h2>Wiqo bunları gördü</h2>
+      <p class="muted small">Bu adımlar tarife çevrilmek için sunucuya gider; ekranın kendisi, yazdıkların ve dosyaların içeriği gitmez. İstemediğin satırı çıkar.</p>
+      <ul id="record-steps" class="list record-steps"></ul>
+      <textarea id="record-note" rows="2" maxlength="400" placeholder="Bu iş ne için? (isteğe bağlı, ör. &quot;her ay faturayı indirip muhasebe klasörüne koyuyorum&quot;)"></textarea>
+      <p id="record-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button id="record-discard" type="button" class="secondary">Vazgeç</button>
+        <button id="record-save" type="submit" class="primary">Tarife çevir</button>
+      </div>
+    </form>
+  </div>
+  <div id="recipe-preview" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="recipe-preview-title">Tarif</h2>
+      <p id="recipe-preview-prompt" class="muted recipe-prompt"></p>
+      <ol id="recipe-preview-steps" class="recipe-steps"></ol>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button id="recipe-preview-cancel" class="secondary">Vazgeç</button>
+        <button id="recipe-preview-add" class="primary">Tariflerime ekle</button>
+      </div>
+    </div>
+  </div>
+
     <!-- The phone bubble: the QR code when no phone is linked, the linked phones otherwise. -->
   <div id="phones-pop" class="phones-pop" hidden></div>
 
@@ -307,5 +379,7 @@
   <script src="voice.js"></script>
   <script src="agents.js"></script>
   <script src="threads.js"></script>
+  <script src="recipes.js"></script>
+  <script src="memory.js"></script>
 </body>
 </html>
