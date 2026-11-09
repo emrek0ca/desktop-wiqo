@@ -622,6 +622,51 @@
     return row;
   }
 
+  // Apps that fit the request (backend apps/suggest.ts), as the phone's WiqoAppOfferCard: "Bağlan" opens the sign-in in the browser and, once it
+  // succeeds, asks the same thing again through the app; "Kullan" asks it again through the app now. Shown on the latest reply only.
+  function appSuggestion(widget, ctx) {
+    if (!ctx.latest) return null;
+    const { listen } = window.__TAURI__.event;
+    const list = el("div", "w-apps");
+    for (const offer of (widget.apps || []).slice(0, 2)) {
+      const row = el("div", "w-app-offer");
+      const text = el("div", "w-titles");
+      text.append(el("div", "w-title", offer.name), el("div", "w-sub", offer.does));
+      const actions = el("div", "w-actions");
+      const go = button({ use: "Kullan", reconnect: "Yeniden bağlan" }[offer.mode] || "Bağlan", "secondary small", async () => {
+        if (offer.mode === "use") {
+          if (offer.prompt) ctx.send?.(offer.prompt);
+          row.remove();
+          return;
+        }
+        go.disabled = true;
+        actions.replaceChildren(el("span", "w-sub", "Tarayıcıda bağlanıyor…"));
+        const stop = await listen("connector-result", (message) => {
+          stop();
+          if (message.payload.status === "error") {
+            actions.replaceChildren(el("span", "error small", message.payload.message || "Bağlantı tamamlanamadı."));
+            return;
+          }
+          row.remove();
+          ctx.send?.(`${offer.name} bağlandı, isteğimi şimdi ${offer.name} ile yap.`);
+        });
+        try {
+          await invoke("connector_connect", { provider: offer.id });
+        } catch (error) {
+          stop();
+          actions.replaceChildren(el("span", "error small", String(error)));
+        }
+      });
+      const close = button("", "icon-button", () => row.remove());
+      close.append(icon("xmark", 12));
+      close.setAttribute("aria-label", "Kapat");
+      actions.append(go, close);
+      row.append(window.WiqoApps?.logo({ id: offer.id, name: offer.name }, "small") ?? el("span"), text, actions);
+      list.append(row);
+    }
+    return list.childElementCount ? list : null;
+  }
+
   function listWidget(widget) {
     const ICONS = { mail: "envelope", calendar: "calendar", drive: "folder", notion: "doc.text", contacts: "person.crop.circle", files: "folder", tasks: "checklist" };
     const rows = (widget.items || []).map((item) => ({
@@ -896,13 +941,13 @@
     return box;
   }
 
-  function undoCard(widget, kind, ctx) {
+  function undoCard(widget) {
     const box = card(widget.title || "Değişiklik yapıldı", widget.summary || (widget.fileCount ? `${widget.fileCount} dosya` : ""), "arrow.uturn.backward");
     const actions = el("div", "w-actions");
     actions.append(button("Geri al", "secondary", async () => {
       actions.replaceChildren(el("span", "w-sub", "Geri alınıyor…"));
       try {
-        actions.replaceChildren(pill(await invoke("undo_record", { kind, id: widget.undoId }), "success"));
+        actions.replaceChildren(pill(await invoke("undo_record", { id: widget.undoId }), "success"));
       } catch (error) {
         actions.replaceChildren(el("span", "error small", String(error)));
       }
@@ -1033,14 +1078,30 @@
       case "sources": return sources(item);
       case "artifact": return artifactCard(item, ctx);
       case "task_plan": return taskPlan(item);
+      // As the phone's taskResultCard: what is done out of how many, so a partial result never reads as a finished one.
       case "task_result": {
-        const box = card(item.title || "Görev", statusLabel(item.taskStatus || item.status));
-        if (item.summary || item.detail) box.append(markdown(item.summary || item.detail));
+        const done = Math.max(0, item.completedSteps || 0);
+        const total = Math.max(done, item.totalSteps || done);
+        const status = item.taskStatus || "completed";
+        const icons = { browser: "safari", desktop: "laptopcomputer", backend: "checkmark" };
+        const box = card(item.title || "Görev", item.summary || `${done}/${total} adım tamamlandı`, icons[item.capability] || "laptopcomputer");
+        const meta = el("div", "w-actions");
+        meta.append(pill({ completed: "Tamamlandı", partial: "Kısmen tamamlandı" }[status] || "Tamamlanamadı", { completed: "success", partial: "warning" }[status] || "danger"));
+        if (status !== "completed" && total > 0) {
+          meta.append(el("span", "w-sub small", `${done}/${total} adım · ${total - done} kaldı`));
+          const bar = el("div", "progress");
+          const fill = el("div", "progress-fill");
+          fill.style.width = `${Math.round((done / total) * 100)}%`;
+          bar.append(fill);
+          box.append(bar);
+        }
+        box.append(meta);
         return box;
       }
       case "approval": return approval(item, ctx);
       case "clarification": return clarification(item, ctx);
       case "suggestions": return suggestions(item, ctx);
+      case "app_suggestion": return appSuggestion(item, ctx);
       case "error": {
         const box = callout(item.message || "Bir hata oluştu.", "warning");
         if (item.retryable && ctx.latest && ctx.retry) box.append(button("Tekrar dene", "secondary small", () => ctx.retry()));
@@ -1052,8 +1113,7 @@
       case "card": return smallCard(item, ctx);
       case "workspace": return workspaceCard(item);
       case "inline_app": return inlineApp(item);
-      case "terminal_undo": return undoCard(item, "terminal", ctx);
-      case "file_undo": return undoCard(item, "file", ctx);
+      case "file_undo": return undoCard(item);
       case "act_handoff": return card(item.title || item.projectName || "Act projesi", item.summary || "Bu iş telefondaki Wiqo'nun Act bölümünde devam eder.", "hammer");
       // A quiet action seen instead of read ("Görev eklendi · Süt al"): the icon says what kind, the check says it is done.
       case "receipt": {

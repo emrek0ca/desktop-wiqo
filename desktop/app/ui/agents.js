@@ -109,6 +109,6 @@
   }
 
   window.addEventListener("wiqo-section", (event) => {
-    if (event.detail === "agents") load();
+    if (event.detail === "settings") load();
   });
 })();

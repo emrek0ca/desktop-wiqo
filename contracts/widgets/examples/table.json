@@ -1,0 +1,26 @@
+{
+  "type": "table",
+  "widgetId": "table:sample",
+  "title": "Satışlar",
+  "columns": [
+    "Ay",
+    "Adet",
+    "Ciro"
+  ],
+  "rows": [
+    [
+      "Eylül",
+      "120",
+      "48.000"
+    ],
+    [
+      "Ekim",
+      "142",
+      "56.800"
+    ]
+  ],
+  "totalRows": 12,
+  "version": 1,
+  "state": "ready",
+  "summary": "Satışlar"
+}

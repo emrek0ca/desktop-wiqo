@@ -1,0 +1,11 @@
+{
+  "type": "suggestions",
+  "suggestions": [
+    "Bunu PDF yap",
+    "Telefonuma gönder",
+    "Yarın tekrar hatırlat"
+  ],
+  "widgetId": "suggestions",
+  "version": 1,
+  "state": "ready"
+}

@@ -1,0 +1,12 @@
+{
+  "type": "map",
+  "widgetId": "map:sample",
+  "mode": "route",
+  "title": "Kadıköy → Beşiktaş",
+  "origin": "Kadıköy",
+  "destination": "Beşiktaş",
+  "transport": "transit",
+  "version": 1,
+  "state": "ready",
+  "summary": "Kadıköy → Beşiktaş"
+}

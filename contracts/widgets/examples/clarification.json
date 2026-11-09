@@ -1,0 +1,14 @@
+{
+  "type": "clarification",
+  "widgetId": "question:task-1:folder",
+  "taskId": "task-1",
+  "questionId": "task-1:folder",
+  "question": "Hangi klasördeki faturalar?",
+  "options": [
+    "İndirilenler",
+    "Masaüstü",
+    "Belgeler"
+  ],
+  "version": 1,
+  "state": "active"
+}

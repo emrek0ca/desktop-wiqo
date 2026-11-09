@@ -56,11 +56,11 @@ const AUTOMATION: [(&str, &str); 7] = [
 pub fn for_error(code: &str) -> Option<&'static str> {
     match code {
         "SCREEN_RECORDING_PERMISSION_REQUIRED" => Some("screen"),
-        "ACCESSIBILITY_PERMISSION" | "ACCESSIBILITY_PERMISSION_REQUIRED" => Some("accessibility"),
+        "ACCESSIBILITY_PERMISSION_REQUIRED" => Some("accessibility"),
         "FULL_DISK_ACCESS_REQUIRED" => Some("folders"),
         "LOCATION_PERMISSION_REQUIRED" => Some("location"),
         code if code.ends_with("_PERMISSION_DENIED")
-            || code == "AUTOMATION_PERMISSION"
+            || code == "AUTOMATION_PERMISSION_REQUIRED"
             || code == "SHORTCUT_PERMISSION_REQUIRED" =>
         {
             Some("automation")

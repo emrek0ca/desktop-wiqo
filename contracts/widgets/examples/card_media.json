@@ -1,0 +1,11 @@
+{
+  "type": "card",
+  "widgetId": "card:media",
+  "kind": "media",
+  "title": "Odaklanma listesi",
+  "service": "spotify",
+  "query": "lofi focus",
+  "version": 1,
+  "state": "ready",
+  "summary": "Odaklanma listesi"
+}

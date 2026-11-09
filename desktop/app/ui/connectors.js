@@ -130,6 +130,9 @@
     }
   }
 
+  // The chat's app tiles (render.js, app_suggestion) wear the same logos.
+  window.WiqoApps = { logo };
+
   window.addEventListener("wiqo-section", (event) => { if (event.detail === "apps") load(); });
   window.addEventListener("focus", () => { if (document.body.dataset.section === "apps") load(); });
   listen("connector-result", (message) => {

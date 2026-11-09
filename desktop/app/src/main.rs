@@ -75,12 +75,6 @@ fn cancel_pairing(app: State<'_, App>) -> Reply<()> {
 }
 
 #[tauri::command]
-fn set_capability(app: State<'_, App>, id: String, enabled: bool) -> Reply<Snapshot> {
-    app.desktop.set_capability(&id, enabled).map_err(text)?;
-    Ok(app.desktop.snapshot())
-}
-
-#[tauri::command]
 async fn remove_phone(app: State<'_, App>, pairing_id: String) -> Reply<Snapshot> {
     app.desktop.remove_phone(&pairing_id).await.map_err(text)?;
     Ok(app.desktop.snapshot())
@@ -504,10 +498,10 @@ fn symbol(name: String, size: f64, weight: Option<f64>) -> Option<String> {
     ))
 }
 
-/// "Geri al" on a chat card.
+/// "Geri al" on a chat card (file_undo).
 #[tauri::command]
-fn undo_record(app: State<'_, App>, kind: String, id: String) -> Reply<String> {
-    app.desktop.undo_record(&kind, &id).map_err(text)
+fn undo_record(app: State<'_, App>, id: String) -> Reply<String> {
+    app.desktop.undo_record(&id).map_err(text)
 }
 
 #[tauri::command]
@@ -968,7 +962,6 @@ fn main() {
             snapshot,
             start_pairing,
             cancel_pairing,
-            set_capability,
             remove_phone,
             set_connected,
             stop_work,

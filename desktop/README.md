@@ -10,7 +10,7 @@ Decisions: UI is **Tauri 2**; phones connect through the relay **and** directly 
 crates/
   wiqo-contract/   the wire contract: operations, error codes, canonical JSON, signatures        (R1)
   wiqo-core/       relay, pairing, signature checks, execution gate, ledger, storage             (R2)
-  wiqo-ops/        the operations a desktop runs: 32 of the 36 shared ones (R3)
+  wiqo-ops/        the operations a desktop runs: each one operations.json lists for its platform (R3)
   wiqo-agent/      the headless process: `pair`, `run`, `status`, `full-access on|off`           (R2)
 ```
 The Tauri app joins in R6.

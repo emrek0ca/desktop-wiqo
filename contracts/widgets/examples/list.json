@@ -1,0 +1,26 @@
+{
+  "type": "list",
+  "widgetId": "list:mail:sample",
+  "domain": "mail",
+  "title": "Okunmamış e-postalar",
+  "total": 5,
+  "items": [
+    {
+      "id": "m1",
+      "title": "Fatura hazır",
+      "subtitle": "Turkcell",
+      "detail": "Kasım faturanız 412,50 TL.",
+      "meta": "09:12"
+    },
+    {
+      "id": "m2",
+      "title": "Toplantı saati değişti",
+      "subtitle": "Ayşe Yılmaz",
+      "meta": "Dün",
+      "badge": "Önemli"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Okunmamış e-postalar"
+}

@@ -1,0 +1,9 @@
+{
+  "type": "card",
+  "widgetId": "card:stopwatch",
+  "kind": "stopwatch",
+  "title": "Kronometre",
+  "version": 1,
+  "state": "ready",
+  "summary": "Kronometre"
+}

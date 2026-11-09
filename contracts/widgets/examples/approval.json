@@ -1,0 +1,10 @@
+{
+  "type": "approval",
+  "widgetId": "approval:conf-1",
+  "confirmationId": "conf-1",
+  "title": "E-posta gönderilsin mi?",
+  "summary": "Ayşe'ye \"Toplantı notları\" konulu e-posta gönderilecek.",
+  "expiresAt": "2026-11-08T09:10:00.000Z",
+  "version": 1,
+  "state": "active"
+}

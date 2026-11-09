@@ -1,0 +1,10 @@
+{
+  "type": "card",
+  "widgetId": "card:contact",
+  "kind": "contact",
+  "title": "Ayşe Yılmaz",
+  "contactQuery": "Ayşe Yılmaz",
+  "version": 1,
+  "state": "ready",
+  "summary": "Ayşe Yılmaz"
+}

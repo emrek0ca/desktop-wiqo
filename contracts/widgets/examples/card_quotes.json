@@ -1,0 +1,31 @@
+{
+  "type": "card",
+  "widgetId": "card:quotes",
+  "kind": "quotes",
+  "title": "Piyasalar",
+  "quotes": [
+    {
+      "symbol": "USDTRY",
+      "name": "Dolar",
+      "price": 41.2,
+      "changePercent": 0.3,
+      "unit": "₺",
+      "series": [
+        40.9,
+        41,
+        41.1,
+        41.2
+      ]
+    },
+    {
+      "symbol": "XAU",
+      "name": "Altın",
+      "price": 3410,
+      "changePercent": -0.8,
+      "unit": "$"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Piyasalar"
+}

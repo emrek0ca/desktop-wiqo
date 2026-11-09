@@ -3,7 +3,6 @@
 //!   wiqo-agent pair                   show a pairing code for a phone to scan and wait for the phone
 //!   wiqo-agent run                    connect to the server and run the commands that arrive
 //!   wiqo-agent status                 what this desktop is, who it is paired with, what it can do
-//!   wiqo-agent full-access on|off     let the server's PC agent run commands here without asking the phone each time
 //!   wiqo-agent selftest [--app NAME]  run every everyday tool for real on this computer (a scratch folder on the Desktop) and report each one
 
 use anyhow::{bail, Result};
@@ -65,14 +64,6 @@ async fn main() -> Result<()> {
                     phone.name, phone.platform, phone.pairing_id
                 );
             }
-            println!(
-                "abilities   {}",
-                info.capabilities
-                    .iter()
-                    .map(|capability| capability.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
         }
         Command::Pair => {
             let offer = desktop.start_pairing().await?;

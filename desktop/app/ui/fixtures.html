@@ -1,0 +1,66 @@
+<!doctype html>
+<!--
+  Every chat card the server sends (contracts/widgets/examples, written by the backend's `npm run contracts:api`), drawn by this app's own
+  render.js: the same files the iPhone draws in CopilotResultWidgetView's "Kart örnekleri" preview, so a card that differs shows up side by side.
+  Open it from a static server at the repo root (the folder listing names the files):
+    python3 -m http.server -d ~/Desktop/desktop-wiqo 8765   →   http://localhost:8765/desktop/app/ui/fixtures.html
+  Buttons do nothing here (no Tauri); dark theme follows the system.
+-->
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wiqo kart örnekleri</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { overflow: auto; height: auto; }
+    .fixtures { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; display: flex; flex-direction: column; gap: 22px; }
+    .fixture-name { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); margin-bottom: 6px; }
+    .fixture-missing { color: var(--danger-text); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main class="fixtures" id="fixtures"></main>
+  <script>
+    // render.js reaches the app through Tauri; here every call answers "not in the preview".
+    window.__TAURI__ ??= {
+      core: { invoke: async (command) => { throw new Error(`${command}: önizlemede yok`); } },
+      event: { listen: async () => () => {} },
+    };
+  </script>
+  <script src="icons.js"></script>
+  <script src="labels.js"></script>
+  <script src="render.js"></script>
+  <script src="connectors.js"></script>
+  <script>
+    (async () => {
+      const folder = "../../../contracts/widgets/examples/";
+      const root = document.getElementById("fixtures");
+      const listing = await (await fetch(folder)).text();
+      const names = [...new Set([...listing.matchAll(/href="([a-z_]+)\.json"/g)].map((match) => match[1]))].sort();
+      const ctx = { latest: true, send: (text) => console.log("send", text), answer: () => {}, retry: () => {}, toast: () => {} };
+      for (const name of names) {
+        const item = await (await fetch(`${folder}${name}.json`)).json();
+        const section = document.createElement("section");
+        const label = document.createElement("div");
+        label.className = "fixture-name";
+        label.textContent = name;
+        const message = document.createElement("div");
+        message.className = "msg assistant";
+        const node = window.WiqoRender.widget(item, ctx);
+        if (node) message.append(node);
+        else {
+          const missing = document.createElement("div");
+          missing.className = "fixture-missing";
+          missing.textContent = `Bu kart masaüstünde çizilmiyor (${item.type})`;
+          message.append(missing);
+        }
+        section.append(label, message);
+        root.append(section);
+      }
+      document.body.dataset.ready = String(names.length);
+    })();
+  </script>
+</body>
+</html>

@@ -5,7 +5,6 @@ pub const INVALID_SIGNATURE: &str = "INVALID_SIGNATURE";
 pub const SIGNATURE_VERSION_REQUIRED: &str = "SIGNATURE_VERSION_REQUIRED";
 pub const COMMAND_TIMEOUT: &str = "COMMAND_TIMEOUT";
 pub const UNSUPPORTED_OPERATION: &str = "UNSUPPORTED_OPERATION";
-pub const CAPABILITY_DISABLED: &str = "CAPABILITY_DISABLED";
 pub const INVALID_PAYLOAD: &str = "INVALID_PAYLOAD";
 pub const OUTCOME_UNKNOWN: &str = "OUTCOME_UNKNOWN";
 /// The person refused (or did not answer) a step that needed their yes.
@@ -23,7 +22,6 @@ mod tests {
             SIGNATURE_VERSION_REQUIRED,
             COMMAND_TIMEOUT,
             UNSUPPORTED_OPERATION,
-            CAPABILITY_DISABLED,
             INVALID_PAYLOAD,
             OUTCOME_UNKNOWN,
             DENIED_ON_PC,

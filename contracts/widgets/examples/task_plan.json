@@ -1,0 +1,35 @@
+{
+  "type": "task_plan",
+  "widgetId": "plan:task-1",
+  "taskId": "task-1",
+  "title": "Faturaları topla ve gönder",
+  "planSteps": [
+    {
+      "id": "s1",
+      "title": "İndirilenler'de faturaları bul",
+      "expectedResult": "PDF listesi",
+      "dependsOn": [],
+      "status": "verified"
+    },
+    {
+      "id": "s2",
+      "title": "Tek PDF'te birleştir",
+      "expectedResult": "Faturalar.pdf",
+      "dependsOn": [
+        "s1"
+      ],
+      "status": "running",
+      "message": "%45 · ~20 sn kaldı"
+    },
+    {
+      "id": "s3",
+      "title": "Telefona gönder",
+      "expectedResult": "Dosya telefonda",
+      "dependsOn": [
+        "s2"
+      ],
+      "status": "pending"
+    }
+  ],
+  "version": 1
+}

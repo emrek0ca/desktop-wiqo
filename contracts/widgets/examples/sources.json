@@ -1,0 +1,17 @@
+{
+  "type": "sources",
+  "widgetId": "sources:sample",
+  "sources": [
+    {
+      "title": "Merkez Bankası faiz kararı",
+      "url": "https://www.tcmb.gov.tr/",
+      "published": "2026-11-07"
+    },
+    {
+      "url": "https://example.com/analiz"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "2 kaynak"
+}

@@ -1,0 +1,12 @@
+{
+  "type": "act_handoff",
+  "widgetId": "act:sample",
+  "title": "Kafe sitesi",
+  "request": "Kafem için menülü tek sayfalık bir site yap",
+  "operation": "create",
+  "projectKind": "web",
+  "projectName": "Kafe sitesi",
+  "version": 1,
+  "state": "ready",
+  "summary": "Kafe sitesi"
+}

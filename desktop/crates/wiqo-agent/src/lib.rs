@@ -17,7 +17,7 @@ use base64::Engine as _;
 use serde::Serialize;
 use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
-use wiqo_contract::{Manifest, Platform};
+use wiqo_contract::Platform;
 use wiqo_core::api::{Api, PollResult};
 use wiqo_core::engine::{Engine, Services};
 use wiqo_core::ledger::Ledger;
@@ -185,15 +185,6 @@ fn undo_refs(result: &CommandResult) -> Vec<UndoRef> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Capability {
-    pub id: String,
-    pub enabled: bool,
-    /// The operations behind this capability need the phone's confirmation each time.
-    pub asks: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PhoneInfo {
     pub pairing_id: String,
     pub name: String,
@@ -214,7 +205,6 @@ pub struct Snapshot {
     pub phones: Vec<PhoneInfo>,
     /// The signed-in Wiqo account, if any.
     pub account: Option<String>,
-    pub capabilities: Vec<Capability>,
     pub activity: Vec<Activity>,
 }
 
@@ -1044,20 +1034,13 @@ impl Desktop {
         }
     }
 
-    /// The "Geri al" on a chat card: a file change or a terminal session's edit by its record id.
-    pub fn undo_record(&self, kind: &str, id: &str) -> Result<String> {
-        let services = self.runtime.engine.services().clone();
-        let outcome = match kind {
-            "terminal" => wiqo_ops::terminal::undo_recorded(&services, id),
-            _ => {
-                let context = wiqo_core::engine::Context {
-                    command_id: uuid::Uuid::new_v4(),
-                    services,
-                };
-                wiqo_ops::undo_file(&context, id)
-            }
+    /// The "Geri al" on a chat card (file_undo): a file change by its record id. A terminal edit is undone from the activity list (`undo`).
+    pub fn undo_record(&self, id: &str) -> Result<String> {
+        let context = wiqo_core::engine::Context {
+            command_id: uuid::Uuid::new_v4(),
+            services: self.runtime.engine.services().clone(),
         };
-        outcome.map_err(|error| anyhow::anyhow!(error.message))
+        wiqo_ops::undo_file(&context, id).map_err(|error| anyhow::anyhow!(error.message))
     }
 
     /// The answer to a "PC'de onayla" card, clicked in this computer's panel.
@@ -1229,23 +1212,6 @@ impl Desktop {
 
     pub fn snapshot(&self) -> Snapshot {
         let engine = &self.runtime.engine;
-        let settings = engine.settings();
-        let manifest = Manifest::get();
-        let mut capabilities: Vec<Capability> = engine
-            .capabilities()
-            .into_iter()
-            .map(|id| {
-                let asks = manifest.operations().iter().any(|operation| {
-                    operation.capability == id && operation.requires_user_presence
-                });
-                Capability {
-                    enabled: settings.capability_enabled(&id),
-                    asks,
-                    id,
-                }
-            })
-            .collect();
-        capabilities.sort_by(|a, b| a.id.cmp(&b.id));
         Snapshot {
             device_name: self.runtime.identity.display_name.clone(),
             device_id: self.runtime.identity.device_id.clone(),
@@ -1271,7 +1237,6 @@ impl Desktop {
                 })
                 .collect(),
             account: self.chat.email(),
-            capabilities,
             activity: self
                 .shared
                 .activity
@@ -1281,18 +1246,6 @@ impl Desktop {
                 .cloned()
                 .collect(),
         }
-    }
-
-    pub fn set_capability(&self, id: &str, enabled: bool) -> Result<()> {
-        self.runtime.engine.settings().update(|data| {
-            if enabled {
-                data.disabled_capabilities.remove(id);
-            } else {
-                data.disabled_capabilities.insert(id.to_string());
-            }
-        })?;
-        self.reannounce();
-        Ok(())
     }
 
     /// Opens a pairing session on the server and returns the code to show (as text and as a QR picture).

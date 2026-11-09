@@ -17,6 +17,11 @@
       "effect": "none",
       "recovery": "stop"
     },
+    "ALREADY_EXISTS": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "APPLICATION_ACTION_UNAVAILABLE": {
       "blocked": false,
       "effect": "none",
@@ -37,17 +42,7 @@
       "effect": "none",
       "recovery": null
     },
-    "APPLICATION_CATALOG_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "APPLICATION_FORCE_QUIT_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
-    "APPLICATION_NEW_TAB_FAILED": {
       "blocked": false,
       "effect": "partial",
       "recovery": null
@@ -77,11 +72,6 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "APPLICATION_SELF_PROTECTED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "APPLICATION_SYSTEM_PROTECTED": {
       "blocked": true,
       "effect": "none",
@@ -96,6 +86,11 @@
       "blocked": false,
       "effect": "uncertain",
       "recovery": "stop"
+    },
+    "ARCHIVE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
     },
     "ARTIFACT_DOWNLOAD_FAILED": {
       "blocked": false,
@@ -112,17 +107,7 @@
       "effect": "none",
       "recovery": null
     },
-    "AUDIO_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "AUTHORITY_REQUIRED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
-    "AUTH_REQUIRED": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
@@ -132,21 +117,6 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "AUTOMATION_PROBE_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
-    "AUTOMATION_STEP_BLOCKED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
-    "AUTOMATION_TARGET_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "BACKEND_AUTH_REQUIRED": {
       "blocked": true,
       "effect": "none",
@@ -155,6 +125,11 @@
     "BACKUP_FAILED": {
       "blocked": false,
       "effect": "partial",
+      "recovery": null
+    },
+    "BATTERY_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
       "recovery": null
     },
     "BRIGHTNESS_FAILED": {
@@ -317,30 +292,85 @@
       "effect": "partial",
       "recovery": "retry_once"
     },
-    "CALENDAR_NOT_FOUND": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "CALENDAR_PERMISSION_DENIED": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
+    },
+    "CALENDAR_READ_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
     },
     "CALENDAR_SAVE_FAILED": {
       "blocked": false,
       "effect": "partial",
       "recovery": null
     },
-    "CAPABILITY_DISABLED": {
+    "CALENDAR_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "CANVA_ARGS_MISMATCH": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "alternative"
+    },
+    "CANVA_DESIGN_UNKNOWN": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_EDIT_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_EDIT_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_FIELDS_UNKNOWN": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_JOB_RUNNING": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CANVA_LICENSE_REQUIRED": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
     },
-    "CLIPBOARD_BUSY": {
+    "CANVA_NO_BACKUP": {
       "blocked": false,
-      "effect": "partial",
-      "recovery": "retry_once"
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_PLAN_REQUIRED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "CANVA_TEMPLATE_UNKNOWN": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_TOOL_ERROR": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "CANVA_TOOL_MISSING": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": "alternative"
     },
     "CLIPBOARD_EMPTY": {
       "blocked": false,
@@ -351,11 +381,6 @@
       "blocked": false,
       "effect": "partial",
       "recovery": null
-    },
-    "CLIPBOARD_NOT_VERIFIED": {
-      "blocked": false,
-      "effect": "uncertain",
-      "recovery": "stop"
     },
     "CODE_FAILED": {
       "blocked": false,
@@ -377,6 +402,16 @@
       "effect": "uncertain",
       "recovery": "stop"
     },
+    "COMPRESS_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "CONTEXT_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "CONVERT_FAILED": {
       "blocked": false,
       "effect": "partial",
@@ -385,6 +420,11 @@
     "CREATE_FOLDER_FAILED": {
       "blocked": false,
       "effect": "partial",
+      "recovery": null
+    },
+    "DARK_MODE_FAILED": {
+      "blocked": false,
+      "effect": "none",
       "recovery": null
     },
     "DELIVERY_FAILED": {
@@ -427,11 +467,6 @@
       "effect": "none",
       "recovery": null
     },
-    "DESKTOP_CANCELLED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "DESKTOP_HOTKEY_BLOCKED": {
       "blocked": true,
       "effect": "none",
@@ -441,11 +476,6 @@
       "blocked": false,
       "effect": "none",
       "recovery": "retry_once"
-    },
-    "DESKTOP_LIST_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
     },
     "DESKTOP_OBSERVATION_REQUIRED": {
       "blocked": false,
@@ -497,20 +527,15 @@
       "effect": "none",
       "recovery": "observe"
     },
-    "DESKTOP_TASK_INVALID": {
+    "DESKTOP_TARGET_REQUIRED": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
-    "DESKTOP_TYPE_FAILED": {
+    "DESKTOP_TASK_INVALID": {
       "blocked": false,
-      "effect": "partial",
+      "effect": "none",
       "recovery": null
-    },
-    "DESKTOP_TYPE_INTERRUPTED": {
-      "blocked": true,
-      "effect": "uncertain",
-      "recovery": "stop"
     },
     "DESKTOP_TYPE_UNVERIFIED": {
       "blocked": false,
@@ -542,6 +567,16 @@
       "effect": "partial",
       "recovery": null
     },
+    "DIRECTORY_CREATE_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DISKS_UNAVAILABLE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "DISPLAY_FAILED": {
       "blocked": false,
       "effect": "partial",
@@ -552,17 +587,27 @@
       "effect": "none",
       "recovery": null
     },
-    "DISPLAY_SLEEP_FAILED": {
+    "DOCUMENT_CONVERSION_FAILED": {
       "blocked": false,
       "effect": "partial",
       "recovery": null
     },
-    "DISPLAY_UNAVAILABLE": {
+    "DOCUMENT_ENGINE_UNAVAILABLE": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
-    "DOCUMENT_EMPTY": {
+    "DOCUMENT_LIMIT": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_NOT_REGULAR": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_OCR_REQUIRED": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -570,6 +615,16 @@
     "DOCUMENT_PARSE_FAILED": {
       "blocked": false,
       "effect": "partial",
+      "recovery": null
+    },
+    "DOCUMENT_READ_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_TEXT_TOO_LARGE": {
+      "blocked": false,
+      "effect": "none",
       "recovery": null
     },
     "DOCUMENT_TOO_LARGE": {
@@ -580,6 +635,11 @@
     "DOCUMENT_UNSUPPORTED": {
       "blocked": false,
       "effect": "none",
+      "recovery": null
+    },
+    "DOCUMENT_WRITE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
       "recovery": null
     },
     "DUPLICATE_LOCAL_DEVICE_ATTEMPT": {
@@ -602,19 +662,19 @@
       "effect": "partial",
       "recovery": null
     },
-    "EMAIL_UNAVAILABLE": {
+    "EMAIL_TIMEOUT": {
       "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
-    "EXECUTION_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
+      "effect": "uncertain",
+      "recovery": "stop"
     },
     "EXPIRED_REQUEST": {
       "blocked": false,
       "effect": "none",
+      "recovery": null
+    },
+    "EXTRACT_FAILED": {
+      "blocked": false,
+      "effect": "partial",
       "recovery": null
     },
     "FILE_COPY_FAILED": {
@@ -626,11 +686,6 @@
       "blocked": false,
       "effect": "partial",
       "recovery": null
-    },
-    "FILE_DELETE_UNVERIFIED": {
-      "blocked": false,
-      "effect": "uncertain",
-      "recovery": "stop"
     },
     "FILE_EXISTS": {
       "blocked": false,
@@ -712,7 +767,17 @@
       "effect": "none",
       "recovery": "stop"
     },
+    "INSPECT_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "INVALID_APPLICATION_NAME": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_ARTIFACT_TARGET": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -722,17 +787,7 @@
       "effect": "none",
       "recovery": null
     },
-    "INVALID_COMMAND_ID": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "INVALID_CURSOR": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
-    "INVALID_DEVICE": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -742,15 +797,25 @@
       "effect": "none",
       "recovery": null
     },
-    "INVALID_FILENAME": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
     "INVALID_FILE_PATH": {
       "blocked": false,
       "effect": "none",
       "recovery": "alternative"
+    },
+    "INVALID_FOLDER": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_NAME": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "INVALID_PATH": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
     },
     "INVALID_PAYLOAD": {
       "blocked": false,
@@ -767,22 +832,12 @@
       "effect": "none",
       "recovery": null
     },
-    "INVALID_TOKEN": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "INVALID_TOOL_ARGUMENTS": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
     "INVALID_URL": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
-    "INVALID_WORKING_DIRECTORY": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -807,20 +862,10 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "LOCK_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
     "LOCK_PERMISSION_DENIED": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
-    },
-    "LOCK_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
     },
     "MEDIA_FAILED": {
       "blocked": false,
@@ -832,9 +877,9 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "MEDIA_UNAVAILABLE": {
+    "MERGE_FAILED": {
       "blocked": false,
-      "effect": "none",
+      "effect": "partial",
       "recovery": null
     },
     "MESSAGE_PERMISSION_DENIED": {
@@ -847,22 +892,22 @@
       "effect": "partial",
       "recovery": null
     },
-    "MESSAGE_UNAVAILABLE": {
+    "MESSAGE_TIMEOUT": {
       "blocked": false,
-      "effect": "none",
-      "recovery": null
+      "effect": "uncertain",
+      "recovery": "stop"
     },
     "MUTE_FAILED": {
       "blocked": false,
       "effect": "partial",
       "recovery": null
     },
-    "MUTE_UNAVAILABLE": {
+    "NESTED_FOLDER_MOVE": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
-    "NESTED_FOLDER_MOVE": {
+    "NETWORK_UNAVAILABLE": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -877,7 +922,12 @@
       "effect": "partial",
       "recovery": null
     },
-    "NOTE_UNAVAILABLE": {
+    "NOTE_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "NOTHING_TO_ORGANIZE": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -887,15 +937,20 @@
       "effect": "none",
       "recovery": null
     },
+    "NOT_A_FOLDER": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NOT_A_PDF": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "NOT_PAIRED": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
-    },
-    "NO_COLOR": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
     },
     "NO_MATCHING_FILES": {
       "blocked": false,
@@ -903,6 +958,31 @@
       "recovery": "stop"
     },
     "NO_MEDIA_PLAYER": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NO_SCREEN": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "NO_WINDOW": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "OCR_EMPTY": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "OCR_UNSUPPORTED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "ONE_WINDOW": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -927,11 +1007,6 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "PERMISSION_REQUIRED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
-    },
     "PLAN_STEP_FAILED": {
       "blocked": false,
       "effect": "partial",
@@ -942,15 +1017,20 @@
       "effect": "uncertain",
       "recovery": "stop"
     },
+    "PRINT_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "PROCESS_LIST_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "PROTECTED_PATH": {
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
-    },
-    "QUIT_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
     },
     "QUOTA_EXCEEDED": {
       "blocked": true,
@@ -962,14 +1042,24 @@
       "effect": "none",
       "recovery": null
     },
-    "REMINDERS_LIST_NOT_FOUND": {
+    "REMINDERS_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
+    "REMINDERS_READ_FAILED": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
-    "REMINDERS_PERMISSION_DENIED": {
-      "blocked": true,
-      "effect": "none",
+    "REMINDERS_SAVE_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "REMINDERS_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
       "recovery": "stop"
     },
     "REMINDER_NOT_FOUND": {
@@ -977,9 +1067,24 @@
       "effect": "none",
       "recovery": null
     },
+    "REMINDER_PERMISSION_DENIED": {
+      "blocked": true,
+      "effect": "none",
+      "recovery": "stop"
+    },
     "REMINDER_SAVE_FAILED": {
       "blocked": false,
       "effect": "partial",
+      "recovery": null
+    },
+    "REMINDER_TIMEOUT": {
+      "blocked": false,
+      "effect": "uncertain",
+      "recovery": "stop"
+    },
+    "RENAME_FAILED": {
+      "blocked": false,
+      "effect": "none",
       "recovery": null
     },
     "RESTORE_FAILED": {
@@ -987,14 +1092,9 @@
       "effect": "uncertain",
       "recovery": "stop"
     },
-    "RUNTIME_UNAVAILABLE": {
+    "REVEAL_FAILED": {
       "blocked": false,
       "effect": "none",
-      "recovery": null
-    },
-    "SCREENSHOT_FAILED": {
-      "blocked": false,
-      "effect": "partial",
       "recovery": null
     },
     "SCREEN_CAPTURE_FAILED": {
@@ -1052,14 +1152,14 @@
       "effect": "partial",
       "recovery": null
     },
-    "SLEEP_UNAVAILABLE": {
+    "SPEAK_FAILED": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
-    "STEP_ID_CONFLICT": {
+    "SPLIT_FAILED": {
       "blocked": false,
-      "effect": "none",
+      "effect": "partial",
       "recovery": null
     },
     "SYMLINK_REJECTED": {
@@ -1068,6 +1168,16 @@
       "recovery": "stop"
     },
     "TAB_NOT_FOUND": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TAG_FAILED": {
+      "blocked": false,
+      "effect": "partial",
+      "recovery": null
+    },
+    "TAG_UNSUPPORTED": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -1081,11 +1191,6 @@
       "blocked": false,
       "effect": "none",
       "recovery": "alternative"
-    },
-    "TERMINAL_CANCELLED": {
-      "blocked": true,
-      "effect": "none",
-      "recovery": "stop"
     },
     "TERMINAL_COMMAND_FORBIDDEN": {
       "blocked": true,
@@ -1106,6 +1211,11 @@
       "blocked": true,
       "effect": "none",
       "recovery": "stop"
+    },
+    "TERMINAL_DUPLICATE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
     },
     "TERMINAL_EDIT_AMBIGUOUS": {
       "blocked": false,
@@ -1133,11 +1243,6 @@
       "recovery": null
     },
     "TERMINAL_FILE_NOT_TEXT": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
-    "TERMINAL_FILE_READ_FAILED": {
       "blocked": false,
       "effect": "partial",
       "recovery": null
@@ -1207,19 +1312,9 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "TERMINAL_PATCH_WRITE_FAILED": {
-      "blocked": false,
-      "effect": "partial",
-      "recovery": null
-    },
     "TERMINAL_PLAN_INVALID": {
       "blocked": false,
       "effect": "none",
-      "recovery": null
-    },
-    "TERMINAL_PREPARE_FAILED": {
-      "blocked": false,
-      "effect": "partial",
       "recovery": null
     },
     "TERMINAL_READ_ONLY": {
@@ -1237,6 +1332,11 @@
       "effect": "partial",
       "recovery": "retry_once"
     },
+    "TERMINAL_UNDO_BACKUP_FAILED": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
     "TERMINAL_UNDO_FAILED": {
       "blocked": false,
       "effect": "partial",
@@ -1248,6 +1348,11 @@
       "recovery": null
     },
     "TERMINAL_UNDO_STALE": {
+      "blocked": false,
+      "effect": "none",
+      "recovery": null
+    },
+    "TOO_MANY_DOCUMENTS": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -1282,7 +1387,7 @@
       "effect": "none",
       "recovery": "stop"
     },
-    "UNSUPPORTED_FORMAT": {
+    "UNSAFE_ARTIFACT_TARGET": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -1292,17 +1397,12 @@
       "effect": "none",
       "recovery": null
     },
-    "UNSUPPORTED_MESSAGE": {
+    "UNSUPPORTED_ON_PLATFORM": {
       "blocked": false,
       "effect": "none",
       "recovery": null
     },
     "UNSUPPORTED_OPERATION": {
-      "blocked": false,
-      "effect": "none",
-      "recovery": null
-    },
-    "UNSUPPORTED_SHELL": {
       "blocked": false,
       "effect": "none",
       "recovery": null
@@ -1320,16 +1420,6 @@
     "VOLUME_FAILED": {
       "blocked": false,
       "effect": "partial",
-      "recovery": null
-    },
-    "VOLUME_NOT_APPLIED": {
-      "blocked": false,
-      "effect": "uncertain",
-      "recovery": "stop"
-    },
-    "VOLUME_UNAVAILABLE": {
-      "blocked": false,
-      "effect": "none",
       "recovery": null
     }
   }

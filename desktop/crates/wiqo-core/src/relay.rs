@@ -17,7 +17,7 @@ use crate::api::Api;
 use crate::codes;
 use crate::engine::Engine;
 use crate::storage::{CredentialStore, Credentials, Identity, PairedPhones};
-use crate::terminal::{Outbox, CODE_CAPABILITY};
+use crate::terminal::Outbox;
 use crate::verify::{signer_of, NonceCache, Rejection};
 use crate::wire::{CommandResult, CommandStatus, Request, WireError};
 
@@ -88,9 +88,7 @@ fn registration(runtime: &Runtime) -> Value {
     if names.contains(&"fileUtility") {
         features.extend(["file-inspect-v1", "bulk-document-move-v1"]);
     }
-    let terminal = engine
-        .terminal()
-        .filter(|_| engine.settings().capability_enabled(CODE_CAPABILITY));
+    let terminal = engine.terminal();
     if let Some(terminal) = terminal {
         features.extend(terminal.features());
     }
@@ -106,6 +104,7 @@ fn registration(runtime: &Runtime) -> Value {
         "terminalProfile": terminal.and_then(|terminal| terminal.profile()).unwrap_or(Value::Null),
         "applicationTargets": engine.application_targets(),
         "authorities": engine.authorities(),
+        "cloudFolders": crate::cloud_folders::cloud_folders(),
     })
 }
 

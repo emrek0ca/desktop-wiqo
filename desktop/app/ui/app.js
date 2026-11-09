@@ -7,41 +7,6 @@ const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 let snapshot = null;
 
-const CAPABILITIES = {
-  "runtime.status": "Durum bilgisi",
-  "device.files.list": "Dosyaları listeleme ve arama",
-  "device.files.read": "Dosya okuma ve telefona gönderme",
-  "device.files.write": "Dosya yazma",
-  "device.files.move": "Dosya taşıma ve yeniden adlandırma",
-  "device.files.copy": "Dosya kopyalama ve PDF'e çevirme",
-  "device.files.delete": "Dosyaları çöpe atma",
-  "device.files.utility": "Dosya işleri (zip, PDF, klasör düzenleme)",
-  "document.read": "Belge okuma (PDF, Word, Excel)",
-  "document.edit": "Belge yazma",
-  "artifact.save": "Telefondan gelen dosyayı kaydetme",
-  "device.app.list": "Açık uygulamaları görme",
-  "device.app.open": "Uygulama açma",
-  "device.app.open_by_name": "Ada göre uygulama açma",
-  "device.app.control": "Uygulamayı öne getirme",
-  "device.app.quit": "Uygulama kapatma",
-  "device.url.open": "Web adresi açma",
-  "device.system.power": "Kilitleme ve uyku",
-  "device.system.utility": "Sistem işleri (koyu mod, pil, pencereler)",
-  "device.audio": "Ses seviyesi",
-  "device.media": "Medya (oynat, sonraki)",
-  "device.display": "Ekran parlaklığı",
-  "device.clipboard": "Pano",
-  "device.screen.capture": "Ekran görüntüsü",
-  "device.code.execute": "Kod ve terminal",
-  "device.shortcut.run": "Kestirmeler",
-  "device.messaging.send": "Mesaj gönderme",
-  "mail.send": "E-posta gönderme",
-  "notes.write": "Not yazma",
-  "calendar.read": "Takvimi okuma",
-  "calendar.write": "Takvime ekleme",
-  "reminders.read": "Hatırlatıcıları okuma",
-  "reminders.write": "Hatırlatıcı ekleme",
-};
 
 const OPERATIONS = window.WIQO_OPERATIONS;
 
@@ -126,10 +91,10 @@ function render() {
   $("phone-count").textContent = String(snapshot.phones.length);
 
   if (!$("phones-pop").hidden && !phonesPopPairing) renderPhonesPop();
-  renderCapabilities();
-  activityItems(snapshot.activity, $("recent"), 5);
   activityItems(snapshot.activity, $("right-activity"), 6);
-  activityItems(snapshot.activity, $("activity"), 100, true);
+  activityItems(snapshot.activity, $("activity"), activityAll ? 100 : 8, true);
+  $("activity-more").hidden = snapshot.activity.length <= 8;
+  $("activity-more").textContent = activityAll ? "Daha az" : "Tümü";
 }
 
 async function refresh() {
@@ -137,20 +102,16 @@ async function refresh() {
   render();
 }
 
-const SECTION_TITLES = { status: "Ayarlar", agents: "Ayarlar", activity: "Ayarlar", apps: "Uygulamalar", threads: "Ajanlar", permissions: "Ayarlar" };
-const SETTINGS_TABS = ["permissions", "status", "agents", "activity"];
+const SECTION_TITLES = { apps: "Uygulamalar", threads: "Ajanlar", settings: "Ayarlar" };
+let activityAll = false;
 
 function showSection(name) {
-  // The settings pages (Genel, Durum, Rutinler, Etkinlik) all sit under the one "Ayarlar" item of the top pill.
-  const group = SETTINGS_TABS.includes(name) ? "permissions" : name;
-  for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === group);
+  for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === name);
   for (const panel of document.querySelectorAll(".panel")) panel.hidden = panel.dataset.panel !== name;
   document.body.dataset.section = name;
-  $("settings-tabs").hidden = !SETTINGS_TABS.includes(name);
-  for (const tab of document.querySelectorAll("#settings-tabs button")) tab.classList.toggle("active", tab.dataset.tab === name);
   if (name !== "chat") $("top-title").textContent = SECTION_TITLES[name] || "";
   window.dispatchEvent(new CustomEvent("wiqo-section", { detail: name }));
-  if (name === "permissions") loadPermissions();
+  if (name === "settings") loadPermissions();
   slidePills();
 }
 
@@ -167,7 +128,7 @@ function slidePill(container) {
   slider.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
 }
 function slidePills() {
-  requestAnimationFrame(() => { slidePill($("settings-tabs")); slidePill($("top-seg")); });
+  requestAnimationFrame(() => slidePill($("top-seg")));
 }
 window.addEventListener("resize", slidePills);
 window.showSection = showSection;
@@ -243,7 +204,6 @@ function renderWork(items) {
   }
 }
 for (const button of document.querySelectorAll(".nav")) button.onclick = () => showSection(button.dataset.section);
-for (const tab of document.querySelectorAll("#settings-tabs button")) tab.onclick = () => showSection(tab.dataset.tab);
 for (const button of document.querySelectorAll("[data-goto]")) button.onclick = () => showSection(button.dataset.goto);
 
 // ----- stage 1: sign in, create an account, reset the password -----
@@ -532,7 +492,7 @@ for (const id of ["setup-restart", "permissions-restart"]) $(id).onclick = () =>
 
 // The person grants in System Settings: the list follows while it is on screen.
 setInterval(() => {
-  const visible = !$("setup").hidden || !document.querySelector('[data-panel="permissions"]').hidden;
+  const visible = !$("setup").hidden || !document.querySelector('[data-panel="settings"]').hidden;
   if (visible && asking === null && document.visibilityState === "visible") loadPermissions();
 }, 2000);
 window.addEventListener("focus", loadPermissions);
@@ -630,36 +590,6 @@ listen("pairing-failed", (message) => {
 
 // ----- settings -----
 
-function renderCapabilities() {
-  const capabilities = $("capabilities");
-  capabilities.replaceChildren();
-  for (const capability of snapshot.capabilities) {
-    const row = document.createElement("li");
-    const label = document.createElement("label");
-    label.className = "toggle-row";
-    label.style.width = "100%";
-    const text = document.createElement("div");
-    text.textContent = CAPABILITIES[capability.id] || capability.id;
-    if (capability.asks) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "onay ister";
-      text.append(tag);
-    }
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.className = "switch";
-    input.checked = capability.enabled;
-    input.onchange = async () => {
-      snapshot = await invoke("set_capability", { id: capability.id, enabled: input.checked });
-      render();
-    };
-    label.append(text, input);
-    row.append(label);
-    capabilities.append(row);
-  }
-}
-
 $("autostart").onchange = async (event) => {
   try {
     event.target.checked = await invoke("set_autostart", { on: event.target.checked });
@@ -685,6 +615,7 @@ async function stopWork() {
   toast("Çalışan iş durduruldu.");
 }
 $("stop-work").onclick = stopWork;
+$("activity-more").onclick = () => { activityAll = !activityAll; render(); };
 $("right-stop").onclick = stopWork;
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
@@ -843,7 +774,7 @@ listen("wiqo", async (message) => {
       await loadPermissions();
       highlighted = event.id;
       const permission = permissionList.find((item) => item.id === event.id);
-      if ($("setup").hidden) showSection("permissions");
+      if ($("setup").hidden) showSection("settings");
       renderPermissions();
       toast(`Bu görev için ${permission ? permission.title : "bir"} izni gerekiyor; tek tıkla ver.`, "bad");
       return;

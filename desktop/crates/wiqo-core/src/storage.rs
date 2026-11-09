@@ -1,7 +1,6 @@
 //! What the desktop keeps on this machine: who it is, who it is paired with, its tokens and its switches. Plain JSON files in one folder, written
 //! atomically and readable by the owner only; the tokens and the phones' keys go to the operating system keychain when there is one (vault.rs).
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -265,9 +264,6 @@ impl PairedPhones {
 pub struct SettingsData {
     #[serde(default)]
     pub connection_stopped: bool,
-    /// Capabilities (contracts/companion/operations.json) the owner switched off.
-    #[serde(default)]
-    pub disabled_capabilities: BTreeSet<String>,
 }
 
 pub struct Settings {
@@ -286,15 +282,6 @@ impl Settings {
 
     pub fn snapshot(&self) -> SettingsData {
         self.data.read().expect("settings lock").clone()
-    }
-
-    pub fn capability_enabled(&self, capability: &str) -> bool {
-        !self
-            .data
-            .read()
-            .expect("settings lock")
-            .disabled_capabilities
-            .contains(capability)
     }
 
     pub fn update(&self, change: impl FnOnce(&mut SettingsData)) -> std::io::Result<()> {
@@ -353,8 +340,6 @@ mod tests {
         settings
             .update(|data| {
                 data.connection_stopped = true;
-                data.disabled_capabilities
-                    .insert("device.files.delete".into());
             })
             .unwrap();
 
@@ -365,7 +350,5 @@ mod tests {
         assert!(PairedPhones::open(&dir).list().is_empty());
         let settings = Settings::open(&dir);
         assert!(settings.snapshot().connection_stopped);
-        assert!(!settings.capability_enabled("device.files.delete"));
-        assert!(settings.capability_enabled("device.files.read"));
     }
 }

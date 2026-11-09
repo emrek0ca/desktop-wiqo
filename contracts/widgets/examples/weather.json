@@ -1,0 +1,53 @@
+{
+  "type": "weather",
+  "widgetId": "weather:istanbul",
+  "location": "İstanbul",
+  "timezone": "Europe/Istanbul",
+  "source": "Open-Meteo",
+  "current": {
+    "observedAt": "2026-11-08T09:00:00.000Z",
+    "temperatureC": 14,
+    "feelsLikeC": 12,
+    "humidityPercent": 71,
+    "windKmh": 18,
+    "condition": "Parçalı bulutlu",
+    "weatherCode": 2
+  },
+  "hourly": [
+    {
+      "time": "2026-11-08T10:00:00.000Z",
+      "temperatureC": 15,
+      "rainChancePercent": 10,
+      "weatherCode": 2
+    },
+    {
+      "time": "2026-11-08T11:00:00.000Z",
+      "temperatureC": 16,
+      "rainChancePercent": 20,
+      "weatherCode": 3
+    }
+  ],
+  "days": [
+    {
+      "date": "2026-11-08",
+      "condition": "Parçalı bulutlu",
+      "weatherCode": 2,
+      "minC": 10,
+      "maxC": 17,
+      "rainChancePercent": 20,
+      "rainMm": 0.4
+    },
+    {
+      "date": "2026-11-09",
+      "condition": "Yağmurlu",
+      "weatherCode": 61,
+      "minC": 9,
+      "maxC": 13,
+      "rainChancePercent": 80,
+      "rainMm": 6.2
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "14 °C · Parçalı bulutlu"
+}

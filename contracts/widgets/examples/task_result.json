@@ -1,0 +1,13 @@
+{
+  "type": "task_result",
+  "widgetId": "result:task-1",
+  "taskId": "task-1",
+  "capability": "desktop",
+  "taskStatus": "partial",
+  "title": "Faturaları topla ve gönder",
+  "summary": "2 adım tamamlandı; telefona gönderme bekliyor.",
+  "completedSteps": 2,
+  "totalSteps": 3,
+  "version": 1,
+  "state": "ready"
+}

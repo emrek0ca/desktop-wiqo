@@ -1,0 +1,10 @@
+{
+  "type": "inline_app",
+  "widgetId": "app:counter",
+  "title": "Sayaç",
+  "height": 160,
+  "html": "<!doctype html><html><body><button id=\"b\">0</button><script>let n=0;b.onclick=()=>{b.textContent=++n}</script></body></html>",
+  "version": 1,
+  "state": "ready",
+  "summary": "Sayaç"
+}

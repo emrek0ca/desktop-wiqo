@@ -1,0 +1,14 @@
+{
+  "type": "card",
+  "widgetId": "card:calc",
+  "kind": "calc",
+  "title": "Hesap",
+  "expression": "18000 * 1.2",
+  "result": "21.600",
+  "steps": [
+    "18.000 × 1,2 = 21.600"
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Hesap"
+}

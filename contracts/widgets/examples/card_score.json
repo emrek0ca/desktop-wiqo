@@ -1,0 +1,19 @@
+{
+  "type": "card",
+  "widgetId": "card:score",
+  "kind": "score",
+  "title": "Süper Lig",
+  "matches": [
+    {
+      "league": "Süper Lig",
+      "home": "Galatasaray",
+      "away": "Fenerbahçe",
+      "homeScore": 2,
+      "awayScore": 1,
+      "status": "Bitti"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Süper Lig"
+}

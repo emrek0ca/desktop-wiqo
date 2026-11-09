@@ -1,0 +1,10 @@
+{
+  "type": "receipt",
+  "widgetId": "receipt:sample",
+  "family": "task",
+  "title": "Görev eklendi",
+  "detail": "Süt al",
+  "presentation": "widget_only",
+  "version": 1,
+  "state": "completed"
+}

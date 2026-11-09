@@ -1,0 +1,25 @@
+{
+  "type": "card",
+  "widgetId": "card:trip",
+  "kind": "trip",
+  "title": "Kapadokya, 2 gün",
+  "tripDays": [
+    {
+      "title": "1. gün",
+      "items": [
+        {
+          "time": "06:00",
+          "title": "Balon turu",
+          "place": "Göreme"
+        },
+        {
+          "title": "Açık hava müzesi",
+          "note": "Bilet online"
+        }
+      ]
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Kapadokya, 2 gün"
+}

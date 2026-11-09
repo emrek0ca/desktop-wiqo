@@ -1,0 +1,32 @@
+{
+  "type": "artifact",
+  "widgetId": "artifact:a1b2c3",
+  "artifactId": "a1b2c3",
+  "variant": "spreadsheet",
+  "title": "Ekim giderleri.xlsx",
+  "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "byteCount": 18432,
+  "tablePreview": {
+    "columns": [
+      "Tarih",
+      "Kalem",
+      "Tutar"
+    ],
+    "rows": [
+      [
+        "01.10",
+        "Kira",
+        "18.000"
+      ],
+      [
+        "03.10",
+        "Market",
+        "2.450"
+      ]
+    ],
+    "totalRows": 24
+  },
+  "version": 1,
+  "state": "ready",
+  "summary": "Ekim giderleri.xlsx"
+}

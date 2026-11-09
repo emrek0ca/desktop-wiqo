@@ -1,0 +1,17 @@
+{
+  "type": "created_resource",
+  "widgetId": "created:automation:41",
+  "resourceType": "automation",
+  "id": 41,
+  "title": "Sabah özeti",
+  "detail": "Her gün takvimi ve gelen kutusunu özetler.",
+  "scheduleLabel": "Her gün 08:00",
+  "schedule": "0 8 * * *",
+  "timezone": "Europe/Istanbul",
+  "nextRunAt": "2026-11-09T05:00:00.000Z",
+  "status": "active",
+  "persona": null,
+  "version": 1,
+  "state": "active",
+  "summary": "Her gün takvimi ve gelen kutusunu özetler."
+}

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Wiqo</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -93,7 +94,7 @@
       <div id="conversation-list" class="conv-list"></div>
       <div id="voice-model" class="voice-model" hidden></div>
       <div class="me">
-        <button id="me-settings" class="me-main" data-goto="permissions" title="Ayarlar">
+        <button id="me-settings" class="me-main" data-goto="settings" title="Ayarlar">
           <span id="me-avatar" class="avatar">W</span>
           <div class="me-text"><div id="account-email" class="small"></div><div class="muted small">Ayarlar</div></div>
         </button>
@@ -113,7 +114,7 @@
           <button class="nav" data-section="chat" title="Sohbet"><span data-symbol="sparkle" data-size="15" data-weight="0"></span><span class="seg-label">Sohbet</span></button>
           <button class="nav" data-section="threads" title="Ajanlar"><span data-symbol="person.2" data-size="15" data-weight="0"></span><span class="seg-label">Ajanlar</span></button>
           <button class="nav" data-section="apps" title="Uygulamalar"><span data-symbol="link" data-size="15" data-weight="0"></span><span class="seg-label">Uygulamalar</span></button>
-          <button class="nav" data-section="permissions" title="Ayarlar"><span data-symbol="gearshape" data-size="15" data-weight="0"></span><span class="seg-label">Ayarlar</span></button>
+          <button class="nav" data-section="settings" title="Ayarlar"><span data-symbol="gearshape" data-size="15" data-weight="0"></span><span class="seg-label">Ayarlar</span></button>
         </nav>
         <div class="top-right">
           <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
@@ -124,13 +125,6 @@
       <div id="update-banner" class="banner" hidden>
         <span id="update-text">Yeni sürüm hazır.</span>
         <button id="update-restart" class="primary small">Yeniden başlat</button>
-      </div>
-
-      <div id="settings-tabs" class="tabs" hidden>
-        <button data-tab="permissions">Genel</button>
-        <button data-tab="status">Durum</button>
-        <button data-tab="agents">Rutinler</button>
-        <button data-tab="activity">Etkinlik</button>
       </div>
 
       <div class="panel chat-panel" data-panel="chat">
@@ -159,27 +153,6 @@
               <button id="chat-send" class="send" type="submit" title="Gönder (Enter)"><span data-symbol="arrow.up" data-size="14" data-weight="0.3"></span></button>
             </div>
           </form>
-        </div>
-      </div>
-
-      <div class="panel page" data-panel="status" hidden>
-        <div class="card hero">
-          <div>
-            <div id="state-title" class="hero-title">—</div>
-            <div id="state-detail" class="muted small"></div>
-          </div>
-          <div class="hero-actions">
-            <button id="stop-work" class="secondary small" title="Esc">İşi durdur</button>
-            <button id="toggle-connection" class="secondary small">Bağlantıyı kes</button>
-          </div>
-        </div>
-        <div class="grid">
-          <div class="card stat"><div class="overline">Bilgisayar</div><div id="device-name" class="stat-value">—</div><div id="device-platform" class="muted small"></div></div>
-          <div class="card stat"><div class="overline">Telefon</div><div id="phone-count" class="stat-value">0</div></div>
-        </div>
-        <div class="card">
-          <div class="row-head"><h3>Son işlemler</h3><button class="link small" data-goto="activity">Tümü</button></div>
-          <ul id="recent" class="activity"></ul>
         </div>
       </div>
 
@@ -212,16 +185,6 @@
         <aside id="thread-side" class="thread-side" hidden></aside>
       </div>
 
-      <div class="panel page" data-panel="agents" hidden>
-        <div id="agents-empty" class="card muted" hidden>Henüz bir şey yok. Wiqo'ya “yarın 11'de toplantıyı hatırlat” de; burada görünür.</div>
-        <div id="agents-groups"></div>
-        <p id="agents-error" class="error small" hidden></p>
-      </div>
-
-      <div class="panel page" data-panel="activity" hidden>
-        <div class="card"><ul id="activity" class="activity"></ul></div>
-      </div>
-
       <div class="panel page" data-panel="apps" hidden>
         <p class="muted small apps-lead">Wiqo'nun senin adına bakabileceği ve yapabileceği hesaplar. Bağladığın bir uygulamayı istediğin an kesebilir ya da "sadece oku" yapabilirsin.</p>
         <div id="apps-list" class="apps-grid"></div>
@@ -229,31 +192,58 @@
         <p id="apps-error" class="error small" hidden></p>
       </div>
 
-      <div class="panel page" data-panel="permissions" hidden>
-        <div class="card account-card">
-          <span id="account-avatar" class="avatar big"></span>
-          <div class="account-text">
-            <div id="account-name" class="w-title"></div>
-            <div id="account-mail" class="muted small"></div>
+      <!-- Ayarlar: one page, top to bottom. What a step may do is not a setting: every step that changes or sends something asks first. -->
+      <div class="panel page settings-page" data-panel="settings" hidden>
+        <section class="settings-section">
+          <h3 class="settings-head">Hesap</h3>
+          <div class="card account-card">
+            <span id="account-avatar" class="avatar big"></span>
+            <div class="account-text">
+              <div id="account-name" class="w-title"></div>
+              <div id="account-mail" class="muted small"></div>
+            </div>
+            <span id="account-provider" class="pill-status neutral"></span>
+            <button id="account-signout" class="secondary small"><span data-symbol="rectangle.portrait.and.arrow.right" data-size="13" data-weight="0"></span>Çıkış yap</button>
           </div>
-          <span id="account-provider" class="pill-status neutral"></span>
-          <button id="account-signout" class="secondary small"><span data-symbol="rectangle.portrait.and.arrow.right" data-size="13" data-weight="0"></span>Çıkış yap</button>
-        </div>
-        <div class="card">
-          <label class="toggle-row strong">
-            <div><div>Bilgisayarla birlikte başlat</div><div class="muted small">Açılışta tepside sessizce çalışır.</div></div>
-            <input id="autostart" type="checkbox" class="switch">
-          </label>
-        </div>
-        <div id="system-permissions-card" class="card" hidden>
-          <div class="row-head"><h3>Sistem izinleri</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
-          <ul id="system-permissions" class="list perms"></ul>
-        </div>
-        <details class="card advanced">
-          <summary>Gelişmiş</summary>
-          <div class="row-head"><h3>Yetenekler</h3></div>
-          <ul id="capabilities" class="list"></ul>
-        </details>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-head">Bu bilgisayar</h3>
+          <div class="card settings-rows">
+            <div class="settings-row">
+              <div><div id="state-title" class="w-title">—</div><div id="state-detail" class="muted small"></div></div>
+              <div class="hero-actions">
+                <button id="stop-work" class="secondary small" title="Esc">İşi durdur</button>
+                <button id="toggle-connection" class="secondary small">Bağlantıyı kes</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div><div id="device-name" class="w-title">—</div><div id="device-platform" class="muted small"></div></div>
+              <div class="muted small"><span id="phone-count">0</span> bağlı telefon</div>
+            </div>
+            <label class="settings-row toggle-row">
+              <div><div>Bilgisayarla birlikte başlat</div><div class="muted small">Açılışta tepside sessizce çalışır.</div></div>
+              <input id="autostart" type="checkbox" class="switch">
+            </label>
+          </div>
+        </section>
+
+        <section id="system-permissions-card" class="settings-section" hidden>
+          <div class="row-head"><h3 class="settings-head">Sistem izinleri</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
+          <div class="card"><ul id="system-permissions" class="list perms"></ul></div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-head">Rutinler</h3>
+          <div id="agents-empty" class="card muted small" hidden>Henüz bir şey yok. Wiqo'ya “yarın 11'de toplantıyı hatırlat” de; burada görünür.</div>
+          <div id="agents-groups"></div>
+          <p id="agents-error" class="error small" hidden></p>
+        </section>
+
+        <section class="settings-section">
+          <div class="row-head"><h3 class="settings-head">Son işlemler</h3><button id="activity-more" class="link small">Tümü</button></div>
+          <div class="card"><ul id="activity" class="activity"></ul></div>
+        </section>
       </div>
     </main>
 

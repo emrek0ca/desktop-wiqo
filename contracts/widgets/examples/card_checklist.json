@@ -1,0 +1,14 @@
+{
+  "type": "card",
+  "widgetId": "card:checklist",
+  "kind": "checklist",
+  "title": "Tatil hazırlığı",
+  "checklist": [
+    "Pasaport",
+    "Şarj aleti",
+    "İlaçlar"
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Tatil hazırlığı"
+}

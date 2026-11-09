@@ -1,0 +1,25 @@
+{
+  "type": "card",
+  "widgetId": "card:recipe",
+  "kind": "recipe",
+  "title": "Mercimek çorbası",
+  "servings": 4,
+  "minutes": 35,
+  "ingredients": [
+    "1 su bardağı kırmızı mercimek",
+    "1 soğan",
+    "6 su bardağı su"
+  ],
+  "directions": [
+    {
+      "text": "Soğanı kavur."
+    },
+    {
+      "text": "Mercimeği ekleyip pişir.",
+      "seconds": 1500
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Mercimek çorbası"
+}

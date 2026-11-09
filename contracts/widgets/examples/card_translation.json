@@ -1,0 +1,13 @@
+{
+  "type": "card",
+  "widgetId": "card:translation",
+  "kind": "translation",
+  "title": "Çeviri",
+  "sourceLang": "tr",
+  "targetLang": "en",
+  "original": "Yarın görüşelim.",
+  "translated": "Let's meet tomorrow.",
+  "version": 1,
+  "state": "ready",
+  "summary": "Çeviri"
+}

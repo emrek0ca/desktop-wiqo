@@ -1,0 +1,24 @@
+{
+  "type": "workspace",
+  "widgetId": "workspace:doc-1",
+  "app": "docs",
+  "action": "created",
+  "title": "Proje teklifi",
+  "subtitle": "Google Dokümanlar · 3 sayfa",
+  "itemId": "doc-1",
+  "url": "https://docs.google.com/document/d/doc-1",
+  "lines": [
+    "Amaç",
+    "Kapsam",
+    "Takvim"
+  ],
+  "actions": [
+    {
+      "label": "PDF indir",
+      "prompt": "Proje teklifini PDF olarak indir"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Proje teklifi"
+}

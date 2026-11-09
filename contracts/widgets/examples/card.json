@@ -1,0 +1,10 @@
+{
+  "type": "card",
+  "widgetId": "card:timer",
+  "kind": "timer",
+  "title": "Çay demlensin",
+  "seconds": 300,
+  "version": 1,
+  "state": "ready",
+  "summary": "Çay demlensin"
+}

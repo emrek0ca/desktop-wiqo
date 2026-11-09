@@ -368,7 +368,7 @@ impl Engine {
                     return json!({ "capability": capability, "displayName": capability_name(&capability), "access": "unavailable", "requiredPermissions": ["system"], "message": message });
                 }
                 let needs_presence = manifest.operations().iter().any(|operation| operation.capability == capability && self.operations.contains_key(operation.operation.as_str()) && operation.requires_user_presence);
-                let access = if !self.settings.capability_enabled(&capability) { "denied" } else if needs_presence { "confirmation" } else { "automatic" };
+                let access = if needs_presence { "confirmation" } else { "automatic" };
                 json!({ "capability": capability, "displayName": capability_name(&capability), "access": access, "requiredPermissions": [], "message": "" })
             })
             .collect()
@@ -377,15 +377,6 @@ impl Engine {
     pub async fn execute(&self, request: &Request) -> CommandResult {
         let started = Utc::now();
         let id = request.id;
-        let denied = |code: &str, message: &str| {
-            CommandResult::failed(
-                id,
-                CommandStatus::Denied,
-                WireError::new(code, message, "permission"),
-                started,
-            )
-        };
-
         let manifest = Manifest::get();
         let Some(entry) = manifest
             .operation(&request.kind)
@@ -414,12 +405,6 @@ impl Engine {
                 started,
             );
         };
-        if !self.settings.capability_enabled(&entry.capability) {
-            return denied(
-                codes::CAPABILITY_DISABLED,
-                "Bu yetenek bu bilgisayardaki Wiqo ayarlarında kapalı.",
-            );
-        }
 
         let digest = request_digest(request);
         if let Some(done) = self.ledger.lookup(id) {
@@ -697,16 +682,6 @@ mod tests {
                 .unwrap()
                 .code,
             codes::UNSUPPORTED_OPERATION
-        );
-        engine
-            .settings()
-            .update(|data| {
-                data.disabled_capabilities.insert("runtime.status".into());
-            })
-            .unwrap();
-        assert_eq!(
-            engine.execute(&request("ping")).await.error.unwrap().code,
-            codes::CAPABILITY_DISABLED
         );
     }
 

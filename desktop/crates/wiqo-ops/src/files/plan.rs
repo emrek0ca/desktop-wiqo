@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wiqo_contract::{is_valid_local_path, FilePolicy};
 use wiqo_core::engine::{Context, Lane, Operation, Outcome};
-use wiqo_core::storage::Settings;
 
 use crate::fsx::Entry;
 use crate::op::{data, outcome, payload, tool_failure, Done, Result};
@@ -136,15 +135,6 @@ async fn run_plan(ctx: &Context, value: &Value) -> Result<Done> {
     }
 }
 
-fn capability(op: &str) -> &'static str {
-    match op {
-        "search" | "list" => "device.files.list",
-        "read" | "send" => "device.files.read",
-        "move" => "device.files.move",
-        _ => "device.files.copy",
-    }
-}
-
 fn admissible(path: &str) -> bool {
     is_valid_local_path(path) && !FilePolicy::get().is_sensitive(path)
 }
@@ -164,9 +154,6 @@ fn operation(path: &str, destination: Option<String>) -> Value {
 
 async fn run_step(ctx: &Context, step: &Step, files: &HashMap<String, Vec<Entry>>) -> StepResult {
     let fail = |message: String| StepResult::new(step, "failed", message);
-    if !Settings::open(&ctx.services.data_dir).capability_enabled(capability(&step.op)) {
-        return fail("Bu işlem Wiqo'nun Yetenekler ayarında kapalı.".into());
-    }
     let raw = step.path.clone();
     // "$s1*": every file the earlier step found, one after another.
     if let Some(binding) = raw

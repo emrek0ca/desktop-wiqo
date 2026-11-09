@@ -4,6 +4,7 @@
 //! budget ([`engine`]), and the answer goes back in the shape the contract defines ([`wire`]). The operations themselves live in `wiqo-ops`.
 
 pub mod api;
+pub mod cloud_folders;
 pub mod codes;
 pub mod engine;
 pub mod ledger;

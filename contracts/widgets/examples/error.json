@@ -1,0 +1,12 @@
+{
+  "type": "error",
+  "widgetId": "error:task-1",
+  "taskId": "task-1",
+  "code": "FILE_NOT_FOUND",
+  "category": "tool_failure",
+  "title": "Dosya bulunamadı",
+  "message": "İndirilenler klasöründe \"fatura\" geçen PDF yok.",
+  "retryable": true,
+  "version": 1,
+  "state": "error"
+}

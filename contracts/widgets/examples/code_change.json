@@ -1,0 +1,25 @@
+{
+  "type": "code_change",
+  "widgetId": "code:7:3",
+  "id": 7,
+  "title": "Giriş sayfası",
+  "detail": "Form doğrulaması eklendi.",
+  "variant": "web",
+  "projectVersion": 3,
+  "verified": true,
+  "items": [
+    {
+      "title": "src/login.js",
+      "subtitle": "değişti",
+      "badge": "+12 −3"
+    },
+    {
+      "title": "src/validate.js",
+      "subtitle": "yeni",
+      "badge": "+40"
+    }
+  ],
+  "version": 1,
+  "state": "ready",
+  "summary": "Form doğrulaması eklendi."
+}

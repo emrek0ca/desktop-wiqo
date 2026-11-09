@@ -120,7 +120,7 @@ fn dark_mode(mode: Option<&str>) -> Result<Done> {
         apple_script(&format!(
             "tell application \"System Events\" to tell appearance preferences to set dark mode to {value}"
         ))
-        .map_err(|message| permission("AUTOMATION_PERMISSION", message))?;
+        .map_err(|message| permission("AUTOMATION_PERMISSION_REQUIRED", message))?;
         return Ok(Done::message(message));
     }
     if cfg!(windows) {
@@ -324,7 +324,8 @@ if appName is "Google Chrome" then
 end if
 return out
 "#;
-        vec![apple_script(source).map_err(|message| permission("AUTOMATION_PERMISSION", message))?]
+        vec![apple_script(source)
+            .map_err(|message| permission("AUTOMATION_PERMISSION_REQUIRED", message))?]
     } else if cfg!(windows) {
         let script = r#"Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -518,8 +519,8 @@ end tell
 set AppleScript's text item delimiters to linefeed
 return front & linefeed & (others as text)
 "#;
-    let names =
-        apple_script(script).map_err(|message| permission("ACCESSIBILITY_PERMISSION", message))?;
+    let names = apple_script(script)
+        .map_err(|message| permission("ACCESSIBILITY_PERMISSION_REQUIRED", message))?;
     let mut apps: Vec<String> = Vec::new();
     for name in names
         .lines()
@@ -531,7 +532,7 @@ return front & linefeed & (others as text)
         }
     }
     let bounds = apple_script("tell application \"Finder\" to get bounds of window of desktop")
-        .map_err(|message| permission("AUTOMATION_PERMISSION", message))?;
+        .map_err(|message| permission("AUTOMATION_PERMISSION_REQUIRED", message))?;
     let numbers: Vec<i64> = bounds
         .split(',')
         .filter_map(|part| part.trim().parse().ok())
@@ -552,7 +553,7 @@ return front & linefeed & (others as text)
     };
     if mode == Some("maximize") {
         apple_script(&place(&first, 0, width))
-            .map_err(|message| permission("ACCESSIBILITY_PERMISSION", message))?;
+            .map_err(|message| permission("ACCESSIBILITY_PERMISSION_REQUIRED", message))?;
         return Ok(Done::message(format!("{first} penceresi ekranı kapladı.")));
     }
     let Some(second) = apps.get(1).cloned() else {
@@ -562,9 +563,9 @@ return front & linefeed & (others as text)
         ));
     };
     apple_script(&place(&first, 0, width / 2))
-        .map_err(|message| permission("ACCESSIBILITY_PERMISSION", message))?;
+        .map_err(|message| permission("ACCESSIBILITY_PERMISSION_REQUIRED", message))?;
     apple_script(&place(&second, width / 2, width / 2))
-        .map_err(|message| permission("ACCESSIBILITY_PERMISSION", message))?;
+        .map_err(|message| permission("ACCESSIBILITY_PERMISSION_REQUIRED", message))?;
     Ok(Done::message(format!(
         "{first} ve {second} yan yana dizildi."
     )))

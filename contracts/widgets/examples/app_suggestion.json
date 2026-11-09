@@ -1,0 +1,21 @@
+{
+  "type": "app_suggestion",
+  "apps": [
+    {
+      "id": "notion",
+      "name": "Notion",
+      "mode": "connect",
+      "does": "Sayfalarını okur ve yazar"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "mode": "use",
+      "does": "Kanallara mesaj gönderir",
+      "prompt": "Slack'te #genel kanalına özet gönder"
+    }
+  ],
+  "widgetId": "app_suggestion",
+  "version": 1,
+  "state": "ready"
+}
