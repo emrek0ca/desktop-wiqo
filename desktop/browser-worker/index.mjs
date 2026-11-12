@@ -54,7 +54,7 @@ const SAFE_ERRORS = {
   BROWSER_TASK_EXPIRED: "Göreve özel tarayıcı oturumu zaman aşımına uğradı.",
   BROWSER_TIMEOUT: "Tarayıcı işlemi zaman aşımına uğradı.",
   BROWSER_CANCELLED: "Tarayıcı işlemi iptal edildi.",
-  BROWSER_NO_PAGE: "Önce herkese açık bir sayfa açılmalı.",
+  BROWSER_NO_PAGE: "Bu görevde açık sayfa yok: önce action=navigate ile url'yi aç, sonra oku.",
   BROWSER_SIGN_IN_REQUIRED: "Sayfa oturum istiyor; Wiqo'nun tarayıcısında bu siteye bir kez giriş yapılmalı.",
   BROWSER_NO_HISTORY: "Bu görev tarayıcısında geri dönülecek bir sayfa yok.",
   BROWSER_FORM_BLOCKED: "Bu form güvenlik nedeniyle gönderilemez.",
@@ -947,6 +947,15 @@ async function execute(message) {
     // The single task approval also authorizes the initial public page snapshot. Returning it with
     // navigate gives the model fresh target refs immediately and removes a redundant observe turn.
     return { ok: true, result: await pageState(task, action, { ...message, contentAccessGranted: true }) };
+  }
+  // A read or a look at a task with no page yet, but with the address it is about: the page is opened first, as one navigate would have
+  // (the model read before it navigated, and the task stopped on BROWSER_NO_PAGE).
+  if (["read", "observe", "observe_diff"].includes(action) && typeof message.url === "string" && cleanURL(message.url)) {
+    const existing = tasks.get(taskId);
+    if (!existing || !existing.page.url() || existing.page.url() === "about:blank") {
+      const opened = await execute({ ...message, action: "navigate" });
+      if (!opened.ok) return opened;
+    }
   }
   const task = await getTask(taskId);
   if (message.interactionAccessGranted === true) task.interactionApproved = true;

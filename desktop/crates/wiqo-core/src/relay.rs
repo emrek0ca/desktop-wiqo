@@ -406,6 +406,12 @@ impl Relay {
         loop {
             tokio::select! {
                 _ = pull.tick() => {
+                    // The socket was opened with a token that lives fifteen minutes; everything else this desktop sends over HTTP (a file for the
+                    // phone, an artifact it downloads) reads the stored one. Kept fresh here, so an upload an hour into a session is not refused with
+                    // 401 (prod, 2026-11-08: "Dosya telefona iletilemedi (sunucu yanıtı 401)"). Only a token near its end costs a call.
+                    if let Err(error) = self.fresh_token().await {
+                        tracing::warn!("{error}");
+                    }
                     sink.send(Message::text(json!({ "type": "automationPull" }).to_string())).await.map_err(|error| error.to_string())?;
                 }
                 _ = self.refresh.notified() => {

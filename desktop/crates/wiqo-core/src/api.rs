@@ -159,6 +159,18 @@ impl Api {
         Self::parse(response).await
     }
 
+    /// Ends this desktop's own device session on the server (sign-out), so the next account to sign in on this computer can use its device id.
+    pub async fn revoke_session(&self, access_token: &str) -> Result<(), ApiError> {
+        let response = self
+            .http
+            .post(format!("{}/device-sessions/revoke", self.base))
+            .bearer_auth(access_token)
+            .json(&json!({}))
+            .send()
+            .await?;
+        Self::parse::<serde_json::Value>(response).await.map(|_| ())
+    }
+
     /// Unpairs one phone on the server; the server tells this desktop back with `pairingRevoked`.
     pub async fn revoke_phone(&self, access_token: &str, pairing_id: &str) -> Result<(), ApiError> {
         let response = self

@@ -183,6 +183,10 @@ pub fn is_read_only(command: &str) -> bool {
     if text.contains("..") || text.contains('~') || text.contains('$') || absolute.is_match(&text) {
         return false;
     }
+    // zsh glob qualifiers `*(e:'cmd':)`, `=(cmd)` and PowerShell `(Cmd)` run code from inside an argument; a read never needs a group or a brace.
+    if text.contains('(') || text.contains(')') || text.contains('{') || text.contains('}') || text.contains("=(") {
+        return false;
+    }
     let redirects = redirect_ok.replace_all(&text, "");
     if redirects.contains('`')
         || redirects.contains('<')
@@ -443,6 +447,14 @@ pub fn redact_secrets(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_read_never_runs_code_from_inside_an_argument() {
+        for command in ["ls *(e:'touch pwned':)", "cat =(touch pwned)", "echo (New-Item pwned)", "echo {a,b}"] {
+            assert!(!is_read_only(command), "{command}");
+        }
+        assert!(is_read_only("ls -la"));
+    }
+
     use super::*;
 
     #[test]

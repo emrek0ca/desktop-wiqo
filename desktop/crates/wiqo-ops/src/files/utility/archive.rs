@@ -20,6 +20,11 @@ pub(super) fn sources(request: &Request) -> Result<Vec<PathBuf>> {
 
 pub(super) fn archive(ctx: &Context, request: &Request) -> Result<Done> {
     let sources = sources(request)?;
+    // A credential file does not leave under a harmless zip name: the same sensitive-name rule as read and send applies to what is packed.
+    let policy = wiqo_contract::FilePolicy::get();
+    if sources.iter().any(|source| policy.is_sensitive(&source.to_string_lossy())) {
+        return Err(error("SENSITIVE_FILE_BLOCKED", "Kimlik bilgisi içerebilecek dosyalar arşive eklenemez.", "permission"));
+    }
     let first = sources
         .first()
         .ok_or_else(|| error("INVALID_PAYLOAD", "Arşivlenecek dosya yok.", "validation"))?;
@@ -51,7 +56,7 @@ pub(super) fn archive(ctx: &Context, request: &Request) -> Result<Done> {
             let base = source.parent().map(Path::to_path_buf).unwrap_or_default();
             for item in walkdir::WalkDir::new(source).follow_links(false) {
                 let item = item.map_err(std::io::Error::other)?;
-                if item.file_type().is_symlink() || name_of(item.path()).starts_with(".DS_Store") {
+                if item.file_type().is_symlink() || name_of(item.path()).starts_with(".DS_Store") || policy.is_sensitive(&item.path().to_string_lossy()) {
                     continue;
                 }
                 let relative = item.path().strip_prefix(&base).unwrap_or(item.path());

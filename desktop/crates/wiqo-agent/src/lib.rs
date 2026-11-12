@@ -1053,8 +1053,24 @@ impl Desktop {
         Ok(())
     }
 
-    /// Signs out: the connection stops and the device session is forgotten; paired phones stay listed for the next sign-in.
-    pub fn sign_out(&self) -> Result<()> {
+    /// Signs out: the connection stops and the device session ends on the server too (best effort), so another account can sign in on this
+    /// computer; paired phones stay listed for the next sign-in.
+    pub async fn sign_out(&self) -> Result<()> {
+        if let Some(credentials) = self.runtime.credentials.get() {
+            let api = Api::new(&self.server);
+            // The access token lives 15 minutes; an expired one is renewed once so the revoke is accepted.
+            let token = if credentials.access_expires_at <= chrono::Utc::now().timestamp() + 30 {
+                api.refresh(&self.runtime.identity.device_id, &credentials.refresh_token)
+                    .await
+                    .map(|tokens| tokens.access_token)
+                    .unwrap_or(credentials.access_token)
+            } else {
+                credentials.access_token
+            };
+            if let Err(error) = api.revoke_session(&token).await {
+                tracing::warn!("server did not confirm the sign-out: {error}");
+            }
+        }
         self.chat.sign_out()?;
         self.disconnect();
         self.runtime.credentials.clear()?;
@@ -1226,7 +1242,8 @@ impl Desktop {
         if batched {
             let mut allowed = self.shared.allowed_kinds.lock().expect("allowed lock");
             allowed.retain(|_, at| at.elapsed() < Duration::from_secs(120));
-            if allowed.contains_key(kind) {
+            // One yes covers the same question again for a short while, never a different path, recipient or content.
+            if allowed.contains_key(&format!("{kind}\u{1}{detail}")) {
                 return true;
             }
         }
@@ -1288,7 +1305,7 @@ impl Desktop {
                 .allowed_kinds
                 .lock()
                 .expect("allowed lock")
-                .insert(kind.to_string(), std::time::Instant::now());
+                .insert(format!("{kind}\u{1}{detail}"), std::time::Instant::now());
         }
         let _ = self
             .shared

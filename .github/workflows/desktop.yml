@@ -19,7 +19,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 # The same checks on the three systems the desktop runs on: the platform-specific code (power, volume, applications, screen) is only compiled and tested on its own system.
 jobs:
@@ -79,8 +79,9 @@ jobs:
         env:
           WIQO_HELPER: ${{ github.workspace }}\desktop\app\binaries\agent-desktop.exe
           WIQO_BROWSER_WORKER_DIR: ${{ github.workspace }}\desktop\browser-worker
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The updater signing key is given only to builds of the main branch, so a build of any other branch cannot produce installers the updater trusts.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.ref == 'refs/heads/main' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.ref == 'refs/heads/main' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: cargo tauri build --target ${{ matrix.target }} --bundles nsis
       - name: Collect
         shell: bash
@@ -128,9 +129,12 @@ jobs:
   # website's download button reads the GitHub releases and picks the newest one with a Windows installer, so nothing else is needed.
   # An existing release (or a tag given by hand) only gets its Windows files replaced.
   windows-release:
-    if: github.event_name != 'pull_request'
+    # Only the main branch publishes or replaces a public release; other branches still build and check.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: windows-package
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

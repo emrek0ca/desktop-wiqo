@@ -539,6 +539,13 @@ fn transfer(ctx: &Context, request: &FileOperation, copy: bool) -> Result<PathBu
                 "Taşınacak kaynak bulunamadı; önce arama veya listeleme ile gerçek yolu doğrula.",
             )
         })?;
+    // A credential file is not copied or moved under another name (it would then pass the read and send checks).
+    if FilePolicy::get().is_sensitive(&source.to_string_lossy()) || FilePolicy::get().is_sensitive(&request.path) {
+        return Err(permission(
+            "SENSITIVE_FILE_BLOCKED",
+            "Kimlik bilgisi içerebilecek dosyalar Wiqo tarafından kopyalanamaz ya da taşınamaz.",
+        ));
+    }
     // "Move it into ~/Desktop/Arşiv/2026/" works when that folder does not exist yet.
     if let Some(raw) = request.destination.as_deref() {
         fsx::ensure_parent(raw);

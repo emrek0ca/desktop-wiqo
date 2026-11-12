@@ -33,7 +33,61 @@ pub type Approve =
 /// only for what the person allowed once and for all) or that the server marked. A read never asks (`requiresUserPresence` marks reads of private
 /// files too); a press on the screen that cannot be taken back is asked by the computer itself (DESKTOP_APPROVAL_REQUIRED).
 pub(crate) fn needs_yes(step: &Value) -> bool {
-    step["approvalRequired"] == true || step["isDestructive"] == true
+    step["approvalRequired"] == true || step["isDestructive"] == true || asks_to_send(step)
+}
+
+/// The words the person approves are the server's own summary, so the arguments that will really run are put under it: where, to whom, which command.
+fn with_facts(step: &Value, question: String) -> String {
+    let payload = payload_of(step);
+    let value = payload.get("value").unwrap_or(&payload);
+    let mut facts = Vec::new();
+    for key in ["path", "from", "to", "source", "destination", "target", "recipient", "recipients", "email", "subject", "workingDirectory", "command", "url", "app", "name"] {
+        let shown = match &value[key] {
+            Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+            Value::Array(items) if !items.is_empty() => Some(items.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")),
+            _ => None,
+        };
+        if let Some(text) = shown.filter(|text| !text.is_empty()) {
+            facts.push(format!("{key}: {}", text.chars().take(200).collect::<String>()));
+        }
+    }
+    if facts.is_empty() { question } else { format!("{question}\n\n{}", facts.join("\n")) }
+}
+
+/// The step's payload as an object, whether the server wrote it as JSON text or as an object.
+fn payload_of(step: &Value) -> Value {
+    match &step["payload"] {
+        Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+        other => other.clone(),
+    }
+}
+
+/// A browser step that asks to send from the person's signed-in accounts (`sendApproved`): that claim comes from the server, so this computer asks
+/// for its own yes (and an unattended automation refuses it) instead of believing it.
+fn asks_to_send(step: &Value) -> bool {
+    let payload = payload_of(step);
+    payload["sendApproved"] == true || payload["value"]["sendApproved"] == true
+}
+
+/// What only this computer may say about the person: `person` (a phone's own signature, see wiqo-core relay) and `cardApproved` (this computer's
+/// own yes to a press that cannot be taken back) are dropped from whatever the server planned; `sendApproved` stays only after this computer's yes.
+fn without_server_authority(mut payload: Value, card_approved: bool, send_approved: bool) -> Value {
+    let clean = |object: &mut serde_json::Map<String, Value>| {
+        object.remove("person");
+        if !card_approved {
+            object.remove("cardApproved");
+        }
+        if !send_approved {
+            object.remove("sendApproved");
+        }
+    };
+    if let Some(object) = payload.as_object_mut() {
+        clean(object);
+    }
+    if let Some(object) = payload.get_mut("value").and_then(Value::as_object_mut) {
+        clean(object);
+    }
+    payload
 }
 
 /// Who a turn is for.
@@ -944,11 +998,12 @@ impl Chat {
                 let summary = step["summary"].as_str().unwrap_or("").to_string();
                 let kind = step["type"].as_str().unwrap_or("").to_string();
                 // "Önce prova": a batch says what it would do before the yes is asked, so the question lists the files and where each goes.
-                let question = if needs_yes(step) { with_preview(engine, step, &summary) } else { summary.clone() };
-                let mut result = if needs_yes(step) && !approve(kind.clone(), question).await {
+                let question = if needs_yes(step) { with_facts(step, with_preview(engine, step, &summary)) } else { summary.clone() };
+                let asked = needs_yes(step);
+                let mut result = if asked && !approve(kind.clone(), question).await {
                     refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
                 } else {
-                    run_with_progress(engine, step, &emit).await
+                    run_with_progress(engine, step, &emit, asked).await
                 };
                 // The computer itself asks before a press that cannot be taken back: the person's yes is asked with its own sentence, and the same
                 // step runs once more, under a new id, carrying that yes.
@@ -960,7 +1015,7 @@ impl Chat {
                         if let Some(value) = approved["payload"]["value"].as_object_mut() {
                             value.insert("cardApproved".into(), json!(true));
                         }
-                        let mut again = run_step(engine, &approved).await;
+                        let mut again = run_step_as(engine, &approved, true, false).await;
                         again["stepId"] = step["id"].clone();
                         again
                     } else {
@@ -1334,10 +1389,10 @@ pub(crate) fn refused_step(step: &Value, message: &str) -> Value {
 
 /// Runs one step of the answer here and describes the result the way the server reads `deviceResults`.
 /// Runs a step and, while it runs, puts how far it has come at the end of its line ("Kopyala · %45 · ~20 sn kaldı") for the panel and the phone.
-async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value)) -> Value {
+async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value), local_yes: bool) -> Value {
     let id = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok());
     let summary = step["summary"].as_str().unwrap_or("").to_string();
-    let run = run_step(engine, step);
+    let run = run_step_as(engine, step, false, local_yes);
     tokio::pin!(run);
     let mut shown = String::new();
     loop {
@@ -1356,18 +1411,22 @@ async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value))
 }
 
 pub(crate) async fn run_step(engine: &Engine, step: &Value) -> Value {
+    run_step_as(engine, step, false, false).await
+}
+
+/// Runs a step the server planned. `card_approved` is set only by this computer's own re-run after the person's yes to an irreversible press,
+/// `send_approved` only after this computer's yes to a send from a signed-in account.
+pub(crate) async fn run_step_as(engine: &Engine, step: &Value, card_approved: bool, send_approved: bool) -> Value {
     let kind = step["type"].as_str().unwrap_or("unknown").to_string();
     let refused = |message: &str, code: &str| json!({ "stepId": step["id"], "type": kind, "status": "denied", "message": message, "errorCode": code });
     let Some(id) = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
         return refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP");
     };
-    let payload = match &step["payload"] {
-        Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
-        other => other.clone(),
-    };
+    let payload = payload_of(step);
     if payload.is_null() {
         return refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP");
     }
+    let payload = without_server_authority(payload, card_approved, send_approved);
     let summary = step["summary"].as_str().unwrap_or("").to_string();
     let request = Request {
         id,

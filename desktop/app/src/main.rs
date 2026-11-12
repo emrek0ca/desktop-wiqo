@@ -296,6 +296,10 @@ async fn connector_connect(app: State<'_, App>, provider: String) -> Reply<()> {
         .connector_start(&provider)
         .await
         .map_err(text)?;
+    // The consent page is a web page: nothing else (file:, smb:, another app's scheme) is opened for a server-supplied address.
+    if !url.starts_with("https://") {
+        return Err("Bağlantı adresi güvenli değil; açılmadı.".into());
+    }
     open_browser(&url);
     Ok(())
 }
@@ -376,8 +380,8 @@ fn handle_link(handle: &AppHandle, link: &str) {
 }
 
 #[tauri::command]
-fn sign_out(app: State<'_, App>) -> Reply<Snapshot> {
-    app.desktop.sign_out().map_err(text)?;
+async fn sign_out(app: State<'_, App>) -> Reply<Snapshot> {
+    app.desktop.sign_out().await.map_err(text)?;
     Ok(app.desktop.snapshot())
 }
 
@@ -443,6 +447,9 @@ async fn artifact_save(
     } else {
         clean
     };
+    // Only document and picture types are opened with the system handler; a script, shortcut or app file is saved but never launched.
+    let extension = name.rsplit_once('.').map(|(_, ext)| ext.to_lowercase()).unwrap_or_default();
+    let open = open && matches!(extension.as_str(), "pdf" | "docx" | "doc" | "xlsx" | "xls" | "pptx" | "ppt" | "csv" | "txt" | "md" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "rtf" | "json" | "zip");
     let mut path = folder.join(&name);
     let (stem, ext) = match name.rsplit_once('.') {
         Some((stem, ext)) => (stem.to_string(), format!(".{ext}")),
