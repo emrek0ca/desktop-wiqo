@@ -316,6 +316,10 @@ impl Observer for Shared {
         let _ = self.inbox.send(Inbox::Watches(watches));
     }
 
+    fn agent_steps(&self, units: Vec<serde_json::Value>) {
+        let _ = self.inbox.send(Inbox::AgentSteps(units));
+    }
+
     fn state(&self, state: &ConnectionState) {
         *self.connection.lock().expect("connection lock") = state.clone();
         let _ = self.events.send(Event::Connection {
@@ -477,6 +481,8 @@ enum Inbox {
     Automation(Vec<(i64, serde_json::Value)>),
     /// Signed-in pages due for a check (the server's watchers).
     Watches(Vec<serde_json::Value>),
+    /// Background tasks' steps to run on this computer (rova-backend agent/pcUnits.ts).
+    AgentSteps(Vec<serde_json::Value>),
 }
 
 /// A phone's `remoteMessage` (frames.json): the request it would have sent to `/copilot/chat` itself.
@@ -540,6 +546,8 @@ pub struct Desktop {
     server: String,
     shared: Arc<Shared>,
     relay: Mutex<Option<(JoinHandle<()>, Arc<Notify>)>>,
+    /// Taken once by `connect`: the job events the terminal emitted, forwarded to the server as `pcJobEvent`.
+    job_events: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>>>,
     permissions: Arc<permissions::Permissions>,
     pub chat: chat::Chat,
 }
@@ -561,7 +569,11 @@ impl Desktop {
             data_dir: dir.clone(),
             credentials: credentials.clone(),
             announce: Default::default(),
+            job_events: Default::default(),
         });
+        // Long jobs say when they started and ended; the events wait here until the relay is connected (`connect`).
+        let (job_sender, job_reader) = tokio::sync::mpsc::unbounded_channel();
+        services.job_events.attach(job_sender);
         let (events, _) = broadcast::channel(256);
         let permissions = Arc::new(permissions::Permissions::new(dir.file("permissions.json")));
         let (inbox, inbox_reader) = tokio::sync::mpsc::unbounded_channel();
@@ -577,8 +589,12 @@ impl Desktop {
             permissions: permissions.clone(),
             asked_at: Mutex::new(std::collections::HashMap::new()),
         });
-        let mut engine = Engine::new(platform, settings, Arc::new(Ledger::open(&dir)), services);
+        let mut engine = Engine::new(platform, settings, Arc::new(Ledger::open(&dir)), services.clone());
         wiqo_ops::register_all(&mut engine).map_err(anyhow::Error::msg)?;
+        // Jobs the last run left open are over: they are told as "not known" (the process did not survive the restart).
+        if let Some(terminal) = engine.terminal() {
+            terminal.recover(&services);
+        }
         let probe = permissions.clone();
         engine.set_blockers(Arc::new(move || probe.blockers()));
         let runtime = Arc::new(Runtime {
@@ -613,6 +629,7 @@ impl Desktop {
             server,
             shared,
             relay: Mutex::new(None),
+            job_events: Mutex::new(Some(job_reader)),
         }))
     }
 
@@ -670,6 +687,28 @@ impl Desktop {
         let refresher = connection.refresher();
         let task = tokio::spawn(async move { connection.run().await });
         *relay = Some((task, refresher));
+        if let Some(mut reader) = self.job_events.lock().expect("job events lock").take() {
+            let runtime = self.runtime.clone();
+            tokio::spawn(async move {
+                while let Some(event) = reader.recv().await {
+                    let mut frame = event;
+                    if let Some(object) = frame.as_object_mut() {
+                        object.insert("type".into(), "pcJobEvent".into());
+                    }
+                    // The phone's own copy of a finished job (its app may be open): a companion frame, the server records the job from the first one.
+                    runtime.outbox.deliver(&frame).await;
+                    if frame["phase"] == "finished" {
+                        runtime
+                            .outbox
+                            .deliver(&wiqo_core::relay::to_phone(
+                                serde_json::json!({ "kind": wiqo_contract::frames::JOB_FINISHED, "job": frame }),
+                                None,
+                            ))
+                            .await;
+                    }
+                }
+            });
+        }
     }
 
     /// Stops the connection: no command reaches this computer until `connect` again.
@@ -801,7 +840,11 @@ impl Desktop {
         let desktop = self.clone();
         Box::new(move |kind: String, detail: String| {
             let (desktop, request_id) = (desktop.clone(), request_id.clone());
-            Box::pin(async move { desktop.ask(&kind, &detail, request_id.as_deref()).await })
+            Box::pin(async move {
+                desktop
+                    .ask_decision(&kind, &detail, request_id.as_deref())
+                    .await
+            })
         })
     }
 
@@ -817,6 +860,11 @@ impl Desktop {
                 Inbox::Automation(steps) => {
                     let desktop = self.clone();
                     tokio::spawn(async move { desktop.run_automation(steps).await });
+                    continue;
+                }
+                Inbox::AgentSteps(units) => {
+                    let desktop = self.clone();
+                    tokio::spawn(async move { desktop.run_agent_steps(units).await });
                     continue;
                 }
                 Inbox::Watches(watches) => {
@@ -838,8 +886,57 @@ impl Desktop {
                         self.answer(id, approved, "phone");
                     }
                 }
+                wiqo_contract::frames::CANCEL_JOB => {
+                    if let (Some(id), Some(terminal)) = (value["jobId"].as_str(), self.runtime.engine.terminal()) {
+                        if !terminal.cancel_job(id) {
+                            tracing::info!("cancelJob {id}: no such running job");
+                        }
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Background tasks' steps that need this computer: each runs as a chat turn held here, in the task's own conversation, with the same approval rules as
+    /// a message typed here (the question is in this window and goes to the person's phone by push). When the turn ends the server is told on the socket;
+    /// what the step achieved is read there from the turn's own record, not from this computer's word.
+    async fn run_agent_steps(self: &Arc<Self>, units: Vec<serde_json::Value>) {
+        for unit in units {
+            let (Some(unit_id), Some(request_id), Some(conversation), Some(prompt)) = (unit["unitId"].as_i64(), unit["requestId"].as_str(), unit["conversationId"].as_str(), unit["prompt"].as_str()) else {
+                continue;
+            };
+            let device = self.runtime.identity.device_id.clone();
+            let turn = format!("agent-step-{unit_id}");
+            let outcome = self
+                .chat
+                .send(
+                    &self.runtime.engine,
+                    &device,
+                    &self.shared.events,
+                    &turn,
+                    request_id.to_string(),
+                    conversation,
+                    serde_json::json!([]),
+                    prompt,
+                    None,
+                    None,
+                    serde_json::json!([]),
+                    &chat::Asker::Window,
+                    &self.approver(Some(request_id.to_string())),
+                )
+                .await;
+            if let Err(error) = &outcome {
+                tracing::warn!("background task step {unit_id} ended with: {error}");
+            }
+            let _ = self.shared.events.send(Event::Chat {
+                turn: turn.clone(),
+                event: serde_json::json!({ "type": "turnEnd", "error": outcome.err().map(|error| error.to_string()) }),
+            });
+            self.runtime
+                .outbox
+                .deliver(&serde_json::json!({ "type": "agentStepDone", "unitId": unit_id }))
+                .await;
         }
     }
 
@@ -1235,19 +1332,28 @@ impl Desktop {
 
     /// "PC'de onayla": a step that changes, deletes or sends waits for a yes. The question is in this computer's panel and, for a phone's message, on
     /// that phone at the same moment (with the generic approval push for a phone whose app is closed); whichever answers first decides, and both are
-    /// told it is settled. No answer within `approvalSeconds` refuses it. Changes that can be taken back (a move, a copy, a write) share one yes for a
-    /// short while; a delete or a send is asked every time.
+    /// told it is settled. No answer within `chatApprovalSeconds` is its own end (`Decision::TimedOut`), not a no: the person was away, and the task
+    /// says so. Changes that can be taken back (a move, a copy, a write) share one yes for a short while; a delete or a send is asked every time.
     pub async fn ask(&self, kind: &str, detail: &str, request_id: Option<&str>) -> bool {
+        self.ask_decision(kind, detail, request_id).await == chat::Decision::Yes
+    }
+
+    pub async fn ask_decision(
+        &self,
+        kind: &str,
+        detail: &str,
+        request_id: Option<&str>,
+    ) -> chat::Decision {
         let batched = matches!(kind, "moveFile" | "copyFile" | "writeFile");
         if batched {
             let mut allowed = self.shared.allowed_kinds.lock().expect("allowed lock");
             allowed.retain(|_, at| at.elapsed() < Duration::from_secs(120));
             // One yes covers the same question again for a short while, never a different path, recipient or content.
             if allowed.contains_key(&format!("{kind}\u{1}{detail}")) {
-                return true;
+                return chat::Decision::Yes;
             }
         }
-        let seconds = wiqo_contract::frames::Frames::get().approval_seconds;
+        let seconds = wiqo_contract::frames::Frames::get().chat_approval_seconds;
         let id = uuid::Uuid::new_v4().to_string();
         let (answer, answered) = tokio::sync::oneshot::channel();
         self.shared
@@ -1320,7 +1426,13 @@ impl Desktop {
                 ))
                 .await;
         }
-        allowed
+        if allowed {
+            chat::Decision::Yes
+        } else if by == "timeout" {
+            chat::Decision::TimedOut
+        } else {
+            chat::Decision::No
+        }
     }
 
     /// Where the on-device speech model lives (next to the other data of this computer).
@@ -1339,7 +1451,7 @@ impl Desktop {
             .iter()
             .map(|(question, raised)| PendingApproval {
                 seconds: wiqo_contract::frames::Frames::get()
-                    .approval_seconds
+                    .chat_approval_seconds
                     .saturating_sub(raised.elapsed().as_secs()),
                 ..question.clone()
             })
@@ -1606,7 +1718,7 @@ mod tests {
         });
         let id = open_question(&desktop).await;
         tokio::time::advance(Duration::from_secs(
-            wiqo_contract::frames::Frames::get().approval_seconds + 1,
+            wiqo_contract::frames::Frames::get().chat_approval_seconds + 1,
         ))
         .await;
         assert!(!decision.await.unwrap());

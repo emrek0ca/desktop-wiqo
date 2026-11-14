@@ -125,6 +125,32 @@ jobs:
           WIQO_DATA_DIR: ${{ runner.temp }}/wiqo-selftest-full
         run: target/debug/wiqo-agent selftest
 
+  # Driving other apps on Windows (the UI Automation tree through the agent-desktop helper): Notepad is opened and its controls are read for real.
+  # Reported only (continue-on-error): a CI machine does not always have an interactive desktop session.
+  windows-uia:
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Helper
+        run: scripts/build-helper.sh x86_64-pc-windows-msvc "$RUNNER_TEMP/helper"
+      - name: Open Notepad
+        shell: pwsh
+        run: Start-Process notepad; Start-Sleep -Seconds 4
+      - name: Read Notepad's controls
+        env:
+          WIQO_AGENT_DESKTOP: ${{ runner.temp }}/helper/agent-desktop.exe
+          WIQO_LIVE_APP: Notepad
+        run: cargo test -p wiqo-ops live_observation -- --ignored --nocapture
+
   # A new version (desktop/app/tauri.conf.json "version") pushed to the repository is published by itself as `desktop-v<version>`; the
   # website's download button reads the GitHub releases and picks the newest one with a Windows installer, so nothing else is needed.
   # An existing release (or a tag given by hand) only gets its Windows files replaced.

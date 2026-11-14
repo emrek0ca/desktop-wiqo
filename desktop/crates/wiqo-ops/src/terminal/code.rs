@@ -144,7 +144,7 @@ fn execute(value: &Value) -> (Option<Value>, Option<WireError>) {
             )),
         );
     }
-    let seconds = request.timeout_seconds.clamp(1, 110);
+    let seconds = request.timeout_seconds.clamp(1, 50);
     let mut argv: Vec<String> = if interpreter.starts_with('/') {
         vec![interpreter.into()]
     } else {

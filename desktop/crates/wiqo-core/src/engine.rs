@@ -138,6 +138,24 @@ pub struct Services {
     pub credentials: Arc<CredentialStore>,
     /// Rung when something the server reads from the registration changed: the desktop registers again.
     pub announce: Arc<tokio::sync::Notify>,
+    /// Where a long job says it started and ended (the agent forwards these to the server); nothing is sent while no sink is attached.
+    pub job_events: Arc<JobEvents>,
+}
+
+/// A small sink for job events from threads that are not async: the agent attaches a channel, the terminal emits into it.
+#[derive(Default)]
+pub struct JobEvents(std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>);
+
+impl JobEvents {
+    pub fn attach(&self, sender: tokio::sync::mpsc::UnboundedSender<Value>) {
+        *self.0.lock().expect("job events lock") = Some(sender);
+    }
+
+    pub fn emit(&self, event: Value) {
+        if let Some(sender) = self.0.lock().expect("job events lock").as_ref() {
+            let _ = sender.send(event);
+        }
+    }
 }
 
 impl Services {
@@ -150,6 +168,7 @@ impl Services {
             credentials: Arc::new(CredentialStore::open(&dir)),
             data_dir: dir,
             announce: Default::default(),
+            job_events: Default::default(),
         })
     }
 }
@@ -473,6 +492,7 @@ impl Engine {
             Lane::ReadOnly => self.readers.clone(),
             Lane::SideEffect => self.writer.clone(),
         };
+        let reads_only = operation.lane() == Lane::ReadOnly;
         let payload = request.payload.clone();
         let context = Context {
             command_id: id,
@@ -518,16 +538,22 @@ impl Engine {
                         task.abort();
                     }
                 });
-                CommandResult::failed(
-                    id,
-                    CommandStatus::Failed,
+                // What only looks cannot have changed anything: its time ran out, and it may be tried once more (narrower). What may change something
+                // is unknown after its time runs out, and is never repeated by itself.
+                let error = if reads_only {
+                    WireError::new(
+                        codes::READ_TIMEOUT,
+                        "Okuma zamanında bitmedi; hiçbir şey değişmedi. Daha dar bir klasör ya da daha kısa bir aramayla bir kez daha dene.",
+                        "tool_failure",
+                    )
+                } else {
                     WireError::new(
                         codes::COMMAND_TIMEOUT,
                         "İşlem zamanında bitmedi; sonucu bilinmiyor.",
                         "timeout",
-                    ),
-                    started,
-                )
+                    )
+                };
+                CommandResult::failed(id, CommandStatus::Failed, error, started)
             }
         }
     }
@@ -574,6 +600,7 @@ mod tests {
     struct Counting {
         runs: Arc<AtomicUsize>,
         delay: Duration,
+        lane: Lane,
     }
 
     #[async_trait]
@@ -583,7 +610,7 @@ mod tests {
         }
 
         fn lane(&self) -> Lane {
-            Lane::ReadOnly
+            self.lane
         }
 
         async fn run(&self, _ctx: &Context, _payload: &Value) -> Outcome {
@@ -601,11 +628,16 @@ mod tests {
             data_dir: dir.clone(),
             credentials: Arc::new(CredentialStore::open(&dir)),
             announce: Default::default(),
+            job_events: Default::default(),
         });
         (dir, services)
     }
 
     fn engine(delay: Duration) -> (Engine, Arc<AtomicUsize>) {
+        engine_in(delay, Lane::ReadOnly)
+    }
+
+    fn engine_in(delay: Duration, lane: Lane) -> (Engine, Arc<AtomicUsize>) {
         let (dir, services) = test_services();
         let mut engine = Engine::new(
             Platform::MacOs,
@@ -618,6 +650,7 @@ mod tests {
             .register(Arc::new(Counting {
                 runs: runs.clone(),
                 delay,
+                lane,
             }))
             .unwrap();
         (engine, runs)
@@ -713,8 +746,17 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_command_over_its_budget_answers_timeout_and_keeps_its_lane_until_it_ends() {
-        let (engine, _) = engine(Duration::from_secs(200));
+        let (engine, _) = engine_in(Duration::from_secs(200), Lane::SideEffect);
         let result = engine.execute(&request("ping")).await;
         assert_eq!(result.error.unwrap().code, codes::COMMAND_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_read_over_its_budget_changed_nothing_and_says_so() {
+        let (engine, _) = engine(Duration::from_secs(200));
+        let result = engine.execute(&request("ping")).await;
+        let error = result.error.unwrap();
+        assert_eq!(error.code, codes::READ_TIMEOUT);
+        assert_ne!(error.category.as_deref(), Some("timeout"));
     }
 }

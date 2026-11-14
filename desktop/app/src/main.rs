@@ -546,6 +546,12 @@ async fn skill_import(app: State<'_, App>, code: String, preview: bool) -> Reply
     app.desktop.chat.skill_import(&code, preview).await.map_err(text)
 }
 
+/// Recipe packs: the list (no id) or one pack added to the person's recipes.
+#[tauri::command]
+async fn skill_packs(app: State<'_, App>, import: Option<String>) -> Reply<serde_json::Value> {
+    app.desktop.chat.skill_packs(import.as_deref()).await.map_err(text)
+}
+
 /// "Bir kez göster": start, stop (the steps come back to be read), cancel, and the steps sent to become a recipe.
 #[tauri::command]
 fn record_start(app: State<'_, App>) -> String {
@@ -1035,6 +1041,7 @@ fn main() {
             skills_list,
             skill_action,
             skill_import,
+            skill_packs,
             record_start,
             record_stop,
             record_cancel,

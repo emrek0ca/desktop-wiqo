@@ -116,6 +116,56 @@
     list.parentElement.hidden = recipes.length === 0;
     $("recipes-empty").hidden = recipes.length > 0;
     renderIdeas();
+    loadPacks();
+  }
+
+  // ----- Paketler: ready-made recipe packs -----
+
+  function packRow(pack) {
+    const item = document.createElement("li");
+    item.className = "recipe-row";
+    const text = document.createElement("div");
+    text.className = "recipe-text";
+    const name = document.createElement("div");
+    name.className = "w-title";
+    name.textContent = pack.name;
+    const about = document.createElement("div");
+    about.className = "muted small";
+    about.textContent = [pack.about, pack.recipes ? `${pack.recipes} tarif` : ""].filter(Boolean).join(" · ");
+    text.append(name, about);
+    const add = document.createElement("button");
+    add.className = "secondary small";
+    add.textContent = "Ekle";
+    add.onclick = async () => {
+      add.disabled = true;
+      try {
+        const answer = await invoke("skill_packs", { import: pack.id });
+        toast(answer.added > 0 ? `${answer.added} tarif eklendi` : "Zaten ekli");
+        recipes = answer.skills || recipes;
+        $("recipes-list").replaceChildren(...recipes.map(row));
+        $("recipes-list").parentElement.hidden = recipes.length === 0;
+        $("recipes-empty").hidden = recipes.length > 0;
+        renderIdeas();
+      } catch (error) {
+        showError(String(error));
+      } finally {
+        add.disabled = false;
+      }
+    };
+    item.append(text, add);
+    return item;
+  }
+
+  async function loadPacks() {
+    try {
+      const answer = await invoke("skill_packs", { import: null });
+      const packs = answer.packs || [];
+      $("recipe-packs").replaceChildren(...packs.map(packRow));
+      $("recipe-packs").closest("section").querySelector("h4").hidden = packs.length === 0;
+      $("recipe-packs").parentElement.hidden = packs.length === 0;
+    } catch {
+      $("recipe-packs").parentElement.hidden = true;
+    }
   }
 
   // ----- a shared recipe, by its code or link -----

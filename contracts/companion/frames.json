@@ -7,7 +7,8 @@
   },
   "timing": {
     "ackSeconds": 3,
-    "approvalSeconds": 90
+    "approvalSeconds": 90,
+    "chatApprovalSeconds": 600
   },
   "toDesktop": {
     "about": "Every frame to the desktop is a signed command v2 (vectors.json commandSignatures): { id, type, createdAt, payload: { kind, value }, signatureVersion: 2, createdAtEpochMs, nonce, signature }, signed with the pairing token. The desktop checks the signature and the nonce (INVALID_SIGNATURE, SIGNATURE_VERSION_REQUIRED) and drops what fails. type is one of these, or an operation of operations.json (a PC screen's own command, answered with commandResult).",
@@ -26,6 +27,13 @@
           "approved"
         ],
         "answer": "approvalResolved. The first answer (desktop or phone) wins; a later one is ignored."
+      },
+      "cancelJob": {
+        "payloadKind": "cancelJob",
+        "fields": [
+          "jobId"
+        ],
+        "answer": "No answer frame: the job ends as cancelled and the desktop reports it with jobFinished."
       }
     }
   },
@@ -58,6 +66,9 @@
       "commandResult": [
         "commandId",
         "result"
+      ],
+      "jobFinished": [
+        "job"
       ]
     }
   }

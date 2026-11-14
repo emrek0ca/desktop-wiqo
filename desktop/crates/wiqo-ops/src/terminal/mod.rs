@@ -4,6 +4,7 @@
 
 pub(crate) mod code;
 mod edit;
+mod jobs;
 mod policy;
 mod profile;
 pub(crate) mod shell;
@@ -60,6 +61,15 @@ struct Request {
     edits: Option<Vec<FileEdit>>,
     replacements: Option<Vec<ReplacementRequest>>,
     undo_id: Option<String>,
+    /// A job the person wants to hear about when it ends, and one that may run for hours (jobs.rs): see `start_job`.
+    label: Option<String>,
+    notify_when_done: Option<bool>,
+    long: Option<bool>,
+    /// `watch`: file (folder + pattern) or process (name or pid).
+    watch: Option<String>,
+    folder: Option<String>,
+    name: Option<String>,
+    pid: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -88,6 +98,7 @@ struct ReplacementRequest {
 /// A background job: its process, its last output, and how it ended.
 struct Job {
     grant_id: String,
+    label: String,
     working_directory: PathBuf,
     started_at: chrono::DateTime<Utc>,
     state: &'static str,
@@ -111,6 +122,7 @@ struct State {
 
 #[derive(Default)]
 pub struct Sessions {
+    store: OnceLock<Arc<jobs::JobStore>>,
     state: Arc<Mutex<State>>,
     profile: Arc<OnceLock<Value>>,
 }
@@ -123,6 +135,18 @@ impl Sessions {
             let _ = profile.set(profile::profile());
         });
         sessions
+    }
+
+    /// The record of long jobs on disk, opened with the first use of the desktop's data folder.
+    fn store(&self, services: &wiqo_core::engine::Services) -> Arc<jobs::JobStore> {
+        self.store
+            .get_or_init(|| {
+                Arc::new(jobs::JobStore::open(
+                    services.data_dir.path(),
+                    services.job_events.clone(),
+                ))
+            })
+            .clone()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -207,6 +231,34 @@ impl Terminal for Sessions {
 
     fn profile(&self) -> Option<Value> {
         self.profile.get().cloned()
+    }
+
+    fn recover(&self, services: &wiqo_core::engine::Services) {
+        self.store(services).recover();
+    }
+
+    fn cancel_job(&self, job_id: &str) -> bool {
+        let Some(job) = self.lock().jobs.get(job_id).cloned() else {
+            return false;
+        };
+        let current = job.lock().expect("job lock");
+        if current.state != "running" {
+            return false;
+        }
+        current.control.cancel.store(true, Ordering::SeqCst);
+        shell::terminate(current.control.pid.load(Ordering::SeqCst));
+        true
+    }
+
+    fn running_jobs(&self) -> Vec<(String, String)> {
+        self.lock()
+            .jobs
+            .iter()
+            .filter_map(|(id, job)| {
+                let job = job.lock().ok()?;
+                (job.state == "running").then(|| (id.clone(), job.label.clone()))
+            })
+            .collect()
     }
 
     async fn handle(
@@ -399,6 +451,26 @@ impl Sessions {
                 self.run_plan(session, &request, &grant, &root, &directory)
                     .await
             }
+            "watch" => {
+                let target = match request.watch.as_deref() {
+                    Some("file") => {
+                        let folder = request.folder.as_deref().and_then(policy::resolve_directory);
+                        match folder.filter(|folder| policy::is_within(folder, &root)) {
+                            Some(folder) => jobs::Target::File {
+                                folder,
+                                pattern: request.pattern.clone().unwrap_or_else(|| "*".into()),
+                            },
+                            None => return denied("TERMINAL_OUTSIDE_GRANT", "İzlenecek klasör onaylanan klasörün dışında."),
+                        }
+                    }
+                    Some("process") if request.name.is_some() || request.pid.is_some() => jobs::Target::Process {
+                        name: request.name.clone(),
+                        pid: request.pid,
+                    },
+                    _ => return denied("TERMINAL_ACTION_INVALID", "İzleme için file (folder, pattern) ya da process (name, pid) gerekli."),
+                };
+                self.start_job(session, &request, &grant, &root, &directory, String::new(), Some(target))
+            }
             "run" | "start_job" => {
                 let command = request.command.clone().unwrap_or_default();
                 if !valid_command(&command) {
@@ -414,7 +486,7 @@ impl Sessions {
                     return denied("TERMINAL_READ_ONLY", "Bu oturum yalnızca okuma izni veriyor; değiştiren komut için yeni onay gerekiyor.");
                 }
                 if action == "start_job" {
-                    return self.start_job(&request, &grant, &root, &directory, command);
+                    return self.start_job(session, &request, &grant, &root, &directory, command, None);
                 }
                 self.run_once(&request, &grant, &root, &directory, command, started)
                     .await
@@ -432,7 +504,8 @@ impl Sessions {
         command: String,
         started: chrono::DateTime<Utc>,
     ) -> CommandResult {
-        let seconds = request.timeout_seconds.unwrap_or(60).clamp(1, 110);
+        // The engine gives a terminal step 55 seconds (a long command is a background job): a longer wait here could never end with the shell's own answer.
+        let seconds = request.timeout_seconds.unwrap_or(45).clamp(1, 50);
         let keeps_session = grant.id != READ_WITHOUT_GRANT_ID;
         let exports = if keeps_session {
             self.lock().exports.get(&grant.id).cloned()
@@ -526,7 +599,7 @@ impl Sessions {
         }
         let started = Utc::now();
         let clock = Instant::now();
-        let budget = request.timeout_seconds.unwrap_or(110).clamp(5, 110);
+        let budget = request.timeout_seconds.unwrap_or(50).clamp(5, 50);
         let keeps_session = grant.id != READ_WITHOUT_GRANT_ID;
         let mut exports = if keeps_session {
             self.lock().exports.get(&grant.id).cloned()
@@ -617,13 +690,16 @@ impl Sessions {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_job(
         &self,
+        session: &Session,
         request: &Request,
         grant: &Grant,
         root: &Path,
         directory: &Path,
         command: String,
+        target: Option<jobs::Target>,
     ) -> CommandResult {
         let Some(id) = request
             .job_id
@@ -634,12 +710,39 @@ impl Sessions {
             return denied("TERMINAL_JOB_ID_INVALID", "Arka plan işi kimliği geçersiz.");
         };
         let interactive = request.interactive == Some(true) && grant.mode == "full" && cfg!(unix);
+        // A long job (and a watch) was started on purpose: it is not cut at the end of the half-hour grant, which was checked when it started.
+        let long = request.long == Some(true) || target.is_some();
         let remaining = (grant.expires_at - Utc::now().timestamp()).max(1) as u64;
-        let seconds = request
-            .timeout_seconds
-            .unwrap_or(600)
-            .min(remaining)
-            .clamp(1, 1800);
+        let seconds = if long {
+            request
+                .timeout_seconds
+                .unwrap_or(7200)
+                .clamp(1, jobs::LONG_JOB_MAX_SECONDS)
+        } else {
+            request
+                .timeout_seconds
+                .unwrap_or(600)
+                .min(remaining)
+                .clamp(1, 1800)
+        };
+        let store = self.store(&session.services);
+        let label = request
+            .label
+            .clone()
+            .filter(|label| !label.trim().is_empty())
+            .map(|label| label.chars().take(120).collect::<String>())
+            .unwrap_or_else(|| match &target {
+                Some(jobs::Target::File { pattern, .. }) => format!("Dosya bekleniyor: {pattern}"),
+                Some(jobs::Target::Process { name, .. }) => {
+                    format!("İşlem bekleniyor: {}", name.clone().unwrap_or_default())
+                }
+                None => command.chars().take(80).collect(),
+            });
+        let kind = match &target {
+            Some(jobs::Target::File { .. }) => "file",
+            Some(jobs::Target::Process { .. }) => "process",
+            None => "command",
+        };
         let (job, exports) = {
             let mut state = self.lock();
             if let Some(existing) = state.jobs.get(&id) {
@@ -658,6 +761,7 @@ impl Sessions {
             };
             let job = Arc::new(Mutex::new(Job {
                 grant_id: grant.id.clone(),
+                label: label.clone(),
                 working_directory: directory.to_path_buf(),
                 started_at: Utc::now(),
                 state: "running",
@@ -669,6 +773,18 @@ impl Sessions {
             state.jobs.insert(id.clone(), job.clone());
             (job, state.exports.get(&grant.id).cloned())
         };
+        store.started(jobs::Record {
+            job_id: id.clone(),
+            label,
+            kind: kind.into(),
+            status: "running".into(),
+            exit_code: None,
+            started_at_ms: Utc::now().timestamp_millis(),
+            finished_at_ms: None,
+            notify: request.notify_when_done == Some(true),
+            long,
+            conversation_id: None,
+        });
         let watcher = job.clone();
         let progress: Arc<dyn Fn(Value) + Send + Sync> = Arc::new(move |output| {
             let mut job = watcher.lock().expect("job lock");
@@ -690,7 +806,23 @@ impl Sessions {
             request.shell.clone(),
         );
         let starting_directory = self.lock().directories.get(&grant.id).cloned();
+        let job_id = id.clone();
         std::thread::spawn(move || {
+            if let Some(target) = target {
+                let watched = jobs::watch(&target, seconds, &control.cancel);
+                let mut job = job.lock().expect("job lock");
+                job.output = Some(json!({ "paths": watched.paths, "message": watched.message }));
+                job.message = watched.message.clone();
+                job.state = match watched.status {
+                    "ok" => "completed",
+                    "cancelled" => "cancelled",
+                    "failed" => "failed",
+                    _ => "unknown",
+                };
+                drop(job);
+                store.finished(&job_id, watched.status, None, &watched.message, &watched.paths);
+                return;
+            }
             let outcome = shell::run_tracked(
                 &command,
                 &dir,
@@ -743,6 +875,18 @@ impl Sessions {
             job.state = state_name;
             job.message = message;
             job.error_code = code.clone();
+            let status = match state_name {
+                "completed" => "ok",
+                other => other,
+            };
+            let text = format!(
+                "{}{}",
+                outcome.output["stdout"].as_str().unwrap_or(""),
+                outcome.output["stderr"].as_str().unwrap_or("")
+            );
+            let exit = outcome.output["exitCode"].as_i64();
+            drop(job);
+            store.finished(&job_id, status, exit, &text, &[]);
         });
         self.snapshot(&id)
     }

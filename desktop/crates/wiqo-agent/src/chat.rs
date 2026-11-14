@@ -23,11 +23,22 @@ const CLIENT_FEATURES: [&str; 3] = [
     "relay-execution-v1",
     "receipt-card-v1",
 ];
-const MAX_ROUNDS: usize = 8;
+/// A task goes on as long as it moves: there is no fixed number of rounds. It stops after this long, or after `STALL_ROUNDS` rounds in a row in which
+/// no step completed (the server's own stall rules usually end such a task earlier, honestly).
+const TASK_MINUTES: u64 = 30;
+const STALL_ROUNDS: usize = 3;
 
-/// Asks the person before a step that changes, deletes or sends (the operation and the sentence they read); true is a yes.
+/// What the person answered to a question before a step: yes, no, or nothing in time (they were away; the step did not run and the task says why).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Yes,
+    No,
+    TimedOut,
+}
+
+/// Asks the person before a step that changes, deletes or sends (the operation and the sentence they read).
 pub type Approve =
-    dyn Fn(String, String) -> futures_util::future::BoxFuture<'static, bool> + Send + Sync;
+    dyn Fn(String, String) -> futures_util::future::BoxFuture<'static, Decision> + Send + Sync;
 
 /// Whether a step of the answer waits for the person's yes: one that changes, deletes or sends something (`isDestructive`, cleared by the server
 /// only for what the person allowed once and for all) or that the server marked. A read never asks (`requiresUserPresence` marks reads of private
@@ -706,6 +717,18 @@ impl Chat {
         self.call(reqwest::Method::POST, "skills/import", Some(json!({ "code": code })), Some(&token)).await
     }
 
+    /// Recipe packs ("Paketler"): the list without an id, or that pack's recipes added to this person's recipes.
+    pub async fn skill_packs(&self, import: Option<&str>) -> Result<Value> {
+        let token = self.token()?;
+        match import {
+            None => self.call(reqwest::Method::GET, "skills/packs", None, Some(&token)).await,
+            Some(id) => {
+                let id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+                self.call(reqwest::Method::POST, &format!("skills/packs/{id}/import"), Some(json!({})), Some(&token)).await
+            }
+        }
+    }
+
     /// Every agent of this person (the four ready-made ones included), for the agent form.
     pub async fn agent_list(&self) -> Result<Value> {
         let token = self.token()?;
@@ -974,9 +997,26 @@ impl Chat {
         merge(&mut body, &context);
         emit(json!({ "type": "task", "taskId": task }));
         let mut answer = self.stream(&token, &body, &emit).await?;
-        for _ in 0..MAX_ROUNDS {
+        let started = std::time::Instant::now();
+        let mut stalls = 0usize;
+        while started.elapsed() < Duration::from_secs(TASK_MINUTES * 60) {
+            if answer["type"] == "error" {
+                return Ok(());
+            }
+            // The server's turn ran out of time with the task not done: a new window of the same task, from its notes (rova-backend continueTask).
+            if answer["continueTask"] == true {
+                let mut next = json!({
+                    "messages": [{ "role": "user", "content": text }],
+                    "conversationId": conversation, "requestId": Uuid::new_v4().to_string(), "taskId": answer["taskId"].as_str().unwrap_or(&task),
+                    "resumeTask": true,
+                });
+                merge(&mut next, &context);
+                emit(json!({ "type": "reset" }));
+                answer = self.stream(&token, &next, &emit).await?;
+                continue;
+            }
             let steps = answer["steps"].as_array().cloned().unwrap_or_default();
-            if steps.is_empty() || answer["type"] == "error" {
+            if steps.is_empty() {
                 return Ok(());
             }
             if answer["deviceConnectivity"]["deviceId"]
@@ -1000,16 +1040,18 @@ impl Chat {
                 // "Önce prova": a batch says what it would do before the yes is asked, so the question lists the files and where each goes.
                 let question = if needs_yes(step) { with_facts(step, with_preview(engine, step, &summary)) } else { summary.clone() };
                 let asked = needs_yes(step);
-                let mut result = if asked && !approve(kind.clone(), question).await {
-                    refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
-                } else {
-                    run_with_progress(engine, step, &emit, asked).await
+                let answer = if asked { approve(kind.clone(), question).await } else { Decision::Yes };
+                let mut result = match answer {
+                    Decision::Yes => run_with_progress(engine, step, &emit, asked).await,
+                    Decision::No => refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı."),
+                    Decision::TimedOut => unanswered_step(step),
                 };
                 // The computer itself asks before a press that cannot be taken back: the person's yes is asked with its own sentence, and the same
                 // step runs once more, under a new id, carrying that yes.
                 if result["errorCode"] == "DESKTOP_APPROVAL_REQUIRED" {
                     let sentence = result["error"].as_str().unwrap_or("").to_string();
-                    result = if approve(kind, sentence).await {
+                    let answer = approve(kind, sentence).await;
+                    result = if answer == Decision::Yes {
                         let mut approved = step.clone();
                         approved["id"] = json!(Uuid::new_v4().to_string());
                         if let Some(value) = approved["payload"]["value"].as_object_mut() {
@@ -1018,6 +1060,8 @@ impl Chat {
                         let mut again = run_step_as(engine, &approved, true, false).await;
                         again["stepId"] = step["id"].clone();
                         again
+                    } else if answer == Decision::TimedOut {
+                        unanswered_step(step)
                     } else {
                         refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
                     };
@@ -1037,6 +1081,7 @@ impl Chat {
                     json!({ "type": "status", "text": "PC işleminin sonucu belirsiz; aynı adım yeniden çalıştırılmadı." }),
                 );
             }
+            let progressed = results.iter().any(|result| result["status"] == "completed");
             let mut next = json!({
                 "messages": [
                     { "role": "user", "content": text },
@@ -1052,9 +1097,14 @@ impl Chat {
             if uncertain {
                 return Ok(());
             }
+            stalls = if progressed { 0 } else { stalls + 1 };
+            if stalls >= STALL_ROUNDS {
+                emit(json!({ "type": "status", "text": "Üç turdur hiçbir adım tamamlanmadı; görevi burada durdurdum. Neyi farklı yapmamı istediğini yazarsan devam ederim." }));
+                return Ok(());
+            }
         }
         emit(
-            json!({ "type": "status", "text": "Görev adım sınırına ulaştı; devam etmek için yeni bir mesaj gönder." }),
+            json!({ "type": "status", "text": "Görev 30 dakikayı aştı; tamamlanan adımlar kayıtlı. Devam etmemi istersen yaz." }),
         );
         Ok(())
     }
@@ -1383,6 +1433,12 @@ pub(crate) fn with_preview(engine: &Engine, step: &Value, summary: &str) -> Stri
     )
 }
 
+/// The person did not answer in time: nothing ran, and the task says so in words that tell the model not to ask again by itself (the contract: `APPROVAL_TIMEOUT`).
+pub(crate) fn unanswered_step(step: &Value) -> Value {
+    json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "errorCode": "APPROVAL_TIMEOUT",
+        "message": "Onay için süre doldu; kullanıcı yanıt vermedi ve bu adım çalıştırılmadı. Reddedilmiş sayma; kullanıcıya onayı beklerken süre dolduğunu söyle ve istersen aynı isteği yeniden göndermesini öner." })
+}
+
 pub(crate) fn refused_step(step: &Value, message: &str) -> Value {
     json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": message, "errorCode": "DENIED_ON_PC" })
 }
@@ -1599,7 +1655,7 @@ mod tests {
                 None,
                 json!([]),
                 &Asker::Window,
-                &|_, _| Box::pin(async { true }),
+                &|_, _| Box::pin(async { Decision::Yes }),
             )
             .await;
         assert!(result.unwrap_err().to_string().contains("başka bir PC"));
@@ -1690,7 +1746,7 @@ mod tests {
             None,
             json!([]),
             &asker,
-            &|_, _| Box::pin(async { true }),
+            &|_, _| Box::pin(async { Decision::Yes }),
         )
         .await
         .unwrap();

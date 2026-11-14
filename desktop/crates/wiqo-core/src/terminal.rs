@@ -60,6 +60,16 @@ pub struct Session {
 pub trait Terminal: Send + Sync {
     /// The `terminal-session-v*` features this terminal implements.
     fn features(&self) -> Vec<&'static str>;
+    /// Called once when the desktop starts: jobs the previous run left open are over, and are told as "not known".
+    fn recover(&self, _services: &crate::engine::Services) {}
+    /// Stops a running job by its id (the phone asked: `cancelJob`); false when no such job runs.
+    fn cancel_job(&self, _job_id: &str) -> bool {
+        false
+    }
+    /// The running jobs as (id, label), for a progress line while the person is away.
+    fn running_jobs(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
     /// The developer-environment summary for the model (OS, shell, tools, projects), once it is ready.
     fn profile(&self) -> Option<Value>;
     /// Runs one terminal request. `digest` identifies the request: the same command id with the same request gets the stored answer, never a second run.

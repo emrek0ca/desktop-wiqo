@@ -271,7 +271,7 @@ impl TerminalStep {
                 if let Some(grant) = &grant {
                     request["grant"] = json!(grant);
                 }
-                if action == "start_job" {
+                if action == "start_job" || action == "watch" {
                     request["jobId"] = json!(id);
                 } else {
                     // A command that waits for its end must end inside the step's own time limit (the contract's long budget); longer work is a start_job.
@@ -285,7 +285,7 @@ impl TerminalStep {
                 if folder != policy::SCRATCH_FOLDER {
                     local.last_folder = Some(folder);
                 }
-                if let (true, Some(grant)) = (action == "start_job", grant) {
+                if let (true, Some(grant)) = (action == "start_job" || action == "watch", grant) {
                     local.by_job.insert(id, grant);
                 }
                 drop(local);

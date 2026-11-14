@@ -8,6 +8,7 @@ use serde::Deserialize;
 /// Frames to the desktop (signed commands v2; `type` is one of these or an operation).
 pub const REMOTE_MESSAGE: &str = "remoteMessage";
 pub const APPROVAL_DECISION: &str = "approvalDecision";
+pub const CANCEL_JOB: &str = "cancelJob";
 
 /// Frames to the phone (`kind`).
 pub const ACK: &str = "ack";
@@ -16,12 +17,20 @@ pub const TURN_END: &str = "turnEnd";
 pub const APPROVAL_REQUEST: &str = "approvalRequest";
 pub const APPROVAL_RESOLVED: &str = "approvalResolved";
 pub const COMMAND_RESULT: &str = "commandResult";
+pub const JOB_FINISHED: &str = "jobFinished";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Timing {
     ack_seconds: u64,
     approval_seconds: u64,
+    /// How long a step of a chat waits for the person's yes: the person may be away from the phone for a while, and the task waits for them.
+    #[serde(default = "default_chat_approval")]
+    chat_approval_seconds: u64,
+}
+
+fn default_chat_approval() -> u64 {
+    600
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +55,7 @@ struct File {
 pub struct Frames {
     pub ack_seconds: u64,
     pub approval_seconds: u64,
+    pub chat_approval_seconds: u64,
     to_desktop: Vec<String>,
     to_phone: Vec<String>,
 }
@@ -59,6 +69,7 @@ impl Frames {
             Frames {
                 ack_seconds: file.timing.ack_seconds,
                 approval_seconds: file.timing.approval_seconds,
+                chat_approval_seconds: file.timing.chat_approval_seconds,
                 to_desktop: file.to_desktop.types.keys().cloned().collect(),
                 to_phone: file.to_phone.kinds.keys().cloned().collect(),
             }
@@ -81,7 +92,7 @@ mod tests {
     #[test]
     fn every_frame_this_desktop_speaks_is_in_the_contract_and_nothing_else_is() {
         let frames = Frames::get();
-        let mut to_desktop = vec![REMOTE_MESSAGE, APPROVAL_DECISION];
+        let mut to_desktop = vec![REMOTE_MESSAGE, APPROVAL_DECISION, CANCEL_JOB];
         let mut to_phone = vec![
             ACK,
             STREAM_EVENT,
@@ -89,6 +100,7 @@ mod tests {
             APPROVAL_REQUEST,
             APPROVAL_RESOLVED,
             COMMAND_RESULT,
+            JOB_FINISHED,
         ];
         to_desktop.sort();
         to_phone.sort();
@@ -100,5 +112,6 @@ mod tests {
         assert_eq!(to_phone, listed_phone);
         assert_eq!(frames.ack_seconds, 3);
         assert_eq!(frames.approval_seconds, 90);
+        assert_eq!(frames.chat_approval_seconds, 600);
     }
 }

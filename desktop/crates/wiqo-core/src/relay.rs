@@ -25,6 +25,9 @@ const PROTOCOL_VERSION: u32 = 2;
 const REFRESH_MARGIN_SECONDS: i64 = 120;
 /// How often the desktop asks for its due automation steps while connected.
 const AUTOMATION_PULL: Duration = Duration::from_secs(15);
+/// The server pings every 30 seconds. A connection that has said nothing for this long (a network that changed, a laptop that woke up) is dead even if the
+/// socket does not say so: it is closed and opened again, so the phone's next message finds this computer instead of falling back to the server.
+const SILENCE: Duration = Duration::from_secs(75);
 
 /// Where the connection to the server stands, for whoever shows it (the app window, the tray, the CLI log).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -53,6 +56,9 @@ pub trait Observer: Send + Sync {
     /// Signed-in pages due for a check, handed over with the same answer (`{triggerId, kind, url, selector}`): read each in Wiqo's own browser
     /// profile and answer with `watchObserved`. The server compares; nothing is decided here.
     fn watches(&self, _watches: Vec<Value>) {}
+    /// A background task's steps that have to run on this computer, handed over with the same answer (`{unitId, requestId, conversationId, prompt}`,
+    /// rova-backend agent/pcUnits.ts): each runs as a chat turn this desktop holds, and `agentStepDone` says it ended. The server reads what it achieved.
+    fn agent_steps(&self, _units: Vec<Value>) {}
     /// A command started (`key` is its relay id; `detail` a short line about what it touches) and, later, ended.
     /// `task` groups the commands of one task: the run id the server sends, or a terminal session's grant id.
     fn started(&self, _key: &str, _kind: &str, _detail: &str, _task: Option<&str>) {}
@@ -85,7 +91,8 @@ fn registration(runtime: &Runtime) -> Value {
     let engine = &runtime.engine;
     // Only what this desktop really does: saving into a sub-folder of the Desktop.
     // "desktop.approvalGate": this companion asks before a press that cannot be taken back. The server sends desktop actions only to one that does.
-    let mut features: Vec<&str> = vec!["artifact-directory-v1", "desktop.approvalGate"];
+    // "agent-pc-steps-v1": this desktop takes background tasks' PC steps with its automation pull and runs them as its own chat turns.
+    let mut features: Vec<&str> = vec!["artifact-directory-v1", "desktop.approvalGate", "agent-pc-steps-v1", "pc-jobs-v1"];
     let names = engine.operation_names();
     // fileUtility's inspect and moveDocuments actions: the server only plans them for a desktop that says it has them.
     if names.contains(&"fileUtility") {
@@ -116,8 +123,8 @@ enum Incoming {
     PairingRevoked(String),
     /// A frame from a phone, through the server's pipe (contracts/companion/frames.json).
     Frame(Value),
-    /// The answer to this desktop's `automationPull`: due automation steps and due signed-in page checks.
-    AutomationSteps(Vec<(i64, Value)>, Vec<Value>),
+    /// The answer to this desktop's `automationPull`: due automation steps, due signed-in page checks and background tasks' PC steps.
+    AutomationSteps(Vec<(i64, Value)>, Vec<Value>, Vec<Value>),
     Ignored,
 }
 
@@ -144,6 +151,21 @@ fn parse_incoming(text: &str) -> Incoming {
                     watches
                         .iter()
                         .filter(|watch| watch["triggerId"].is_i64() && watch["url"].as_str().is_some_and(|url| url.starts_with("https://")))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            value["agentSteps"]
+                .as_array()
+                .map(|units| {
+                    units
+                        .iter()
+                        .filter(|unit| {
+                            unit["unitId"].is_i64()
+                                && unit["requestId"].as_str().is_some_and(|id| !id.is_empty() && id.len() <= 128)
+                                && unit["conversationId"].as_str().is_some_and(|id| id.starts_with("agent-pc-"))
+                                && unit["prompt"].as_str().is_some_and(|text| !text.trim().is_empty())
+                        })
                         .cloned()
                         .collect()
                 })
@@ -403,8 +425,12 @@ impl Relay {
     {
         // This desktop asks for its due automation steps now and then; the server never sends work on its own.
         let mut pull = tokio::time::interval(AUTOMATION_PULL);
+        let mut heard = tokio::time::Instant::now();
         loop {
             tokio::select! {
+                _ = tokio::time::sleep_until(heard + SILENCE) => {
+                    return Err(format!("the server has been silent for {} seconds", SILENCE.as_secs()));
+                }
                 _ = pull.tick() => {
                     // The socket was opened with a token that lives fifteen minutes; everything else this desktop sends over HTTP (a file for the
                     // phone, an artifact it downloads) reads the stored one. Kept fresh here, so an upload an hour into a session is not refused with
@@ -422,6 +448,7 @@ impl Relay {
                 }
                 message = stream.next() => {
                     let Some(message) = message else { return Err("the server closed the connection".into()) };
+                    heard = tokio::time::Instant::now();
                     match message.map_err(|error| error.to_string())? {
                         Message::Text(text) => self.dispatch(text.as_str()),
                         Message::Close(frame) => return Err(format!("closed by the server: {frame:?}")),
@@ -434,12 +461,15 @@ impl Relay {
 
     fn dispatch(&self, text: &str) {
         match parse_incoming(text) {
-            Incoming::AutomationSteps(steps, watches) => {
+            Incoming::AutomationSteps(steps, watches, units) => {
                 if !steps.is_empty() {
                     self.observer.automation(steps);
                 }
                 if !watches.is_empty() {
                     self.observer.watches(watches);
+                }
+                if !units.is_empty() {
+                    self.observer.agent_steps(units);
                 }
             }
             Incoming::Frame(frame) => {
@@ -592,16 +622,26 @@ mod frame_tests {
         match parse_incoming(
             r#"{"type":"automationSteps","steps":[{"stepId":4,"step":{"id":"c"}},{"step":{}}]}"#,
         ) {
-            Incoming::AutomationSteps(steps, watches) => {
+            Incoming::AutomationSteps(steps, watches, units) => {
                 assert_eq!(steps, vec![(4, json!({ "id": "c" }))], "a step without its id is dropped");
                 assert!(watches.is_empty());
+                assert!(units.is_empty());
             }
             _ => panic!("automationSteps"),
         }
         match parse_incoming(
             r#"{"type":"automationSteps","steps":[],"watches":[{"triggerId":7,"kind":"page","url":"https://mhrs.gov.tr/"},{"triggerId":8,"url":"http://x.test"}]}"#,
         ) {
-            Incoming::AutomationSteps(_, watches) => assert_eq!(watches.len(), 1, "only an https page with its trigger is read"),
+            Incoming::AutomationSteps(_, watches, _) => assert_eq!(watches.len(), 1, "only an https page with its trigger is read"),
+            _ => panic!("automationSteps"),
+        }
+        match parse_incoming(
+            r#"{"type":"automationSteps","steps":[],"agentSteps":[{"unitId":3,"requestId":"r1","conversationId":"agent-pc-9","prompt":"Raporu kaydet"},{"unitId":4,"requestId":"r2","conversationId":"phone-chat","prompt":"x"},{"unitId":5,"requestId":"","conversationId":"agent-pc-9","prompt":"x"}]}"#,
+        ) {
+            Incoming::AutomationSteps(_, _, units) => {
+                assert_eq!(units.len(), 1, "only a background task's own conversation, with an id and a prompt");
+                assert_eq!(units[0]["unitId"], 3);
+            }
             _ => panic!("automationSteps"),
         }
         assert_eq!(to_phone(json!({"kind":"ack"}), Some("a1"))["notify"], "a1");

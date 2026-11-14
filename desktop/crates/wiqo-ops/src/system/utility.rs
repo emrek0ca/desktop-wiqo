@@ -302,7 +302,7 @@ fn context_report() -> Result<Done> {
             tool_failure("CONTEXT_FAILED", "Ön plandaki pencere okunamadı.")
         });
     };
-    let lines = vec![crate::activity::lines(&front)];
+    let lines = [crate::activity::lines(&front)];
     Ok(Done::new(
         "Şu an ekranda olan.",
         Some(report("context", &lines.join("\n"))),

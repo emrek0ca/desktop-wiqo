@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/agent-desktop.exe": "agent-desktop.exe",
+      "binaries/agent-desktop.LICENSE": "agent-desktop.LICENSE"
+    }
+  }
+}

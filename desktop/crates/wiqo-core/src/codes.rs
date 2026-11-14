@@ -9,6 +9,10 @@ pub const INVALID_PAYLOAD: &str = "INVALID_PAYLOAD";
 pub const OUTCOME_UNKNOWN: &str = "OUTCOME_UNKNOWN";
 /// The person refused (or did not answer) a step that needed their yes.
 pub const DENIED_ON_PC: &str = "DENIED_ON_PC";
+/// Nobody answered the question before a step within the time given for it: the step did not run (not the same as a no).
+pub const APPROVAL_TIMEOUT: &str = "APPROVAL_TIMEOUT";
+/// A read that ran out of its time: it changed nothing, so it may be tried once more (unlike `COMMAND_TIMEOUT`, whose result is unknown).
+pub const READ_TIMEOUT: &str = "READ_TIMEOUT";
 
 #[cfg(test)]
 mod tests {
@@ -25,6 +29,8 @@ mod tests {
             INVALID_PAYLOAD,
             OUTCOME_UNKNOWN,
             DENIED_ON_PC,
+            APPROVAL_TIMEOUT,
+            READ_TIMEOUT,
         ] {
             assert!(
                 ErrorCodes::get().class_of(code).is_some(),

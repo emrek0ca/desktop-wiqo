@@ -780,7 +780,7 @@ listen("wiqo", async (message) => {
       return;
     }
     case "paired":
-      toast(`${event.phone} bağlandı.`, "ok");
+      toast(`${event.phone} bağlandı. Telefonundan ilk komutu bekliyorum.`, "ok");
       phonesPopPairing = false;
       refresh().then(renderPhonesPop);
       break;
