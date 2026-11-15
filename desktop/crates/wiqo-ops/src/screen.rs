@@ -97,6 +97,11 @@ async fn capture(value: &Value) -> Result<Done> {
                 .map(crate::fsx::abbreviate)
                 .unwrap_or_default();
             done.message = format!("Ekran görüntüsü {folder} klasörüne kaydedildi: {name}");
+            // Where the file is, as data: the next step (send it, move it) names it by this path. Said only in the sentence, the path was guessed and
+            // refused sixteen times and the screenshot never reached the phone (prod, 2026-11-15).
+            if let Some(data) = done.data.as_mut() {
+                data["value"]["path"] = json!(path.to_string_lossy());
+            }
         }
         Ok(done)
     })
