@@ -36,7 +36,7 @@ pub(super) fn collect(node: &Value, screen: [f64; 4], out: &mut Vec<Target>) {
             && w > 1.0
             && h > 1.0
             && !states.contains(&"offscreen")
-            && out.len() < MAX_TARGETS
+            && out.len() < READ_MOST
         {
             let round = |value: f64| (value * 100_000.0).round() / 100_000.0;
             out.push(Target {
@@ -245,6 +245,12 @@ pub(super) fn add_screen_text(engine: &dyn Engine, observation: &mut Observation
     observation.targets.extend(fresh);
 }
 
+/// How long an app that was just brought to the front gets to show its window.
+#[cfg(not(test))]
+const BROUGHT_FORWARD: Duration = Duration::from_millis(700);
+#[cfg(test)]
+const BROUGHT_FORWARD: Duration = Duration::from_millis(400);
+
 /// The controls of an app as they are now, in whatever opens over its window first.
 pub(super) fn observe_controls(
     engine: &dyn Engine,
@@ -275,7 +281,33 @@ pub(super) fn observe_on(
     if let Some(name) = &named {
         args.extend(["--app".into(), name.clone()]);
     }
-    let answer = engine.call(&args).map_err(unavailable)?;
+    let mut answer = engine.call(&args).map_err(unavailable)?;
+    // An app whose windows are on another desktop (the person is in a full-screen app) shows none until it is in front: brought forward once and read again.
+    if let (false, "WINDOW_NOT_FOUND", Some(name)) = (answer.ok, answer.code.as_str(), &named) {
+        if !is_wiqo(name) && engine.bring_to_front(name) {
+            std::thread::sleep(BROUGHT_FORWARD);
+            answer = engine.call(&args).map_err(unavailable)?;
+        }
+    }
+    // Several windows and none of them in front: the helper will not choose. The one the app used last (the first it lists, or the focused one) is read.
+    if let (false, "AMBIGUOUS_TARGET", Some(name)) = (answer.ok, answer.code.as_str(), &named) {
+        let listed = engine
+            .call(&["list-windows".into(), "--app".into(), name.clone()])
+            .ok()
+            .filter(|listed| listed.ok)
+            .and_then(|listed| listed.data.as_array().cloned())
+            .unwrap_or_default();
+        let window = listed
+            .iter()
+            .find(|window| window["is_focused"] == true)
+            .or_else(|| listed.first())
+            .and_then(|window| window["id"].as_str());
+        if let Some(window) = window {
+            let mut one = args.clone();
+            one.extend(["--window-id".into(), window.to_string()]);
+            answer = engine.call(&one).map_err(unavailable)?;
+        }
+    }
     if !answer.ok {
         // An app that is running with no window (TextEdit after its last document closed) is a real place to work: its shortcuts (command+n) still
         // reach it. It is reported as an app with nothing on screen yet, not as an app that is missing.
@@ -288,6 +320,7 @@ pub(super) fn observe_on(
                 screen: rects[primary],
                 display: primary,
                 window: None,
+                hidden: Vec::new(),
             });
         }
         // A window the accessibility tree cannot see (a game, a canvas, a remote desktop) is read from its pixels instead.
@@ -302,6 +335,7 @@ pub(super) fn observe_on(
                     screen: rects[primary],
                     display: primary,
                     window: None,
+                    hidden: Vec::new(),
                 });
             }
         }
@@ -324,8 +358,9 @@ pub(super) fn observe_on(
     let over_window = open_surfaces(engine, named.as_deref().unwrap_or(&application), screen);
     let mut targets = ranked(over_window);
     targets.extend(ranked(collected));
-    targets.truncate(MAX_TARGETS);
+    // Every control gets its ref before the list is cut, so a control beyond the cut keeps the same ref when a narrowed look brings it up.
     assign_references(&mut targets);
+    let hidden = targets.split_off(targets.len().min(MAX_TARGETS));
     Ok(Observation {
         snapshot_id: answer.data["snapshot_id"]
             .as_str()
@@ -340,7 +375,84 @@ pub(super) fn observe_on(
         screen,
         display,
         window,
+        hidden,
     })
+}
+
+/// The window is mostly something its controls do not name (a canvas, a game, a page drawn by the app itself).
+pub(super) fn says_little(observation: &Observation) -> bool {
+    observation
+        .targets
+        .iter()
+        .filter(|target| !target.helper.is_empty())
+        .count()
+        < READ_TEXT_BELOW
+}
+
+/// Letters and digits only, folded: how a name on the screen is compared with the words the model gave.
+pub(super) fn plain(text: &str) -> String {
+    fold(text)
+        .split(|letter: char| !letter.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The look, cut down to the controls whose name or content holds the words: how the model reaches a control a long window pushed off its list.
+pub(super) fn narrow(observation: &mut Observation, words: &str) {
+    let holds = |target: &Target| plain(&target.name).contains(words) || plain(&target.value).contains(words);
+    let mut kept: Vec<Target> = Vec::new();
+    let mut rest: Vec<Target> = Vec::new();
+    for target in observation.targets.drain(..).chain(observation.hidden.drain(..)) {
+        if holds(&target) && kept.len() < MAX_TARGETS {
+            kept.push(target);
+        } else {
+            rest.push(target);
+        }
+    }
+    observation.targets = kept;
+    observation.hidden = rest;
+}
+
+/// The display as a JPEG small enough to travel with the result: what the server's eyes read when the controls say too little.
+pub(super) fn picture_of(engine: &dyn Engine, display: usize) -> Option<Value> {
+    use base64::Engine as _;
+    use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, DynamicImage};
+    const MOST_BYTES: usize = 800 * 1024;
+    let path = std::env::temp_dir().join(format!("wiqo-look-{}.png", uuid::Uuid::new_v4()));
+    let taken = engine
+        .call(&[
+            "screenshot".into(),
+            "--screen".into(),
+            display.to_string(),
+            path.to_string_lossy().to_string(),
+        ])
+        .is_ok_and(|answer| answer.ok);
+    let picture = taken.then(|| image::open(&path).ok()).flatten();
+    let _ = std::fs::remove_file(&path);
+    let picture = picture?;
+    for (width, quality) in [(1600u32, 68u8), (1600, 50), (1280, 50), (1024, 45)] {
+        let sized = if picture.width() > width {
+            picture.resize(width, u32::MAX, FilterType::Triangle)
+        } else {
+            picture.clone()
+        };
+        let rgb = DynamicImage::ImageRgb8(sized.to_rgb8());
+        let mut bytes = Vec::new();
+        if JpegEncoder::new_with_quality(&mut bytes, quality)
+            .encode_image(&rgb)
+            .is_ok()
+            && bytes.len() <= MOST_BYTES
+        {
+            return Some(json!({
+                "mimeType": "image/jpeg",
+                "dataBase64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                "width": rgb.width(),
+                "height": rgb.height(),
+            }));
+        }
+    }
+    None
 }
 
 pub(super) fn observe(engine: &dyn Engine, application: Option<&str>) -> Result<Observation> {

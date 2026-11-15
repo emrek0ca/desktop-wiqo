@@ -16,12 +16,7 @@ pub(super) fn remember(task: &str, observation: &Observation) {
             Seen {
                 snapshot_id: observation.snapshot_id.clone(),
                 at: Instant::now(),
-                scene: Scene {
-                    targets: observation.targets.clone(),
-                    application: observation.application.clone(),
-                    screen: observation.screen,
-                    window: observation.window,
-                },
+                scene: Scene::of(observation),
             },
         );
     }

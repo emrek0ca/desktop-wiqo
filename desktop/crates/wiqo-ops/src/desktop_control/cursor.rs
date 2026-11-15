@@ -40,6 +40,7 @@ pub(super) fn named_target<'a>(scene: &'a Scene, reference: Option<&String>) -> 
     scene
         .targets
         .iter()
+        .chain(&scene.hidden)
         .find(|target| &target.reference == reference)
 }
 
@@ -76,13 +77,18 @@ pub(super) fn cursor_words(step: &Request, scene: &Scene) -> (&'static str, Stri
         "doubleClick" => ("click", "Çift tıklıyor"),
         "tripleClick" => ("click", "Seçiyor"),
         "rightClick" => ("click", "Sağ tıklıyor"),
-        "type" | "setValue" => ("type", "Yazıyor"),
+        "type" | "setValue" | "fill" => ("type", "Yazıyor"),
         "scroll" => ("move", "Kaydırıyor"),
         "dragDrop" => ("drag", "Sürüklüyor"),
         "hotkey" => ("type", "Kısayol"),
         "menu" => ("type", "Menü"),
         "wait" => ("move", "Bekliyor"),
         _ => ("move", "Gidiyor"),
+    };
+    let name = if name.is_empty() && step.action == "fill" {
+        step.label.as_deref().unwrap_or_default()
+    } else {
+        name
     };
     let label = if name.is_empty() {
         doing.to_string()

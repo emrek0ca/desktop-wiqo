@@ -399,13 +399,14 @@ impl Observer for Shared {
     }
 }
 
-/// An open question as the phone reads it (frames.json `approvalRequest`), with the server's generic approval push for a phone whose app is closed.
-fn approval_request(question: &PendingApproval, seconds_left: u64) -> serde_json::Value {
+/// An open question as the phone reads it (frames.json `approvalRequest`). `push` asks for the server's generic approval push, for a phone whose app is
+/// closed: when the question is raised, not when a phone asks what is still open.
+fn approval_request(question: &PendingApproval, seconds_left: u64, push: bool) -> serde_json::Value {
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(seconds_left as i64);
     wiqo_core::relay::to_phone(
         serde_json::json!({ "kind": wiqo_contract::frames::APPROVAL_REQUEST, "approvalId": question.id, "requestId": question.request_id,
             "operation": question.kind, "detail": question.detail, "expiresAt": expires_at.to_rfc3339() }),
-        Some(question.id.as_str()),
+        push.then_some(question.id.as_str()),
     )
 }
 
@@ -886,6 +887,20 @@ impl Desktop {
                         self.answer(id, approved, "phone");
                     }
                 }
+                // "Durdur" on the phone: that message's turn stops here, with the screen work and terminal jobs this computer runs (as "Durdur" in
+                // this window does). The phone tells the server to stop the task itself.
+                wiqo_contract::frames::CANCEL_TURN => {
+                    if let Some(id) = value["requestId"].as_str() {
+                        if self.chat.stop_turn(id) {
+                            self.stop_work();
+                        } else {
+                            tracing::info!("cancelTurn {id}: no such running turn");
+                        }
+                    }
+                }
+                // A phone that just opened asks what still waits for its yes: each open question of a phone's message or a background task is said
+                // again, with the time it has left. A question of this window's own turn stays on this computer.
+                wiqo_contract::frames::APPROVALS_OPEN => self.say_open_approvals().await,
                 wiqo_contract::frames::CANCEL_JOB => {
                     if let (Some(id), Some(terminal)) = (value["jobId"].as_str(), self.runtime.engine.terminal()) {
                         if !terminal.cancel_job(id) {
@@ -894,6 +909,18 @@ impl Desktop {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Every question that still waits for a phone's yes, said again to the phones with the time it has left and without a push.
+    async fn say_open_approvals(&self) {
+        for question in self.pending_approvals() {
+            if question.request_id.is_some() {
+                self.runtime
+                    .outbox
+                    .deliver(&approval_request(&question, question.seconds, false))
+                    .await;
             }
         }
     }
@@ -1382,7 +1409,7 @@ impl Desktop {
         if let Some(request) = request_id {
             self.runtime
                 .outbox
-                .deliver(&approval_request(&question, seconds))
+                .deliver(&approval_request(&question, seconds, true))
                 .await;
             // The phone's Live Activity says it waits for a yes, with the lock screen's alert (rova-backend notifications/liveActivity.ts).
             self.runtime
@@ -1729,6 +1756,27 @@ mod tests {
             .unwrap();
         assert_eq!(settled["frame"]["approved"], false);
         assert_eq!(settled["frame"]["by"], "timeout");
+    }
+
+    #[tokio::test]
+    async fn a_phone_that_opens_late_is_told_the_question_that_still_waits_without_a_second_push() {
+        let (desktop, mut sent) = desktop();
+        let asking = desktop.clone();
+        let decision = tokio::spawn(async move { asking.ask("deleteFile", "a.txt", Some("phone-request")).await });
+        let id = open_question(&desktop).await;
+        let first = frames(&mut sent);
+        assert!(first.iter().any(|frame| frame["frame"]["kind"] == "approvalRequest" && frame["notify"] == id.as_str()));
+        desktop.say_open_approvals().await;
+        let again = frames(&mut sent);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0]["frame"]["kind"], "approvalRequest");
+        assert_eq!(again[0]["frame"]["approvalId"], id.as_str());
+        assert_eq!(again[0]["frame"]["requestId"], "phone-request");
+        assert!(again[0].get("notify").is_none(), "asking again sends no second push");
+        desktop.answer_approval(&id, true);
+        assert!(decision.await.unwrap());
+        desktop.say_open_approvals().await;
+        assert!(frames(&mut sent).iter().all(|frame| frame["frame"]["kind"] != "approvalRequest"), "a settled question is not said again");
     }
 
     #[tokio::test]

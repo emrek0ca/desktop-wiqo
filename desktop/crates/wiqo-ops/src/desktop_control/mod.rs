@@ -23,6 +23,12 @@ use crate::Op;
 const OBSERVATION_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_TARGETS: usize = 120;
 const MAX_STEPS: usize = 12;
+const MAX_FIELDS: usize = 24;
+/// The most controls read from one window before the list is cut to `MAX_TARGETS`: what is cut is still known by its ref, and counted for the model.
+const READ_MOST: usize = 400;
+/// One command has under a minute (the contract's long class). Steps that would start after this are left for the next command, said plainly, instead of
+/// the whole command ending as a timeout whose result nobody knows.
+const STEPS_BUDGET: Duration = Duration::from_secs(38);
 const CALL_TIMEOUT: Duration = Duration::from_secs(25);
 /// How long a step waits to see its effect. A deadline, not a number of looks: one look takes seconds on a heavy window, and seven of them held a task for 47 s.
 const SETTLE_FOR: Duration = Duration::from_millis(1500);
@@ -67,10 +73,28 @@ struct Request {
     /// Where a drag ends when it does not end on a control.
     to_normalized_x: Option<f64>,
     to_normalized_y: Option<f64>,
+    /// A drag: how long the move takes, and how long the pointer rests over where it drops before it lets go (milliseconds).
+    duration_ms: Option<u64>,
+    hold_ms: Option<u64>,
+    /// `fillForm`: what goes into which field.
+    fields: Option<Vec<Field>>,
+    /// A field by what it is called (a form), or the words an observation is narrowed to.
+    label: Option<String>,
+    /// The server can look at a picture of the screen for what the controls do not name: one goes with a look that found little, and with every `look`.
+    sight: bool,
     /// The person's own finger on the phone's live screen. Honoured only on a phone's signature: the relay removes it from anything the server sends.
     person: bool,
     /// The person said yes on a card and the relay checked their signature. The relay alone sets this.
     card_approved: bool,
+}
+
+/// One field of a form: the control by its ref or by what it is called, and what it should hold.
+#[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct Field {
+    label: Option<String>,
+    target_ref: Option<String>,
+    value: String,
 }
 
 /// What the helper program answers: its envelope, already split into success data or a failure.
@@ -312,6 +336,8 @@ struct Observation {
     display: usize,
     /// The window itself, as fractions of the display.
     window: Option<[f64; 4]>,
+    /// Controls the window has beyond the ones listed: known by their refs, not sent.
+    hidden: Vec<Target>,
 }
 
 struct Seen {
@@ -327,6 +353,20 @@ struct Scene {
     application: String,
     screen: [f64; 4],
     window: Option<[f64; 4]>,
+    /// Controls beyond the listed ones: a ref the model got from a narrowed look still names its control.
+    hidden: Vec<Target>,
+}
+
+impl Scene {
+    fn of(observation: &Observation) -> Scene {
+        Scene {
+            targets: observation.targets.clone(),
+            application: observation.application.clone(),
+            screen: observation.screen,
+            window: observation.window,
+            hidden: observation.hidden.clone(),
+        }
+    }
 }
 
 /// One move of the cursor Wiqo draws on the screen. `x`, `y` are in the helper's screen points; absent, the cursor stays and only the words change.
@@ -424,7 +464,7 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
                 Some(content(&request, None, true, false, Vec::new())),
             ))
         }
-        "observe" => {
+        "observe" | "look" => {
             let named = request
                 .text
                 .as_deref()
@@ -438,9 +478,12 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
             {
                 return Err(own_window_refused());
             }
-            let observation = observe(engine, request.text.as_deref())?;
+            let mut observation = observe(engine, request.text.as_deref())?;
             if !request.person && is_wiqo(&observation.application) {
                 return Err(own_window_refused());
+            }
+            if let Some(words) = request.label.as_deref().map(plain).filter(|words| !words.is_empty()) {
+                narrow(&mut observation, &words);
             }
             remember(&request.task_id, &observation);
             if !request.person {
@@ -462,14 +505,37 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
                         observation.targets.len()
                     )
                 },
-                Some(content(
-                    &request,
-                    Some(&observation),
-                    true,
-                    false,
-                    Vec::new(),
-                )),
+                Some({
+                    let mut body = content(&request, Some(&observation), true, false, Vec::new());
+                    // What the controls do not name (a canvas, a game, icons without words) the server reads from a picture.
+                    if request.sight && (request.action == "look" || says_little(&observation)) {
+                        if let Some(picture) = picture_of(engine, observation.display) {
+                            body["value"]["picture"] = picture;
+                        }
+                    }
+                    body
+                }),
             ))
+        }
+        "fillForm" => {
+            let fields = request.fields.clone().unwrap_or_default();
+            if fields.is_empty() || fields.len() > MAX_FIELDS || fields.iter().any(|field| field.value.is_empty()) {
+                return Err(tool_failure(
+                    "DESKTOP_STEPS_INVALID",
+                    "Form alanları geçersiz.",
+                ));
+            }
+            let steps = fields
+                .into_iter()
+                .map(|field| Request {
+                    action: "fill".into(),
+                    target_ref: field.target_ref,
+                    label: field.label,
+                    text: Some(field.value),
+                    ..Request::default()
+                })
+                .collect();
+            run_steps(engine, &request, steps)
         }
         "runSteps" => {
             let steps = request.steps.clone().unwrap_or_default();
@@ -485,9 +551,11 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
     }
 }
 
-/// Runs the steps in order, and stops at the first one that fails or leaves the result in doubt. After every step the screen is read again, so what the
-/// model is told is what the app shows now, not what the helper hoped for.
+/// Runs the steps in order, and stops at the first one that fails or leaves the result in doubt. After a step the screen is read again, so what the
+/// model is told is what the app shows now, not what the helper hoped for. Steps left over (the time of one command ran out, or a step showed no effect)
+/// are counted, not failed: the model goes on from what the screen shows.
 fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Result<Done> {
+    let began = Instant::now();
     let before = current_scene(engine, request)?;
     let start = before.clone();
     let mut previous = before;
@@ -495,7 +563,17 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
     let mut evidence = Vec::new();
     let mut latest: Option<Observation> = None;
     let mut failure: Option<wiqo_core::wire::WireError> = None;
+    let mut left = 0usize;
+    let mut left_because = "";
+    // The person's yes on a card is for one press: a second press that cannot be taken back, later in the same list, asks again.
+    let mut yes_left = request.card_approved;
     for (index, step) in steps.iter().enumerate() {
+        let last = index + 1 == steps.len();
+        if index > 0 && began.elapsed() >= STEPS_BUDGET {
+            left = steps.len() - index;
+            left_because = "bu çağrının süresi doldu";
+            break;
+        }
         // Step by step: the person can stop or take over between any two of them.
         let cleared = if request.person {
             Ok(())
@@ -504,10 +582,14 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
                 .and_then(|_| keep_off_own_windows(engine, step, &previous))
                 .and_then(|_| wait_for_the_person(engine))
                 .and_then(|_| match needs_a_yes(step, &previous) {
-                    Some(sentence) if !request.card_approved => {
+                    Some(sentence) if !yes_left => {
                         Err(permission("DESKTOP_APPROVAL_REQUIRED", sentence))
                     }
-                    _ => Ok(()),
+                    Some(_) => {
+                        yes_left = false;
+                        Ok(())
+                    }
+                    None => Ok(()),
                 })
         };
         if let Err(error) = cleared {
@@ -540,12 +622,7 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
             .is_err_and(|error| error.code == "DESKTOP_STALE_OBSERVATION")
         {
             if let Ok(look) = observe_controls(engine, Some(&previous.application)) {
-                previous = Scene {
-                    targets: look.targets,
-                    application: look.application,
-                    screen: look.screen,
-                    window: look.window,
-                };
+                previous = Scene::of(&look);
                 acted = perform(engine, step, &previous);
             }
         }
@@ -561,13 +638,29 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
             }
         };
         let delivery = verdict.delivery.clone().unwrap_or_default();
+        // The step read its own effect back (a field holds what was typed, the words scrolled into view).
+        let read_back = verdict.data["readBack"] == true;
+        // A wait or a move of the pointer has no effect to look for.
+        let quiet = matches!(step.action.as_str(), "wait" | "move");
+        done.push(done_words(step, &previous));
+        // A field that holds what was typed needs no look at the whole window before the next field: one look comes after the last.
+        if step.action == "fill" && read_back && !last {
+            evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": true, "changed": true, "verified": true }));
+            continue;
+        }
         // Read the same app again: a step is verified when the helper read its effect back, or when its controls visibly changed. (The app is named:
         // the frontmost window may be Wiqo's own, where the person typed the request.)
-        // Apps answer asynchronously (a new window takes a moment to appear): read again for up to 1.5 s until something changed.
+        // Apps answer asynchronously (a new window takes a moment to appear): read again for up to 1.5 s until something changed. A step that already
+        // read its effect back, or has none, is not waited for.
         let known = displays(engine);
+        let settled = quiet
+            || read_back
+            || (delivery == "delivered_verified"
+                && matches!(step.action.as_str(), "type" | "setValue" | "fill"));
         let settling = Instant::now();
         let mut after = observe_on(engine, Some(&previous.application), &known).ok();
-        while settling.elapsed() < SETTLE_FOR
+        while !settled
+            && settling.elapsed() < SETTLE_FOR
             && !after
                 .as_ref()
                 .is_some_and(|after| differs(&previous.targets, &after.targets))
@@ -578,31 +671,46 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
         let changed = after
             .as_ref()
             .is_some_and(|after| differs(&previous.targets, &after.targets));
-        let verified = delivery == "delivered_verified" || (delivery != "not_delivered" && changed);
-        done.push(done_words(step, &previous));
+        // A field that was read and does not hold what was typed is not verified by something else on the screen having moved.
+        let verified = verdict.data["readBack"] != false
+            && (quiet
+                || read_back
+                || delivery == "delivered_verified"
+                || (delivery != "not_delivered" && changed));
         if let Some(after) = after.as_mut() {
-            add_screen_text(engine, after);
-            assign_references(&mut after.targets);
+            // The words on the screen take seconds to read: they are read for the look the model gets, and when a later step names one of them.
+            let names_a_word = |next: &Request| {
+                [&next.target_ref, &next.source_ref, &next.destination_ref]
+                    .into_iter()
+                    .flatten()
+                    .any(|reference| !after.targets.iter().chain(&after.hidden).any(|target| &target.reference == reference))
+            };
+            if last || steps[index + 1..].iter().any(names_a_word) {
+                add_screen_text(engine, after);
+                assign_references(&mut after.targets);
+            }
         }
         evidence.push(json!({ "index": index, "action": step.action, "targetRef": step.target_ref, "ok": true, "changed": changed, "verified": verified }));
         if let Some(after) = after {
             remember(&request.task_id, &after);
-            previous = Scene {
-                targets: after.targets.clone(),
-                application: after.application.clone(),
-                screen: after.screen,
-                window: after.window,
-            };
+            previous = Scene::of(&after);
             latest = Some(after);
         }
-        // An input that may have landed and shows no effect is not repeated by the next step: the model looks first.
-        if !verified && delivery != "not_delivered" && index + 1 < steps.len() {
-            failure = Some(wiqo_core::wire::WireError::new(
-                "DESKTOP_TYPE_UNVERIFIED",
-                "Adımın etkisi görülemedi; sonraki adımlar çalıştırılmadı.",
-                "tool_failure",
-            ));
+        // An input that may have landed and shows no effect is not repeated by the next step: the model looks first. (A form's fields each name their
+        // own control, so one that could not be read back does not send the next one astray.)
+        if !verified && delivery != "not_delivered" && !last && step.action != "fill" {
+            left = steps.len() - index - 1;
+            left_because = "son adımın etkisi ekranda görülemedi";
             break;
+        }
+    }
+    // The list ended early with nothing read since the last step: the model still gets what the screen shows now.
+    if latest.is_none() && !evidence.is_empty() {
+        if let Ok(mut look) = observe_controls(engine, Some(&previous.application)) {
+            add_screen_text(engine, &mut look);
+            assign_references(&mut look.targets);
+            remember(&request.task_id, &look);
+            latest = Some(look);
         }
     }
     let all_verified = failure.is_none()
@@ -621,8 +729,15 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
         body["value"]["changedTargets"] = json!(changed);
         body["value"]["removedTargetRefs"] = json!(removed);
     }
-    let body = with_verified(body, all_verified);
+    body["value"]["stepsLeft"] = json!(left);
     let so_far = done.join(", ");
+    if left > 0 {
+        body["value"]["note"] = json!(format!(
+            "İlk {} adım yapıldı, kalan {left} adım çalıştırılmadı: {left_because}. Yapılanı tekrarlama; ekranın şimdiki haline göre kalanı gönder.",
+            done.len()
+        ));
+    }
+    let body = with_verified(body, all_verified);
     match failure {
         Some(mut error) => {
             if !so_far.is_empty() {
@@ -631,7 +746,9 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
             Ok(Done::partial(error, body))
         }
         None => Ok(Done::new(
-            if all_verified {
+            if left > 0 {
+                format!("{so_far}; kalan {left} adım çalıştırılmadı ({left_because}).")
+            } else if all_verified {
                 format!("{so_far}; ekranda görüldü.")
             } else {
                 format!("{so_far}; etkisi ekranda doğrulanamadı.")
@@ -724,12 +841,7 @@ fn current_scene(engine: &dyn Engine, request: &Request) -> Result<Scene> {
         )
     })?;
     remember(&request.task_id, &look);
-    Ok(Scene {
-        targets: look.targets,
-        application: look.application,
-        screen: look.screen,
-        window: look.window,
-    })
+    Ok(Scene::of(&look))
 }
 
 fn differs(before: &[Target], after: &[Target]) -> bool {
@@ -744,5 +856,7 @@ fn differs(before: &[Target], after: &[Target]) -> bool {
         })
 }
 
+#[cfg(test)]
+mod measure;
 #[cfg(test)]
 mod tests;

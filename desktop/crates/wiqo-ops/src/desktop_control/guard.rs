@@ -213,7 +213,12 @@ pub(super) fn done_words(step: &Request, scene: &Scene) -> String {
     let name = named_target(scene, step.target_ref.as_ref())
         .or_else(|| named_target(scene, step.source_ref.as_ref()))
         .map(|target| target.name.chars().take(40).collect::<String>())
-        .filter(|name| !name.is_empty());
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            (step.action == "fill")
+                .then(|| step.label.as_deref().unwrap_or_default().chars().take(40).collect::<String>())
+                .filter(|name| !name.is_empty())
+        });
     let on = |verb: &str| match &name {
         Some(name) => format!("“{name}” {verb}"),
         None => format!("Ekranda {verb}"),
@@ -223,6 +228,10 @@ pub(super) fn done_words(step: &Request, scene: &Scene) -> String {
         "tripleClick" => on("seçildi"),
         "type" => "Yazı yazıldı".to_string(),
         "setValue" => on("değeri ayarlandı"),
+        "fill" => on("dolduruldu"),
+        "scroll" if step.text.as_deref().is_some_and(|text| !text.trim().is_empty()) => {
+            "Aranan yazı görünene kadar kaydırıldı".to_string()
+        }
         "scroll" => on("kaydırıldı"),
         "dragDrop" => on("sürüklendi"),
         "move" => on("imleç götürüldü"),

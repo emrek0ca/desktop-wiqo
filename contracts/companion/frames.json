@@ -34,6 +34,18 @@
           "jobId"
         ],
         "answer": "No answer frame: the job ends as cancelled and the desktop reports it with jobFinished."
+      },
+      "cancelTurn": {
+        "payloadKind": "cancelTurn",
+        "fields": [
+          "requestId"
+        ],
+        "answer": "No answer frame of its own: the turn of that remoteMessage leaves the step it runs, starts no further step and ends with its turnEnd. The phone also tells the server to stop the task (POST /copilot/tasks/{taskId}/cancel). A desktop that does not know this type answers with a commandResult (UNSUPPORTED_OPERATION), which the phone ignores."
+      },
+      "approvalsOpen": {
+        "payloadKind": "approvalsOpen",
+        "fields": [],
+        "answer": "One approvalRequest frame for every question of a phone's message or a background task that still waits (the same approvalId, expiresAt unchanged, no push). None waits: no frame. A phone asks when it opens (from the approval push or by itself), so a question raised while its app was closed can still be answered."
       }
     }
   },

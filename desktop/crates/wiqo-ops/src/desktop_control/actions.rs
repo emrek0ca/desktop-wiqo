@@ -52,6 +52,8 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
                     target.helper.clone(),
                     "--headed".into(),
                 ],
+                // A context menu asked for through the app's own call often never answers (the app is busy showing the menu) and the result is then
+                // unknown: the secondary button is pressed on the control instead, as a hand would.
                 _ => vec![command.into(), target.helper.clone()],
             });
         }
@@ -92,7 +94,30 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
         "click" => click("click", 1, "left")?,
         "doubleClick" => click("click", 2, "left")?,
         "tripleClick" => click("click", 3, "left")?,
-        "rightClick" => click("right-click", 1, "right")?,
+        "rightClick" => {
+            let args = click("right-click", 1, "right")?;
+            // Asked through the app's own call, a context menu often opens while the call itself never answers (the app is busy showing the menu):
+            // a menu that is open is the answer. Only when none opened is the secondary button pressed on the control, as a hand would.
+            if args[0] == "right-click" {
+                return match call(engine, &args) {
+                    Err(error) if matches!(error.code.as_str(), "COMMAND_TIMEOUT" | "OUTCOME_UNKNOWN") => {
+                        let menu_open = engine
+                            .call(&["wait".into(), "--menu".into(), "--app".into(), scene.application.clone(), "--timeout".into(), "900".into()])
+                            .is_ok_and(|answer| answer.ok);
+                        if menu_open {
+                            Ok(Answer { ok: true, data: json!({ "readBack": true }), code: String::new(), message: String::new(), delivery: Some("delivered_verified".into()) })
+                        } else {
+                            forward(engine, scene);
+                            let mut physical = args.clone();
+                            physical.push("--headed".into());
+                            call(engine, &physical)
+                        }
+                    }
+                    other => other,
+                };
+            }
+            args
+        }
         "move" => {
             let at = step
                 .target_ref
@@ -113,6 +138,11 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
             args
         }
         "type" => return type_text(engine, step, scene),
+        "fill" => return fill_field(engine, step, scene),
+        // With words it scrolls until they are on the screen.
+        "scroll" if step.text.as_deref().is_some_and(|text| !text.trim().is_empty()) => {
+            return scroll_until(engine, step, scene)
+        }
         "setValue" => {
             let target = find(step.target_ref.as_ref())?;
             refuse_secure(target)?;
@@ -196,7 +226,18 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
                 step.to_normalized_x,
                 step.to_normalized_y,
             )?);
-            args.extend(["--duration".into(), "350".into(), "--headed".into()]);
+            // Some apps take what is dragged only after the pointer has rested on it, or over where it drops: the move's length and the rest are the step's to say.
+            let duration = step.duration_ms.unwrap_or(350).clamp(100, 3_000);
+            args.extend(["--duration".into(), duration.to_string()]);
+            let rest = step.hold_ms.map(|hold| hold.clamp(0, 3_000));
+            if let Some(rest) = rest {
+                args.extend(["--drop-delay".into(), rest.to_string()]);
+            }
+            args.extend([
+                "--timeout-ms".into(),
+                (5_000 + duration + rest.unwrap_or(500)).to_string(),
+                "--headed".into(),
+            ]);
             args
         }
         "menu" => return run_menu(engine, step, scene),
@@ -223,7 +264,23 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
             ))
         }
     };
+    // The pointer acts on whatever is in front: an app that is behind another one, or on another desktop, is brought forward before a press of the
+    // mouse, a drag or a turn of the wheel.
+    if args.iter().any(|arg| arg == "--headed") {
+        forward(engine, scene);
+    }
     call(engine, &args)
+}
+
+/// Brings the app the step works on to the front when something else is there, and gives its window a moment to take the pointer: a click on a
+/// window that is behind only brings it forward, and what was meant for its control is lost.
+pub(super) fn forward(engine: &dyn Engine, scene: &Scene) {
+    if !scene.application.is_empty()
+        && engine.frontmost().is_some_and(|front| !front.eq_ignore_ascii_case(&scene.application))
+        && engine.bring_to_front(&scene.application)
+    {
+        std::thread::sleep(Duration::from_millis(450));
+    }
 }
 
 /// A command from the app's menu bar: how an expert reaches what has no button on screen. It works in any app and needs no look at the window.
@@ -316,10 +373,7 @@ pub(super) fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> R
         .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak metin yok."))?;
     let target = match step.target_ref.as_ref() {
         Some(reference) => Some(
-            scene
-                .targets
-                .iter()
-                .find(|target| &target.reference == reference)
+            named_target(scene, Some(reference))
                 .ok_or_else(|| {
                     tool_failure(
                         "DESKTOP_TARGET_NOT_FOUND",
@@ -340,6 +394,7 @@ pub(super) fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> R
         let mut args = vec!["mouse-click".to_string()];
         args.extend(coordinates("--xy", middle_of(target.frame, scene.screen)));
         args.push("--headed".into());
+        forward(engine, scene);
         call(engine, &args)?;
         return paste(engine, &text, &scene.application);
     }
@@ -349,6 +404,36 @@ pub(super) fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> R
             &["type".into(), target.helper.clone(), text.clone()],
         ) {
             Ok(answer) => return Ok(answer),
+            // The app took the call and the helper could not see the text arrive (a web page's field, a custom editor). The field itself says which:
+            // it holds the text (done), it holds what it held before (nothing landed: clicked into and pasted, as a hand would), or something else
+            // (unknown, and said so).
+            Err(error) if error.code == "OUTCOME_UNKNOWN" => {
+                let holds = call(
+                    engine,
+                    &["get".into(), target.helper.clone(), "--property".into(), "value".into()],
+                )
+                .ok()
+                .and_then(|read| read.data["value"].as_str().map(str::to_string));
+                match holds {
+                    Some(value) if value.contains(text.trim()) => {
+                        return Ok(Answer {
+                            ok: true,
+                            data: json!({ "readBack": true }),
+                            code: String::new(),
+                            message: String::new(),
+                            delivery: Some("delivered_verified".into()),
+                        })
+                    }
+                    Some(value) if value == target.value => {
+                        let mut args = vec!["mouse-click".to_string()];
+                        args.extend(coordinates("--xy", middle_of(target.frame, scene.screen)));
+                        args.push("--headed".into());
+                        forward(engine, scene);
+                        call(engine, &args)?;
+                    }
+                    _ => return Err(error),
+                }
+            }
             // Only a refusal that sent nothing falls back to pasting; anything that may have typed is reported as it is.
             Err(error)
                 if error.code != "DESKTOP_ACTION_UNSUPPORTED"
@@ -362,6 +447,312 @@ pub(super) fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> R
         }
     }
     paste(engine, &text, &scene.application)
+}
+
+/// The field a form's entry names: by its ref, or by what it is called. A name that fits two fields is not guessed at.
+pub(super) fn field_for<'a>(step: &Request, scene: &'a Scene) -> Result<&'a Target> {
+    if step.target_ref.is_some() {
+        return named_target(scene, step.target_ref.as_ref()).ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_TARGET_NOT_FOUND",
+                format!(
+                    "{} hedefi güncel görünümde yok.",
+                    step.target_ref.as_deref().unwrap_or_default()
+                ),
+            )
+        });
+    }
+    let label = step.label.as_deref().map(str::trim).unwrap_or_default();
+    let wanted = plain(label);
+    if wanted.is_empty() {
+        return Err(tool_failure(
+            "DESKTOP_TARGET_REQUIRED",
+            "Form alanı için targetRef ya da label gerekiyor.",
+        ));
+    }
+    let takes_input = |target: &&Target| {
+        target.enabled
+            && matches!(
+                target.role.as_str(),
+                "textfield" | "textarea" | "searchfield" | "combobox" | "checkbox" | "switch" | "radiobutton"
+                    | "popupbutton" | "slider" | "stepper" | "datefield" | "timefield" | "incrementor"
+            )
+    };
+    let fields: Vec<&Target> = scene.targets.iter().chain(&scene.hidden).filter(takes_input).collect();
+    let one = |found: Vec<&'a Target>| -> Option<Result<&'a Target>> {
+        match found.len() {
+            0 => None,
+            1 => Some(Ok(found[0])),
+            _ => Some(Err(tool_failure(
+                "DESKTOP_TARGET_NOT_FOUND",
+                format!("“{label}” adına uyan birden fazla alan var; targetRef ile söyle."),
+            ))),
+        }
+    };
+    let called = |target: &Target| plain(&target.name);
+    if let Some(found) = one(fields.iter().copied().filter(|target| called(target) == wanted).collect()) {
+        return found;
+    }
+    if let Some(found) = one(
+        fields
+            .iter()
+            .copied()
+            .filter(|target| {
+                let name = called(target);
+                name.len() >= 3 && (name.contains(&wanted) || wanted.contains(&name))
+            })
+            .collect(),
+    ) {
+        return found;
+    }
+    // A field with no name of its own: the nearest one to the right of, or under, the words that label it on the screen.
+    let words = scene
+        .targets
+        .iter()
+        .filter(|target| !takes_input(target))
+        .find(|target| plain(&target.name) == wanted)
+        .or_else(|| {
+            scene
+                .targets
+                .iter()
+                .filter(|target| !takes_input(target))
+                .find(|target| plain(&target.name).contains(&wanted))
+        });
+    if let Some(words) = words {
+        let middle = |frame: [f64; 4]| (frame[0] + frame[2] / 2.0, frame[1] + frame[3] / 2.0);
+        let (label_x, label_y) = middle(words.frame);
+        let beside = fields
+            .iter()
+            .copied()
+            .filter_map(|field| {
+                let (x, y) = middle(field.frame);
+                let same_row = (y - label_y).abs() <= field.frame[3].max(words.frame[3]) && x > label_x;
+                let under = y > label_y && y - label_y <= 0.12 && field.frame[0] <= label_x && label_x <= field.frame[0] + field.frame[2].max(0.02);
+                (same_row || under).then(|| (field, (x - label_x).abs() + (y - label_y).abs() * 2.0))
+            })
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        if let Some((field, _)) = beside {
+            return Ok(field);
+        }
+    }
+    Err(tool_failure(
+        "DESKTOP_TARGET_NOT_FOUND",
+        format!("“{label}” alanı ekranda bulunamadı."),
+    ))
+}
+
+/// "evet", "açık", "true"... for a box that is ticked or not.
+fn ticked(value: &str) -> Option<bool> {
+    match plain(value).as_str() {
+        "true" | "evet" | "acik" | "on" | "yes" | "1" | "isaretli" | "secili" | "checked" => Some(true),
+        "false" | "hayir" | "kapali" | "off" | "no" | "0" | "isaretsiz" | "bos" | "unchecked" => Some(false),
+        _ => None,
+    }
+}
+
+/// One field of a form, filled the way its kind takes it and read back: a box is ticked, a list is chosen from, a text field is emptied and typed into.
+pub(super) fn fill_field(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer> {
+    let text = step
+        .text
+        .clone()
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak değer yok."))?;
+    let target = field_for(step, scene)?;
+    refuse_secure(target)?;
+    let read_back = |mut answer: Answer, held: bool| {
+        if held || answer.delivery.as_deref() == Some("delivered_verified") {
+            if !answer.data.is_object() {
+                answer.data = json!({});
+            }
+            answer.data["readBack"] = json!(true);
+        }
+        answer
+    };
+    let named = Request {
+        action: "type".into(),
+        target_ref: Some(target.reference.clone()),
+        text: Some(text.clone()),
+        ..Request::default()
+    };
+    // Seen only as words on the screen: clicked into and pasted, with nothing to read back.
+    if target.helper.is_empty() {
+        return type_text(engine, &named, scene);
+    }
+    match target.role.as_str() {
+        "checkbox" | "switch" | "radiobutton" => {
+            let on = ticked(&text).ok_or_else(|| {
+                tool_failure(
+                    "DESKTOP_ACTION_INVALID",
+                    "İşaret kutusu için değer evet ya da hayır olmalı.",
+                )
+            })?;
+            let command = if on { "check" } else { "uncheck" };
+            return call(engine, &[command.into(), target.helper.clone()]).map(|answer| read_back(answer, false));
+        }
+        "popupbutton" => {
+            return call(engine, &["select".into(), target.helper.clone(), text]).map(|answer| read_back(answer, false));
+        }
+        "slider" | "stepper" | "incrementor" => {
+            return call(engine, &["set-value".into(), target.helper.clone(), text]).map(|answer| read_back(answer, false));
+        }
+        _ => {}
+    }
+    // What the field already holds is typed over, the way a hand does it: clicked into, everything in it selected, the text put in. (The app's own
+    // "empty this field" call is not used: on a web page it emptied the field that had the keyboard, which was the one filled a moment before.)
+    let answer = if !target.value.is_empty() && target.value != text {
+        let mut click = vec!["mouse-click".to_string()];
+        click.extend(coordinates("--xy", middle_of(target.frame, scene.screen)));
+        click.push("--headed".into());
+        forward(engine, scene);
+        call(engine, &click)?;
+        let modifier = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+        press(engine, &format!("{modifier}+a"), &scene.application)?;
+        paste(engine, &text, &scene.application)?
+    } else {
+        type_text(engine, &named, scene)?
+    };
+    let held = call(
+        engine,
+        &["get".into(), target.helper.clone(), "--property".into(), "value".into()],
+    )
+    .ok()
+    .and_then(|read| read.data["value"].as_str().map(str::to_string))
+    .map(|value| value.trim() == text.trim());
+    // A field that can be read says whether it holds the text; one that cannot leaves it to what the screen shows.
+    let mut answer = read_back(answer, held == Some(true));
+    if held == Some(false) {
+        if !answer.data.is_object() {
+            answer.data = json!({});
+        }
+        answer.data["readBack"] = json!(false);
+    }
+    Ok(answer)
+}
+
+/// The words are on the screen now: a control or a line of text that holds them inside the window, or (where the controls say little) among the words read off it.
+fn shows(engine: &dyn Engine, scene: &Scene, wanted: &str, text: &str) -> bool {
+    let found = engine
+        .call(&[
+            "find".into(),
+            "--app".into(),
+            scene.application.clone(),
+            "--text".into(),
+            text.to_string(),
+            "--limit".into(),
+            "30".into(),
+        ])
+        .ok()
+        .filter(|answer| answer.ok);
+    let [screen_x, screen_y, screen_w, screen_h] = scene.screen;
+    let window = scene.window.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+    let (left, top) = (screen_x + window[0] * screen_w, screen_y + window[1] * screen_h);
+    let (right, bottom) = (left + window[2] * screen_w, top + window[3] * screen_h);
+    for item in found.iter().flat_map(|answer| answer.data["matches"].as_array().into_iter().flatten()) {
+        // The helper also lists what holds a match (the window, the page, the groups around it): only a thing that is itself called by the words counts.
+        let called = |key: &str| plain(item[key].as_str().unwrap_or_default()).contains(wanted);
+        if !(called("name") || called("value"))
+            || matches!(item["role"].as_str().unwrap_or_default(), "window" | "application" | "webarea")
+        {
+            continue;
+        }
+        let off_screen = item["states"]
+            .as_array()
+            .is_some_and(|states| states.iter().any(|state| state == "offscreen"));
+        let reference = item["ref_id"].as_str();
+        if off_screen {
+            // A control the app knows but does not show yet: brought into view by the app's own means.
+            if reference.is_some_and(|reference| {
+                engine
+                    .call(&["scroll-to".into(), reference.to_string()])
+                    .is_ok_and(|answer| answer.ok)
+            }) {
+                return true;
+            }
+            continue;
+        }
+        let bounds = &item["bounds"];
+        match (
+            bounds["x"].as_f64(),
+            bounds["y"].as_f64(),
+            bounds["width"].as_f64(),
+            bounds["height"].as_f64(),
+        ) {
+            (Some(x), Some(y), Some(w), Some(h)) => {
+                let (middle_x, middle_y) = (x + w / 2.0, y + h / 2.0);
+                if h > 1.0 && middle_x >= left && middle_x <= right && middle_y >= top && middle_y <= bottom {
+                    return true;
+                }
+            }
+            // A control with no place given that is not off the screen is on it.
+            _ if reference.is_some() => return true,
+            _ => {}
+        }
+    }
+    observe(engine, Some(&scene.application)).is_ok_and(|look| {
+        look.targets
+            .iter()
+            .any(|target| plain(&target.name).contains(wanted) || plain(&target.value).contains(wanted))
+    })
+}
+
+/// How long a scroll looks for its words before it says they are not there.
+const SCROLL_FOR: Duration = Duration::from_secs(30);
+
+/// Scrolls a page at a time until the words are on the screen. It stops when they are, when the list no longer moves (its end), or when its time is up.
+pub(super) fn scroll_until(engine: &dyn Engine, step: &Request, scene: &Scene) -> Result<Answer> {
+    let text = step.text.as_deref().unwrap_or_default().trim().to_string();
+    let wanted = plain(&text);
+    if wanted.is_empty() {
+        return Err(tool_failure("DESKTOP_ACTION_INVALID", "Aranacak yazı yok."));
+    }
+    let found = |pages: u32| Answer {
+        ok: true,
+        data: json!({ "readBack": true, "pages": pages }),
+        code: String::new(),
+        message: String::new(),
+        delivery: Some(if pages == 0 { "not_delivered" } else { "delivered_verified" }.into()),
+    };
+    let pages = step.amount.unwrap_or(8).clamp(1, 15);
+    let page = Request {
+        action: "scroll".into(),
+        text: None,
+        amount: Some(5),
+        ..step.clone()
+    };
+    // Where things are: a list that has reached its end shows the same things in the same places after another push.
+    let places = |engine: &dyn Engine| {
+        observe(engine, Some(&scene.application)).ok().map(|look| {
+            look.targets
+                .iter()
+                .map(|target| (target.name.clone(), (target.frame[1] * 1000.0).round() as i64))
+                .collect::<Vec<_>>()
+        })
+    };
+    let began = Instant::now();
+    for turned in 0..pages {
+        if shows(engine, scene, &wanted, &text) {
+            return Ok(found(turned));
+        }
+        if began.elapsed() >= SCROLL_FOR {
+            break;
+        }
+        let before = places(engine);
+        perform(engine, &page, scene)?;
+        std::thread::sleep(Duration::from_millis(250));
+        if before.is_some() && before == places(engine) {
+            return Err(tool_failure(
+                "DESKTOP_TARGET_NOT_FOUND",
+                format!("“{text}” bulunamadı: {} sayfa kaydırıldı ve listenin sonuna gelindi.", turned + 1),
+            ));
+        }
+    }
+    if shows(engine, scene, &wanted, &text) {
+        return Ok(found(pages));
+    }
+    Err(tool_failure(
+        "DESKTOP_TARGET_NOT_FOUND",
+        format!("“{text}” {pages} sayfa kaydırmada görünmedi; daha fazla kaydırmak için yeniden çağır."),
+    ))
 }
 
 pub(super) fn paste(engine: &dyn Engine, text: &str, application: &str) -> Result<Answer> {
@@ -424,6 +815,7 @@ pub(super) fn content(
             "addedTargets": [],
             "changedTargets": [],
             "removedTargetRefs": [],
+            "moreTargets": observation.map(|observation| observation.hidden.len()).unwrap_or(0),
             "accessGranted": access,
             "changed": changed,
             "verified": true,

@@ -2,6 +2,7 @@
 //! stream and runs every PC step the answer asks for, whether the message was typed in this window or handed over by a paired phone (then the phone
 //! is the remote screen: every event goes to it as well, and its steps run as that phone's). Results go back to the server until the task is done.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,15 +19,71 @@ use wiqo_core::wire::{CommandStatus, Request};
 
 use crate::Event;
 
-const CLIENT_FEATURES: [&str; 3] = [
+const CLIENT_FEATURES: [&str; 4] = [
     "artifact-directory-v1",
     "relay-execution-v1",
     "receipt-card-v1",
+    // A look at a window that says little carries its picture, which the server reads for what the controls do not name.
+    "screen-sight-v1",
 ];
+/// The most a step's data may take on its way to the server (which cuts anything longer).
+const DATA_TEXT_MOST: usize = 11_500;
 /// A task goes on as long as it moves: there is no fixed number of rounds. It stops after this long, or after `STALL_ROUNDS` rounds in a row in which
 /// no step completed (the server's own stall rules usually end such a task earlier, honestly).
 const TASK_MINUTES: u64 = 30;
 const STALL_ROUNDS: usize = 3;
+/// The server writes a ping into an open answer every 20 seconds. An answer that has said nothing for this long (a network that changed, a laptop that
+/// woke up) is dead even if the connection does not say so: the result is then read from the server's record of the request instead of waited for.
+const SILENCE: Duration = Duration::from_secs(75);
+/// How long the results of steps this computer already ran are held for a server that cannot be reached, before the turn gives up on telling them.
+const RESULTS_KEPT_FOR: Duration = Duration::from_secs(10 * 60);
+/// How long a step that was asked to stop has to end by itself before the turn leaves it.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// The server could not be reached at all: nothing was refused, so the same request may be sent again.
+#[derive(Debug)]
+struct Unreachable;
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Sunucuya ulaşılamadı; internet bağlantını kontrol et.")
+    }
+}
+
+impl std::error::Error for Unreachable {}
+
+/// One turn's "Durdur". It belongs to that turn alone: another turn running at the same moment (a phone's message, a background task's step) neither
+/// sees it nor clears it.
+#[derive(Default)]
+pub struct Stop {
+    asked: AtomicBool,
+    told: tokio::sync::Notify,
+}
+
+impl Stop {
+    pub fn is_asked(&self) -> bool {
+        self.asked.load(Ordering::SeqCst)
+    }
+
+    fn ask(&self) {
+        self.asked.store(true, Ordering::SeqCst);
+        self.told.notify_waiters();
+    }
+
+    /// Returns once the person asked this turn to stop (at once when they already did).
+    async fn asked(&self) {
+        loop {
+            let told = self.told.notified();
+            tokio::pin!(told);
+            // Registered before the flag is read, so an ask between the two is not missed.
+            told.as_mut().enable();
+            if self.is_asked() {
+                return;
+            }
+            told.await;
+        }
+    }
+}
 
 /// What the person answered to a question before a step: yes, no, or nothing in time (they were away; the step did not run and the task says why).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +128,55 @@ fn payload_of(step: &Value) -> Value {
         Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
         other => other.clone(),
     }
+}
+
+/// The step as it runs again after the person's yes to a press that cannot be taken back. In a list of steps the ones that already ran are left
+/// out: the yes is for the press that asked, not for doing the earlier steps a second time.
+fn rest_after_yes(step: &Value, refused: &Value) -> Value {
+    let mut approved = step.clone();
+    let mut payload = payload_of(step);
+    let ran = refused["dataText"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|data| data["value"]["evidence"].as_array().cloned())
+        .map(|evidence| evidence.iter().take_while(|entry| entry["ok"] == true).count())
+        .unwrap_or(0);
+    if let Some(value) = payload["value"].as_object_mut() {
+        value.insert("cardApproved".into(), json!(true));
+        for list in ["steps", "fields"] {
+            if let Some(items) = value.get_mut(list).and_then(Value::as_array_mut) {
+                if ran < items.len() {
+                    items.drain(..ran);
+                }
+            }
+        }
+    }
+    approved["payload"] = payload;
+    approved
+}
+
+/// What the screen showed, made to fit the way to the server: the picture travels beside the data, and a window with more controls than fit loses the
+/// last of its list (counted in `moreTargets`) instead of arriving as a cut-off piece of text nobody can read.
+fn fit_desktop(data: &Value) -> (Value, Option<String>) {
+    let mut shown = data.clone();
+    let picture = shown["value"]
+        .as_object_mut()
+        .and_then(|value| value.remove("picture"))
+        .and_then(|picture| picture["dataBase64"].as_str().map(str::to_string))
+        .filter(|image| image.len() >= 32 && image.len() <= 1_200_000);
+    for list in ["targets", "addedTargets"] {
+        while shown.to_string().len() > DATA_TEXT_MOST {
+            let Some(items) = shown["value"][list].as_array_mut().filter(|items| !items.is_empty()) else {
+                break;
+            };
+            let keep = items.len() - (items.len() / 8).max(1);
+            let cut = items.len() - keep;
+            items.truncate(keep);
+            let more = shown["value"]["moreTargets"].as_u64().unwrap_or(0) + cut as u64;
+            shown["value"]["moreTargets"] = json!(more);
+        }
+    }
+    (shown, picture)
 }
 
 /// A browser step that asks to send from the person's signed-in accounts (`sendApproved`): that claim comes from the server, so this computer asks
@@ -184,7 +290,8 @@ pub struct Chat {
     file: std::path::PathBuf,
     account: Mutex<Option<Account>>,
     http: reqwest::Client,
-    stop: AtomicBool,
+    /// The running turns' stops, under each name a turn is known by: its first request's id and its task's id.
+    stops: Mutex<HashMap<String, Arc<Stop>>>,
     account_changed: tokio::sync::Notify,
     verifier: Mutex<Option<String>>,
 }
@@ -217,7 +324,7 @@ impl Chat {
                 .user_agent(concat!("wiqo-desktop/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .unwrap_or_default(),
-            stop: AtomicBool::new(false),
+            stops: Mutex::new(HashMap::new()),
             account_changed: tokio::sync::Notify::new(),
             verifier: Mutex::new(None),
         }
@@ -932,9 +1039,21 @@ impl Chat {
         Ok((mime, bytes.to_vec()))
     }
 
-    /// "Durdur": the running turn stops before its next PC step, and the server is told to stop the task.
+    /// Stops the turn known by this name (its request's id or its task's id): the step it runs is left, no further step starts. False when no such turn
+    /// runs here.
+    pub fn stop_turn(&self, name: &str) -> bool {
+        let stop = self
+            .stops
+            .lock()
+            .expect("stops lock")
+            .get(&name.to_ascii_lowercase())
+            .cloned();
+        stop.inspect(|stop| stop.ask()).is_some()
+    }
+
+    /// "Durdur": that task's turn stops (the step it runs is left, no further step starts), and the server is told to stop the task.
     pub async fn cancel(&self, task: &str, conversation: &str) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.stop_turn(task);
         if let Ok(token) = self.token() {
             let _ = self
                 .call(
@@ -967,8 +1086,69 @@ impl Chat {
         asker: &Asker,
         approve: &Approve,
     ) -> Result<()> {
-        self.stop.store(false, Ordering::SeqCst);
         let token = self.token()?;
+        // An answer to a question the running task asked keeps that task's id and the question's id; a phone names its own task.
+        let task = task.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let stop = Arc::new(Stop::default());
+        // Ids are compared without their case: a phone writes the same id in capitals in one place and in small letters in another.
+        let names = [request_id.to_ascii_lowercase(), task.to_ascii_lowercase()];
+        {
+            let mut stops = self.stops.lock().expect("stops lock");
+            for name in &names {
+                stops.insert(name.clone(), stop.clone());
+            }
+        }
+        let outcome = self
+            .turn(
+                engine,
+                device_id,
+                events,
+                turn,
+                request_id,
+                conversation,
+                history,
+                text,
+                task,
+                question,
+                attachments,
+                asker,
+                approve,
+                &token,
+                &stop,
+            )
+            .await;
+        // The names are given back only if they are still this turn's: a later turn of the same task has its own stop under the task's id.
+        let mut stops = self.stops.lock().expect("stops lock");
+        for name in &names {
+            if stops
+                .get(name)
+                .is_some_and(|current| Arc::ptr_eq(current, &stop))
+            {
+                stops.remove(name);
+            }
+        }
+        outcome
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn turn(
+        &self,
+        engine: &Engine,
+        device_id: &str,
+        events: &broadcast::Sender<Event>,
+        turn: &str,
+        request_id: String,
+        conversation: &str,
+        history: Value,
+        text: &str,
+        task: String,
+        question: Option<String>,
+        attachments: Value,
+        asker: &Asker,
+        approve: &Approve,
+        token: &str,
+        stop: &Stop,
+    ) -> Result<()> {
         let emit = |event: Value| {
             if let Asker::Phone { forward, .. } = asker {
                 forward(event.clone());
@@ -978,8 +1158,6 @@ impl Chat {
                 event,
             });
         };
-        // An answer to a question the running task asked keeps that task's id and the question's id; a phone names its own task.
-        let task = task.unwrap_or_else(|| Uuid::new_v4().to_string());
         let context = asker.client(&device_context(engine, device_id));
         let mut messages: Vec<Value> = history.as_array().cloned().unwrap_or_default();
         messages.push(json!({ "role": "user", "content": text }));
@@ -996,7 +1174,7 @@ impl Chat {
         }
         merge(&mut body, &context);
         emit(json!({ "type": "task", "taskId": task }));
-        let mut answer = self.stream(&token, &body, &emit).await?;
+        let mut answer = self.stream(token, &body, &emit).await?;
         let started = std::time::Instant::now();
         let mut stalls = 0usize;
         while started.elapsed() < Duration::from_secs(TASK_MINUTES * 60) {
@@ -1012,7 +1190,7 @@ impl Chat {
                 });
                 merge(&mut next, &context);
                 emit(json!({ "type": "reset" }));
-                answer = self.stream(&token, &next, &emit).await?;
+                answer = self.stream(token, &next, &emit).await?;
                 continue;
             }
             let steps = answer["steps"].as_array().cloned().unwrap_or_default();
@@ -1028,7 +1206,7 @@ impl Chat {
             let mut results = Vec::new();
             let mut uncertain = false;
             for step in &steps {
-                if self.stop.load(Ordering::SeqCst) {
+                if stop.is_asked() {
                     results.push(json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": "Kullanıcı görevi durdurdu; bu adım çalıştırılmadı.", "errorCode": "PERMISSION_DENIED" }));
                     break;
                 }
@@ -1042,7 +1220,7 @@ impl Chat {
                 let asked = needs_yes(step);
                 let answer = if asked { approve(kind.clone(), question).await } else { Decision::Yes };
                 let mut result = match answer {
-                    Decision::Yes => run_with_progress(engine, step, &emit, asked).await,
+                    Decision::Yes => run_with_progress(engine, step, &emit, asked, stop).await,
                     Decision::No => refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı."),
                     Decision::TimedOut => unanswered_step(step),
                 };
@@ -1052,11 +1230,8 @@ impl Chat {
                     let sentence = result["error"].as_str().unwrap_or("").to_string();
                     let answer = approve(kind, sentence).await;
                     result = if answer == Decision::Yes {
-                        let mut approved = step.clone();
+                        let mut approved = rest_after_yes(step, &result);
                         approved["id"] = json!(Uuid::new_v4().to_string());
-                        if let Some(value) = approved["payload"]["value"].as_object_mut() {
-                            value.insert("cardApproved".into(), json!(true));
-                        }
                         let mut again = run_step_as(engine, &approved, true, false).await;
                         again["stepId"] = step["id"].clone();
                         again
@@ -1093,7 +1268,8 @@ impl Chat {
             });
             merge(&mut next, &context);
             emit(json!({ "type": "reset" }));
-            answer = self.stream(&token, &next, &emit).await?;
+            // These steps ran: their results are told even if the server cannot be reached for a while (the same request, so it is taken once).
+            answer = self.stream_kept(token, &next, &emit).await?;
             if uncertain {
                 return Ok(());
             }
@@ -1183,10 +1359,14 @@ impl Chat {
             .json(body)
             .send()
             .await
-            .map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
+            .map_err(|_| anyhow::Error::new(Unreachable))?;
         if response.status().as_u16() == 401 {
             let _ = self.store(None, Some(token));
             bail!("Oturumun sona erdi; yeniden giriş yap.");
+        }
+        // A server that is restarting or overloaded answers through its gateway: the request was not taken, like one that never arrived.
+        if matches!(response.status().as_u16(), 502..=504) {
+            return Err(anyhow::Error::new(Unreachable));
         }
         if !response.status().is_success() {
             let value: Value = response.json().await.unwrap_or(Value::Null);
@@ -1199,7 +1379,8 @@ impl Chat {
         }
         let mut bytes = response.bytes_stream();
         let mut buffer = String::new();
-        while let Some(chunk) = bytes.next().await {
+        // Silence longer than the server's own pings allow is a dead connection: the answer is then followed from the server's record.
+        while let Ok(Some(chunk)) = tokio::time::timeout(SILENCE, bytes.next()).await {
             let Ok(chunk) = chunk else { break };
             buffer.push_str(&String::from_utf8_lossy(&chunk));
             while let Some(end) = buffer.find('\n') {
@@ -1219,6 +1400,23 @@ impl Chat {
         }
         emit(json!({ "type": "status", "text": "Bağlantı koptu; sonuç sunucudan alınıyor…" }));
         self.follow(token, &request_id, emit).await
+    }
+
+    /// `stream` for a request that carries the results of steps this computer already ran. A server that cannot be reached is tried again for
+    /// `RESULTS_KEPT_FOR` with the same request (the server takes a request id once, so a repeat neither runs it twice nor loses it).
+    async fn stream_kept(&self, token: &str, body: &Value, emit: &impl Fn(Value)) -> Result<Value> {
+        let started = std::time::Instant::now();
+        let mut pause = Duration::from_secs(2);
+        loop {
+            match self.stream(token, body, emit).await {
+                Err(error) if error.is::<Unreachable>() && started.elapsed() < RESULTS_KEPT_FOR => {
+                    emit(json!({ "type": "status", "text": "Sunucuya ulaşılamıyor; PC adımlarının sonucu bağlantı gelince iletilecek…" }));
+                    tokio::time::sleep(pause).await;
+                    pause = (pause * 2).min(Duration::from_secs(30));
+                }
+                other => return other,
+            }
+        }
     }
 
     async fn follow(&self, token: &str, request_id: &str, emit: &impl Fn(Value)) -> Result<Value> {
@@ -1445,7 +1643,12 @@ pub(crate) fn refused_step(step: &Value, message: &str) -> Value {
 
 /// Runs one step of the answer here and describes the result the way the server reads `deviceResults`.
 /// Runs a step and, while it runs, puts how far it has come at the end of its line ("Kopyala · %45 · ~20 sn kaldı") for the panel and the phone.
-async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value), local_yes: bool) -> Value {
+/// What a step the person stopped while it ran says: it may have done part of its work, so it is never run again by itself.
+fn stopped_step(step: &Value) -> Value {
+    json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": "Kullanıcı görevi durdurdu; bu adım yarıda bırakıldı.", "errorCode": "PERMISSION_DENIED", "sideEffectUncertain": true })
+}
+
+async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value), local_yes: bool, stop: &Stop) -> Value {
     let id = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok());
     let summary = step["summary"].as_str().unwrap_or("").to_string();
     let run = run_step_as(engine, step, false, local_yes);
@@ -1454,6 +1657,13 @@ async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value),
     loop {
         tokio::select! {
             result = &mut run => return result,
+            // What can be stopped on this computer was told to stop by whoever asked; the step gets a moment to end by itself and say what it did.
+            _ = stop.asked() => {
+                return match tokio::time::timeout(STOP_GRACE, &mut run).await {
+                    Ok(result) => result,
+                    Err(_) => stopped_step(step),
+                };
+            }
             _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                 let Some(progress) = id.and_then(wiqo_core::engine::progress_of) else { continue };
                 let words = progress.words();
@@ -1535,8 +1745,15 @@ pub(crate) async fn run_step_as(engine: &Engine, step: &Value, card_approved: bo
             if shown["kind"] == "screenshot" {
                 shown["value"]["dataBase64"] = json!("");
             }
+            if shown["kind"] == "computerDesktop" {
+                let (fitted, picture) = fit_desktop(&shown);
+                shown = fitted;
+                if let Some(picture) = picture {
+                    fields["imageBase64"] = json!(picture);
+                }
+            }
             let text = shown.to_string();
-            fields["dataText"] = json!(if text.len() <= 11_500 {
+            fields["dataText"] = json!(if text.len() <= DATA_TEXT_MOST {
                 text
             } else {
                 json!({ "kind": "result", "truncated": true, "preview": text.chars().take(5_000).collect::<String>() }).to_string()
@@ -1598,6 +1815,124 @@ mod tests {
         assert_eq!(chat.email().as_deref(), Some("new@test.invalid"));
         chat.store(None, Some("new-test-token")).unwrap();
         assert!(chat.email().is_none());
+    }
+
+    fn chat_at(server: &str) -> Chat {
+        let dir = DataDir::new(std::env::temp_dir().join(format!("wiqo-chat-test-{}", Uuid::new_v4()))).unwrap();
+        Chat::new(server, Arc::new(Vault::new(false)), &dir)
+    }
+
+    #[test]
+    fn a_window_with_more_controls_than_fit_keeps_its_shape_and_counts_what_was_cut() {
+        let targets: Vec<Value> = (0..120)
+            .map(|index| json!({ "ref": format!("d-{index:08x}"), "role": "button", "name": format!("Bir düğmenin uzunca adı {index}"),
+                "frame": { "x": 0.12345, "y": 0.54321, "width": 0.04, "height": 0.02 }, "actions": ["Click"], "enabled": true, "secure": false, "value": "" }))
+            .collect();
+        let data = json!({ "kind": "computerDesktop", "value": { "taskId": "t", "action": "observe", "targets": targets, "moreTargets": 3,
+            "picture": { "mimeType": "image/jpeg", "dataBase64": "A".repeat(64), "width": 10, "height": 10 } } });
+        assert!(data.to_string().len() > DATA_TEXT_MOST);
+        let (fitted, picture) = fit_desktop(&data);
+        assert!(fitted.to_string().len() <= DATA_TEXT_MOST);
+        assert_eq!(picture.as_deref(), Some("A".repeat(64).as_str()), "the picture travels beside the data");
+        assert!(fitted["value"]["picture"].is_null());
+        let kept = fitted["value"]["targets"].as_array().unwrap().len();
+        assert!(kept > 20 && kept < 120);
+        assert_eq!(fitted["value"]["moreTargets"], 3 + 120 - kept as u64);
+        assert_eq!(fitted["value"]["targets"][0]["ref"], "d-00000000", "the first controls, the ones a person acts with, stay");
+    }
+
+    #[test]
+    fn a_yes_in_the_middle_of_a_list_runs_only_what_is_left() {
+        let step = json!({ "id": "x", "type": "computerDesktop", "payload": { "kind": "computerDesktop", "value": { "taskId": "t", "action": "runSteps",
+            "steps": [{ "action": "type", "text": "merhaba" }, { "action": "click", "targetRef": "d-1" }, { "action": "wait" }] } } });
+        let refused = json!({ "errorCode": "DESKTOP_APPROVAL_REQUIRED", "dataText": json!({ "kind": "computerDesktop", "value": { "evidence": [
+            { "index": 0, "ok": true }, { "index": 1, "ok": false } ] } }).to_string() });
+        let again = rest_after_yes(&step, &refused);
+        let value = &again["payload"]["value"];
+        assert_eq!(value["cardApproved"], true);
+        let steps = value["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2, "what was typed is not typed again");
+        assert_eq!(steps[0]["action"], "click");
+        // One step alone runs again as it is.
+        let single = json!({ "id": "y", "type": "computerDesktop", "payload": json!({ "kind": "computerDesktop", "value": { "taskId": "t", "action": "click", "targetRef": "d-1" } }).to_string() });
+        let again = rest_after_yes(&single, &json!({}));
+        assert_eq!(again["payload"]["value"]["cardApproved"], true);
+        assert_eq!(again["payload"]["value"]["action"], "click");
+    }
+
+    #[tokio::test]
+    async fn stopping_one_turn_leaves_the_others_running() {
+        let chat = chat_at("http://127.0.0.1:9");
+        let (phone, background) = (Arc::new(Stop::default()), Arc::new(Stop::default()));
+        {
+            let mut stops = chat.stops.lock().unwrap();
+            stops.insert("phone-request".into(), phone.clone());
+            stops.insert("background-task".into(), background.clone());
+        }
+        assert!(chat.stop_turn("PHONE-Request"));
+        assert!(phone.is_asked());
+        assert!(!background.is_asked());
+        assert!(!chat.stop_turn("a turn that is not running"));
+        assert!(tokio::time::timeout(Duration::from_secs(1), phone.asked()).await.is_ok());
+        assert!(tokio::time::timeout(Duration::from_millis(50), background.asked()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_stop_asked_while_someone_waits_for_it_is_heard() {
+        let stop = Arc::new(Stop::default());
+        let waiting = {
+            let stop = stop.clone();
+            tokio::spawn(async move { stop.asked().await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        stop.ask();
+        assert!(tokio::time::timeout(Duration::from_secs(1), waiting).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_results_of_steps_that_ran_reach_a_server_that_was_away() {
+        use std::io::{Read, Write};
+        // Nobody listens at first: the address is taken and given back, and the server comes up a moment later.
+        let address = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            let listener = std::net::TcpListener::bind(address).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = [0u8; 4096];
+            let read = stream.read(&mut request).unwrap();
+            let body = format!("data: {}\n\n", json!({ "type": "done", "reply": "tamam" }));
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            String::from_utf8_lossy(&request[..read]).to_string()
+        });
+        let chat = chat_at(&format!("http://{address}"));
+        let said = Mutex::new(Vec::new());
+        let answer = chat
+            .stream_kept("test-only-token", &json!({ "requestId": "the-same-request", "deviceResults": [] }), &|event| said.lock().unwrap().push(event))
+            .await
+            .unwrap();
+        assert_eq!(answer["reply"], "tamam");
+        assert!(said.lock().unwrap().iter().any(|event| event["type"] == "status"), "the person is told the results wait for the connection");
+        assert!(server.join().unwrap().contains("the-same-request"), "the same request goes again, so the server takes it once");
+    }
+
+    #[tokio::test]
+    async fn a_request_the_server_refused_is_not_sent_again() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = json!({ "error": { "message": "Günlük sınır doldu." } }).to_string();
+            write!(stream, "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let chat = chat_at(&format!("http://{address}"));
+        let error = chat.stream_kept("test-only-token", &json!({ "requestId": "r" }), &|_| {}).await.unwrap_err();
+        assert_eq!(error.to_string(), "Günlük sınır doldu.");
+        server.join().unwrap();
     }
 
     #[tokio::test]

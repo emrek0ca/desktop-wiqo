@@ -9,6 +9,8 @@ use serde::Deserialize;
 pub const REMOTE_MESSAGE: &str = "remoteMessage";
 pub const APPROVAL_DECISION: &str = "approvalDecision";
 pub const CANCEL_JOB: &str = "cancelJob";
+pub const CANCEL_TURN: &str = "cancelTurn";
+pub const APPROVALS_OPEN: &str = "approvalsOpen";
 
 /// Frames to the phone (`kind`).
 pub const ACK: &str = "ack";
@@ -92,7 +94,13 @@ mod tests {
     #[test]
     fn every_frame_this_desktop_speaks_is_in_the_contract_and_nothing_else_is() {
         let frames = Frames::get();
-        let mut to_desktop = vec![REMOTE_MESSAGE, APPROVAL_DECISION, CANCEL_JOB];
+        let mut to_desktop = vec![
+            REMOTE_MESSAGE,
+            APPROVAL_DECISION,
+            CANCEL_JOB,
+            CANCEL_TURN,
+            APPROVALS_OPEN,
+        ];
         let mut to_phone = vec![
             ACK,
             STREAM_EVENT,

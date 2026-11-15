@@ -407,8 +407,28 @@ impl Relay {
         // Frames for the phones leave through one channel, so any number of commands can run at once and still write to the socket one at a time.
         let (outgoing, mut answers) = mpsc::channel::<String>(64);
         self.runtime.outbox.attach(Some(outgoing));
-        let result = self.serve(&mut sink, &mut stream, &mut answers).await;
+        // What ended while there was no connection (a step's receipt, a phone's turn) goes first, in its own order.
+        let mut kept = self.runtime.outbox.take_kept().into_iter();
+        let mut result = Ok(());
+        for text in kept.by_ref() {
+            if let Err(error) = sink.send(Message::text(text.clone())).await {
+                self.runtime.outbox.keep_unsent(text);
+                result = Err(error.to_string());
+                break;
+            }
+        }
+        if result.is_ok() {
+            result = self.serve(&mut sink, &mut stream, &mut answers).await;
+        }
         self.runtime.outbox.attach(None);
+        // Whatever had not left yet waits for the next connection, after what was already waiting.
+        for text in kept {
+            self.runtime.outbox.keep_unsent(text);
+        }
+        answers.close();
+        while let Ok(text) = answers.try_recv() {
+            self.runtime.outbox.keep_unsent(text);
+        }
         result
     }
 
@@ -444,7 +464,10 @@ impl Relay {
                     sink.send(Message::text(registration(&self.runtime).to_string())).await.map_err(|error| error.to_string())?;
                 }
                 Some(text) = answers.recv() => {
-                    sink.send(Message::text(text)).await.map_err(|error| error.to_string())?;
+                    if let Err(error) = sink.send(Message::text(text.clone())).await {
+                        self.runtime.outbox.keep_unsent(text);
+                        return Err(error.to_string());
+                    }
                 }
                 message = stream.next() => {
                     let Some(message) = message else { return Err("the server closed the connection".into()) };
