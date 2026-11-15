@@ -635,9 +635,56 @@ impl Chat {
                 Some(&token),
             )
             .await?;
+        // The MCP apps the person added, with each tool's state (allowed, altered by the app since it was connected); an older server has no such list.
+        let apps = self
+            .call(reqwest::Method::GET, "apps", None, Some(&token))
+            .await
+            .unwrap_or_default();
+        let servers: Vec<&Value> = apps["apps"]
+            .as_array()
+            .map(|list| list.iter().filter(|app| app["kind"] == "mcp").collect())
+            .unwrap_or_default();
         Ok(
-            json!({ "providers": providers["providers"], "connections": connections["connections"], "capabilities": capabilities["capabilities"] }),
+            json!({ "providers": providers["providers"], "connections": connections["connections"], "capabilities": capabilities["capabilities"], "servers": servers }),
         )
+    }
+
+    /// The person has looked at the tools an MCP app altered: they are kept as they are now and stop asking before every use.
+    pub async fn mcp_accept_changes(&self, server: u64) -> Result<()> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::POST,
+            &format!("mcp/servers/{server}/tools/accept"),
+            None,
+            Some(&token),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Which tools of an MCP app Wiqo may use; an empty list allows all of them.
+    pub async fn mcp_allow_tools(&self, server: u64, tools: &[String]) -> Result<()> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::PUT,
+            &format!("mcp/servers/{server}/allow"),
+            Some(json!({ "allowTools": tools })),
+            Some(&token),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mcp_remove(&self, server: u64) -> Result<()> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::DELETE,
+            &format!("mcp/servers/{server}"),
+            None,
+            Some(&token),
+        )
+        .await?;
+        Ok(())
     }
 
     /// The provider's consent page; the caller opens it in the browser and the answer returns as a `wiqo://oauth-callback` link.

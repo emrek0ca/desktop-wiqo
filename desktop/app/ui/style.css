@@ -983,6 +983,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--text3); box-shad
 .app-sheet { max-width: 360px; }
 .app-sheet-head { display: flex; align-items: center; gap: 14px; }
 .app-sheet-field { display: flex; flex-direction: column; gap: 6px; }
+.app-tools { display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto; }
+.app-tool { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.app-tool .spacer { flex: 1; }
+.app-tool.changed span:first-of-type { color: var(--red, #c0392b); }
+.app-changed { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; border: 1px solid var(--line-soft); }
+#apps-servers-block { margin-top: 28px; }
 @media (prefers-color-scheme: dark) { .app-logo { background: #f4f4f6; } }
 
 /* Sign-in and set-up stay as they were, only rounder. */

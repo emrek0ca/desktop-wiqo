@@ -323,6 +323,29 @@ async fn connector_access(app: State<'_, App>, provider: String, level: String) 
 }
 
 #[tauri::command]
+async fn mcp_accept_changes(app: State<'_, App>, server: u64) -> Reply<()> {
+    app.desktop
+        .chat
+        .mcp_accept_changes(server)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
+async fn mcp_allow_tools(app: State<'_, App>, server: u64, tools: Vec<String>) -> Reply<()> {
+    app.desktop
+        .chat
+        .mcp_allow_tools(server, &tools)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
+async fn mcp_remove(app: State<'_, App>, server: u64) -> Reply<()> {
+    app.desktop.chat.mcp_remove(server).await.map_err(text)
+}
+
+#[tauri::command]
 async fn profile(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.profile().await.map_err(text)
 }
@@ -1074,6 +1097,9 @@ fn main() {
             connector_connect,
             connector_disconnect,
             connector_access,
+            mcp_accept_changes,
+            mcp_allow_tools,
+            mcp_remove,
             sign_out,
             chat_send,
             chat_cancel,
