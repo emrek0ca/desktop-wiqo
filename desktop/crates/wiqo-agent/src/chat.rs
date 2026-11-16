@@ -30,7 +30,7 @@ const CLIENT_FEATURES: [&str; 4] = [
 const DATA_TEXT_MOST: usize = 11_500;
 /// A task goes on as long as it moves: there is no fixed number of rounds. It stops after this long, or after `STALL_ROUNDS` rounds in a row in which
 /// no step completed (the server's own stall rules usually end such a task earlier, honestly).
-const TASK_MINUTES: u64 = 30;
+const TASK_MINUTES: u64 = 120;
 const STALL_ROUNDS: usize = 3;
 /// The server writes a ping into an open answer every 20 seconds. An answer that has said nothing for this long (a network that changed, a laptop that
 /// woke up) is dead even if the connection does not say so: the result is then read from the server's record of the request instead of waited for.
@@ -101,6 +101,11 @@ pub type Approve =
 /// only for what the person allowed once and for all) or that the server marked. A read never asks (`requiresUserPresence` marks reads of private
 /// files too); a press on the screen that cannot be taken back is asked by the computer itself (DESKTOP_APPROVAL_REQUIRED).
 pub(crate) fn needs_yes(step: &Value) -> bool {
+    // Full access (the person's own switch on this computer): the work goes on without a yes for each step. Sends and anything that removes still ask;
+    // a press on the screen that cannot be taken back is asked by the computer itself either way.
+    if wiqo_ops::full_access() && !asks_to_send(step) && !removes_something(step) {
+        return false;
+    }
     step["approvalRequired"] == true || step["isDestructive"] == true || asks_to_send(step)
 }
 
@@ -181,6 +186,11 @@ fn fit_desktop(data: &Value) -> (Value, Option<String>) {
 
 /// A browser step that asks to send from the person's signed-in accounts (`sendApproved`): that claim comes from the server, so this computer asks
 /// for its own yes (and an unattended automation refuses it) instead of believing it.
+fn removes_something(step: &Value) -> bool {
+    let kind = step["type"].as_str().unwrap_or("").to_lowercase();
+    ["delete", "trash", "remove", "uninstall", "empty"].iter().any(|word| kind.contains(word))
+}
+
 fn asks_to_send(step: &Value) -> bool {
     let payload = payload_of(step);
     payload["sendApproved"] == true || payload["value"]["sendApproved"] == true

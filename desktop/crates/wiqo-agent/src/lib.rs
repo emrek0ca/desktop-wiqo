@@ -561,6 +561,7 @@ impl Desktop {
         let hostname = computer_name();
         let identity = Identity::load_or_create(&dir, &hostname)?;
         let settings = Arc::new(Settings::open(&dir));
+        wiqo_ops::set_full_access(settings.snapshot().full_access);
         // The keychain holds the tokens, except for a data folder of its own (tests, a second profile).
         let vault = Arc::new(wiqo_core::vault::Vault::new(
             std::env::var_os("WIQO_DATA_DIR").is_none(),
@@ -1282,6 +1283,18 @@ impl Desktop {
             services: self.runtime.engine.services().clone(),
         };
         wiqo_ops::undo_file(&context, id).map_err(|error| anyhow::anyhow!(error.message))
+    }
+
+    /// Full access: whether the person turned it on for this computer.
+    pub fn full_access(&self) -> bool {
+        self.runtime.engine.settings().snapshot().full_access
+    }
+
+    /// Turned on or off here, the only place it can be turned on. It takes effect for the next step.
+    pub fn set_full_access(&self, on: bool) -> Result<bool> {
+        self.runtime.engine.settings().update(|data| data.full_access = on)?;
+        wiqo_ops::set_full_access(on);
+        Ok(on)
     }
 
     /// This computer's screen memory (wiqo_ops::screen_memory): its state, for the settings.

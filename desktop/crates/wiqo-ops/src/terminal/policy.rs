@@ -2,6 +2,7 @@
 //! a path may point, and the credentials masked before output leaves the computer.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -43,8 +44,38 @@ fn forbidden() -> &'static [Regex] {
     })
 }
 
+/// The person turned on full access for this computer: the terminal runs what they would run themselves, and only what nothing can undo is refused.
+static FULL_ACCESS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_full_access(on: bool) {
+    FULL_ACCESS.store(on, Ordering::Relaxed);
+}
+
+pub fn full_access() -> bool {
+    FULL_ACCESS.load(Ordering::Relaxed)
+}
+
+/// What stays refused under full access: a disk or its boot, a whole drive or the home folder, the keychain, a fork bomb, shutting the computer down
+/// (the work would end with it). Installers piped to a shell, sudo, launchctl, elevation and execution policy are allowed there.
+fn catastrophic() -> &'static [Regex] {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        compiled(&[
+            r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+(/|~|\$HOME|\*)(\s|$|/\s|/\*)",
+            r"\b(mkfs|fdisk|diskutil\s+(erase|partition|zero)|dd\s+if=)",
+            r"\b(shutdown|reboot|halt|csrutil|nvram|kextload)\b",
+            r":\(\)\s*\{\s*:\|:&\s*\};:",
+            r"\bsecurity\s+(dump-keychain|find-generic-password|find-internet-password)",
+            r"(?i)\b(format-volume|clear-disk|initialize-disk|diskpart|stop-computer|restart-computer)\b",
+            r"(?i)\bremove-item\b[^;|]*-recurse[^;|]*\s([a-z]:\\?|\\|~|\$env:userprofile)(\s|$)",
+            r"(?i)\breg\s+delete\s+hk(lm|cr)",
+        ])
+    })
+}
+
 pub fn is_forbidden(command: &str) -> bool {
-    forbidden().iter().any(|pattern| pattern.is_match(command))
+    let patterns = if full_access() { catastrophic() } else { forbidden() };
+    patterns.iter().any(|pattern| pattern.is_match(command))
 }
 
 const READ_ONLY_PROGRAMS: &[&str] = &[

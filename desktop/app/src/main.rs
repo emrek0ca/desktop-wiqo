@@ -608,6 +608,16 @@ fn screen_memory(app: State<'_, App>) -> serde_json::Value {
 }
 
 #[tauri::command]
+fn full_access(app: State<'_, App>) -> bool {
+    app.desktop.full_access()
+}
+
+#[tauri::command]
+fn set_full_access(app: State<'_, App>, on: bool) -> Reply<bool> {
+    app.desktop.set_full_access(on).map_err(text)
+}
+
+#[tauri::command]
 fn set_screen_memory(app: State<'_, App>, on: bool) -> Reply<serde_json::Value> {
     app.desktop.set_screen_memory(on).map_err(text)
 }
@@ -1072,6 +1082,8 @@ fn main() {
             record_to_skill,
             screen_memory,
             set_screen_memory,
+            full_access,
+            set_full_access,
             screen_memory_action,
             start_pairing,
             cancel_pairing,

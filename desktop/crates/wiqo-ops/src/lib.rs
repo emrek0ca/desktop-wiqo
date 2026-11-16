@@ -29,7 +29,7 @@ pub use files::undo::undo_file;
 pub use files::batch_preview;
 /// A signed-in page read for a watcher (the server compares it).
 pub use browser::read_watched_page;
-pub use terminal::redact_secrets;
+pub use terminal::{full_access, redact_secrets, set_full_access};
 
 /// Every operation this build implements, one module per area. `sessions` are the terminal sessions the `terminal` step runs in.
 fn all_operations(sessions: std::sync::Arc<terminal::Sessions>) -> Vec<Op> {

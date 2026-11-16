@@ -269,6 +269,10 @@ impl PairedPhones {
 pub struct SettingsData {
     #[serde(default)]
     pub connection_stopped: bool,
+    /// "Tam yetki": the terminal on this computer runs what the person would run themselves (packages, installers, sudo), and the work goes on without
+    /// asking for each step. Only the person turns it on, here.
+    #[serde(default)]
+    pub full_access: bool,
 }
 
 pub struct Settings {
