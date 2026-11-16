@@ -251,7 +251,8 @@ impl TerminalStep {
                         "Açık terminal oturumu yok; directory ver (ör. ~/proje).",
                     );
                 };
-                let mode = if value["mode"] == "full" {
+                // Under the person's full access every step runs with a full grant: no command is sorted into read or write first.
+                let mode = if value["mode"] == "full" || super::policy::full_access() {
                     "full"
                 } else {
                     "read"
@@ -261,7 +262,10 @@ impl TerminalStep {
                     object.remove("mode");
                 }
                 // A read in the person's own folder needs no grant (this computer's own rule); everything else works under one.
+                // Only a file read or a search may go without a grant; a command always carries one (a read one when it only looks).
+                let file_read = matches!(action.as_str(), "read_file" | "search");
                 let grant = (mode == "full"
+                    || !file_read
                     || policy::read_folder_without_grant(&folder).is_none())
                 .then(|| self.grant(&folder, mode));
                 // A step that names no folder goes on where the session's shell ended (its `cd`, kept per grant); one without a grant names its folder.
