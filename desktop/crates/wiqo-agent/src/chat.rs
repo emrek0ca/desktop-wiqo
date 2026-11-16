@@ -19,8 +19,12 @@ use wiqo_core::wire::{CommandStatus, Request};
 
 use crate::Event;
 
-const CLIENT_FEATURES: [&str; 4] = [
+mod local;
+
+const CLIENT_FEATURES: [&str; 5] = [
     "artifact-directory-v1",
+    // PC work runs on this computer's own agent (chat/local.rs); the server only answers its model calls.
+    "local-agent-v1",
     "relay-execution-v1",
     "receipt-card-v1",
     // A look at a window that says little carries its picture, which the server reads for what the controls do not name.
@@ -252,11 +256,10 @@ impl Asker {
                     .as_array()
                     .cloned()
                     .unwrap_or_default();
-                if !features
-                    .iter()
-                    .any(|feature| feature == "relay-execution-v1")
-                {
-                    features.push(json!("relay-execution-v1"));
+                for own in ["relay-execution-v1", "local-agent-v1"] {
+                    if !features.iter().any(|feature| feature == own) {
+                        features.push(json!(own));
+                    }
                 }
                 merge(
                     &mut client,
@@ -1232,6 +1235,10 @@ impl Chat {
         merge(&mut body, &context);
         emit(json!({ "type": "task", "taskId": task }));
         let mut answer = self.stream(token, &body, &emit).await?;
+        // PC work handed to this computer's own agent: the loop runs here from now on.
+        if answer["localAgent"].is_object() {
+            return self.local_agent(engine, &answer["localAgent"], &history, text, token, approve, stop, &emit).await;
+        }
         let started = std::time::Instant::now();
         let mut stalls = 0usize;
         while started.elapsed() < Duration::from_secs(TASK_MINUTES * 60) {
