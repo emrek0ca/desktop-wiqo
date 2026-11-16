@@ -14,6 +14,8 @@
 
   const subtitle = (item) => {
     if (item.kind === "goal" && item.progress) return item.progress.total ? `${item.progress.done}/${item.progress.total} tamamlandı` : "Alt görev yok";
+    // A long job (campaign): how many of its checkable items passed, then what it does or waits for.
+    if (item.kind === "job" && item.progress && item.progress.total) return [`${item.progress.done}/${item.progress.total} madde`, item.detail].filter(Boolean).join(" · ");
     return item.when || item.detail || "";
   };
 
@@ -31,7 +33,7 @@
     sub.className = "muted small";
     sub.textContent = subtitle(item);
     copy.append(title, sub);
-    if (item.kind === "goal" && item.progress && item.progress.total) {
+    if ((item.kind === "goal" || item.kind === "job") && item.progress && item.progress.total) {
       const track = document.createElement("div");
       track.className = "agent-track";
       const fill = document.createElement("div");
