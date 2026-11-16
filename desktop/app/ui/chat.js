@@ -94,9 +94,19 @@
 
   const isGroup = () => conversation.startsWith("agent-group-");
 
+  // A running answer does not hold the window: leaving it for another chat only stops this window from drawing it. The work goes on (the server and this computer
+  // run it); its late events carry the old turn and are ignored, and opening that chat again reads what it has so far from the server.
+  function leave() {
+    turn = null;
+    task = null;
+    remoteTask = null;
+    remoteAgent = null;
+    groupLive = new Map();
+  }
+
   async function open(id, refresh = false) {
     if (turn && refresh) return;
-    if (turn) return toast("Çalışan cevap bitmeden sohbet değişmez; önce Durdur.", "bad");
+    if (!refresh) leave();
     const owner = syncAccount;
     if (!refresh) {
       conversation = id;
@@ -139,7 +149,7 @@
   }
 
   function fresh() {
-    if (turn) return toast("Çalışan cevap bitmeden yeni sohbet açılmaz; önce Durdur.", "bad");
+    leave();
     conversation = uuid();
     remoteTask = null;
     messages = [];

@@ -403,32 +403,15 @@ function permissionRows(target) {
     const title = document.createElement("div");
     title.className = "perm-title";
     title.textContent = permission.title;
-    if (permission.optional) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "isteğe bağlı";
-      title.append(tag);
-    }
     const why = document.createElement("div");
     why.className = "muted small";
-    why.textContent = permission.detail ? `${permission.why} (${permission.detail})` : permission.why;
+    why.textContent = permission.why;
     text.append(title, why);
-    const side = document.createElement("div");
-    side.className = "perm-side";
     const [label, tone] = PERMISSION_STATES[permission.state] || PERMISSION_STATES.notDetermined;
     const badge = document.createElement("span");
     badge.className = `badge ${permission.needsRestart ? "wait" : tone}`;
     badge.textContent = permission.needsRestart ? "Yeniden başlat" : label;
-    side.append(badge);
-    if (permission.state !== "granted") {
-      const button = document.createElement("button");
-      button.className = `small ${permission.optional || permission.state === "denied" ? "secondary" : "primary"}`;
-      button.disabled = asking !== null;
-      button.textContent = asking === permission.id ? "Bekleniyor…" : permission.state === "denied" || permission.id === "files" ? "Ayarları aç" : "İzin ver";
-      button.onclick = () => askPermission(permission.id);
-      side.append(button);
-    }
-    row.append(text, side);
+    row.append(text, badge);
     target.append(row);
   }
 }
@@ -436,10 +419,15 @@ function permissionRows(target) {
 function renderPermissions() {
   const restart = permissionList.some((permission) => permission.needsRestart);
   $("system-permissions-card").hidden = permissionList.length === 0;
-  $("permissions-restart").hidden = !restart;
-  $("setup-restart").hidden = !restart;
-  const allGranted = permissionList.every((permission) => permission.optional || permission.state === "granted");
-  $("setup-done").textContent = allGranted ? "Devam" : "Bunlarla devam et";
+  const allGranted = permissionList.every((permission) => permission.state === "granted");
+  for (const id of ["grant-all", "setup-grant"]) {
+    $(id).textContent = asking !== null ? "Bekleniyor…" : restart ? "Yeniden başlat" : "Tüm yetkileri ver";
+    $(id).disabled = asking !== null;
+    $(id).hidden = allGranted && !restart && id === "grant-all" && fullAccessOn;
+  }
+  $("setup-done").hidden = !allGranted;
+  $("setup-skip").hidden = allGranted;
+  $("setup-grant").hidden = allGranted && !restart;
   permissionRows($("system-permissions"));
   permissionRows($("setup-permissions"));
 }
@@ -453,21 +441,34 @@ async function loadPermissions() {
   renderPermissions();
 }
 
-async function askPermission(id) {
-  asking = id;
+let fullAccessOn = false;
+
+// One button for everything: Tam yetki (the terminal and files without asking each step) and every system permission one after the other. What macOS only
+// lets the person switch in System Settings opens its page; what needs a restart says so.
+async function grantAll() {
+  if (permissionList.some((permission) => permission.needsRestart)) return invoke("restart_app");
+  asking = "all";
   renderPermissions();
   try {
-    permissionList = await invoke("request_permission", { id });
+    fullAccessOn = await invoke("set_full_access", { on: true });
+    window.dispatchEvent(new CustomEvent("wiqo-access", { detail: fullAccessOn }));
+    for (const permission of permissionList) {
+      if (permission.state === "granted") continue;
+      permissionList = await invoke("request_permission", { id: permission.id });
+    }
   } catch (error) {
     toast(`İzin istenemedi: ${error}`, "bad");
   }
   asking = null;
-  renderPermissions();
+  await loadPermissions();
 }
 
 $("setup-done").onclick = finishSetup;
 $("setup-skip").onclick = finishSetup;
-for (const id of ["setup-restart", "permissions-restart"]) $(id).onclick = () => invoke("restart_app");
+$("grant-all").onclick = grantAll;
+$("setup-grant").onclick = async () => { await grantAll(); if (permissionList.every((permission) => permission.state === "granted")) finishSetup(); };
+invoke("full_access").then((on) => { fullAccessOn = Boolean(on); renderPermissions(); }).catch(() => {});
+window.addEventListener("wiqo-access", (event) => { fullAccessOn = Boolean(event.detail); renderPermissions(); });
 
 // The person grants in System Settings: the list follows while it is on screen.
 setInterval(() => {

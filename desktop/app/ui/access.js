@@ -28,7 +28,9 @@
       });
       if (!yes) return;
     }
-    show(await invoke("set_full_access", { on: full }).catch(() => !full));
+    const now = await invoke("set_full_access", { on: full }).catch(() => !full);
+    show(now);
+    window.dispatchEvent(new CustomEvent("wiqo-access", { detail: now }));
   }
 
   button.onclick = (event) => {
@@ -41,5 +43,6 @@
   document.addEventListener("click", (event) => { if (!menu.hidden && !menu.contains(event.target)) close(); });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !menu.hidden) { event.stopImmediatePropagation(); close(); } }, true);
 
+  window.addEventListener("wiqo-access", (event) => show(Boolean(event.detail)));
   invoke("full_access").then(show).catch(() => show(false));
 })();

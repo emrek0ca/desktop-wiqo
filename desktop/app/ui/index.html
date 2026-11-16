@@ -73,12 +73,12 @@
     <ol class="steps-bar"><li class="done">Giriş</li><li class="on">İzinler</li></ol>
     <span class="mark stage-logo"></span>
     <h1>İzinleri ver</h1>
-    <p class="lead">Her satırda <b>İzin ver</b>'e bas; macOS kısa bir onay sorar. Bir kez yapılır, sonra görevler takılmaz.</p>
+    <p class="lead">Tek düğme: Wiqo bu bilgisayarda her şeyi yapabilsin diye gereken izinleri sırayla ister. macOS kısa onaylar sorar; bir kez yapılır.</p>
     <div class="card stage-list"><ul id="setup-permissions" class="list perms"></ul></div>
     <div class="stage-actions">
       <button id="setup-skip" class="link">Şimdilik geç</button>
-      <button id="setup-restart" class="secondary" hidden>Wiqo'yu yeniden başlat</button>
-      <button id="setup-done" class="primary">Devam</button>
+      <button id="setup-done" class="secondary">Devam</button>
+      <button id="setup-grant" class="primary">Tüm yetkileri ver</button>
     </div>
     <p class="muted small">İstediğin zaman Ayarlar › İzinler'den değiştirebilirsin.</p>
   </main>
@@ -240,7 +240,7 @@
         </section>
 
         <section id="system-permissions-card" class="settings-section" hidden>
-          <div class="row-head"><h3 class="settings-head">İzinler</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
+          <div class="row-head"><h3 class="settings-head">İzinler</h3><button id="grant-all" class="primary small">Tüm yetkileri ver</button></div>
           <div class="card"><ul id="system-permissions" class="list perms"></ul></div>
         </section>
 
