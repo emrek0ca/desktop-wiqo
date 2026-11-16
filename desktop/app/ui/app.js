@@ -161,7 +161,17 @@ $("me-menu").onclick = (event) => {
 };
 document.addEventListener("click", () => ($("me-popover").hidden = true));
 
+// What this computer is doing right now, over the message box: the first thing by name, how many more, and one button that stops them all.
+function renderWorkBar(items) {
+  $("work-bar").hidden = !items.length;
+  if (!items.length) return;
+  const first = items[0];
+  $("work-title").textContent = OPERATIONS[first.kind] || first.kind;
+  $("work-detail").textContent = [first.detail, items.length > 1 ? `+${items.length - 1} iş daha` : ""].filter(Boolean).join(" · ");
+}
+
 function renderWork(items) {
+  renderWorkBar(items);
   const box = $("right-work");
   box.replaceChildren();
   // "İşi durdur" only while something runs.
@@ -466,6 +476,13 @@ async function grantAll() {
 $("setup-done").onclick = finishSetup;
 $("setup-skip").onclick = finishSetup;
 $("grant-all").onclick = grantAll;
+// Coming back from System Settings: what was switched there shows at once.
+let permissionsReadAt = 0;
+window.addEventListener("focus", () => {
+  if (asking !== null || Date.now() - permissionsReadAt < 1500) return;
+  permissionsReadAt = Date.now();
+  loadPermissions();
+});
 $("setup-grant").onclick = async () => { await grantAll(); if (permissionList.every((permission) => permission.state === "granted")) finishSetup(); };
 invoke("full_access").then((on) => { fullAccessOn = Boolean(on); renderPermissions(); }).catch(() => {});
 window.addEventListener("wiqo-access", (event) => { fullAccessOn = Boolean(event.detail); renderPermissions(); });
@@ -595,6 +612,7 @@ async function stopWork() {
   toast("Çalışan iş durduruldu.");
 }
 $("right-stop").onclick = stopWork;
+$("work-stop").onclick = stopWork;
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!$("report").hidden) return closeReport();

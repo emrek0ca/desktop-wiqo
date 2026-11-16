@@ -22,7 +22,7 @@ use std::sync::Arc;
 use wiqo_core::engine::Engine;
 
 /// Masks tokens and keys in text that leaves the computer (terminal output, a diagnostics bundle).
-pub use desktop_control::{set_cursor_sink, stop_all as stop_desktop_control, CursorEvent};
+pub use desktop_control::{note_frontmost, set_cursor_sink, stop_all as stop_desktop_control, CursorEvent};
 /// Takes back a file change by its undo id (terminal sessions call this for the phone's "Geri al").
 pub use files::undo::undo_file;
 /// What a batch of file changes would do, for the question before the person's yes ("Önce prova").

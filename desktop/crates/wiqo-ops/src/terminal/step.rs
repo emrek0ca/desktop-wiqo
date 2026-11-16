@@ -275,6 +275,18 @@ impl TerminalStep {
                 if let Some(grant) = &grant {
                     request["grant"] = json!(grant);
                 }
+                // An install, a clone or a build outlives the minute a plain command gets: started as a background job instead of being cut off and
+                // reported as unknown. The answer says it runs; wait_job reads its end.
+                let promoted = action == "run" && mode == "full" && value["command"].as_str().is_some_and(takes_long);
+                let action = if promoted { "start_job".to_string() } else { action };
+                if promoted {
+                    request["action"] = json!("start_job");
+                    request["long"] = json!(true);
+                    request["label"] = json!(value["command"].as_str().unwrap_or("").chars().take(80).collect::<String>());
+                    if let Some(object) = request.as_object_mut() {
+                        object.remove("timeoutSeconds");
+                    }
+                }
                 if action == "start_job" || action == "watch" {
                     request["jobId"] = json!(id);
                 } else {
@@ -297,6 +309,16 @@ impl TerminalStep {
             }
         }
     }
+}
+
+/// A command that installs, clones or builds: it usually takes longer than a plain step may wait.
+fn takes_long(command: &str) -> bool {
+    static SLOW: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    SLOW.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(?:(?:npm|pnpm|yarn|bun)\s+(?:i|install|ci|add|create|build|run\s+build)|npx\s+create-|pip3?\s+install|pipx\s+install|uv\s+(?:pip\s+install|sync)|brew\s+(?:install|upgrade|update|reinstall)|cargo\s+(?:build|install)|git\s+clone|docker\s+(?:build|pull|compose\s+up)|xcodebuild|swift\s+build|winget\s+install|choco\s+install|scoop\s+install|gradlew?\s|mvn\s|go\s+(?:build|install|mod\s+download)|flutter\s+(?:build|pub\s+get)|dotnet\s+(?:build|restore|publish))")
+            .expect("slow command pattern")
+    })
+    .is_match(command)
 }
 
 #[async_trait::async_trait]
@@ -331,6 +353,16 @@ mod tests {
 
     fn step(value: Value) -> Value {
         json!({ "kind": "terminal", "value": value })
+    }
+
+    #[test]
+    fn installs_clones_and_builds_are_long_and_a_listing_is_not() {
+        for command in ["npm install", "cd app && pnpm i", "pip install requests", "brew install ffmpeg", "git clone https://x/y.git", "cargo build --release", "winget install Git.Git"] {
+            assert!(takes_long(command), "{command}");
+        }
+        for command in ["ls -lS ~/Downloads | head", "git status", "npm --version", "python3 main.py"] {
+            assert!(!takes_long(command), "{command}");
+        }
     }
 
     #[tokio::test]

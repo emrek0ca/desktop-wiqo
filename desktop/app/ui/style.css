@@ -908,3 +908,10 @@ button.side-item:hover { background: var(--fill); }
 .list li { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
 .list li:last-child { border-bottom: 0; }
 .chat-scroll::-webkit-scrollbar, .panel.page::-webkit-scrollbar, .session-pop::-webkit-scrollbar { width: 10px; }
+
+/* What runs right now, over the message box. */
+.work-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 8px 8px 8px 14px; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--raise); font-size: 12.5px; }
+.work-text { flex: 1; min-width: 0; display: flex; gap: 8px; overflow: hidden; white-space: nowrap; }
+.work-text span:first-child { font-weight: 500; }
+.work-text .muted { overflow: hidden; text-overflow: ellipsis; }
+.work-spin { width: 14px; height: 14px; flex: none; border: 2px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin .9s linear infinite; }

@@ -1321,6 +1321,14 @@ impl Desktop {
         Ok(self.screen_memory())
     }
 
+    /// Which application the person used last before Wiqo, every second: a request typed in Wiqo's window is about that one (wiqo_ops::note_frontmost).
+    pub async fn keep_front_app(self: &Arc<Self>) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let _ = tokio::task::spawn_blocking(wiqo_ops::note_frontmost).await;
+        }
+    }
+
     /// The screen memory's reading every few seconds, off the async threads; it reads nothing while off or paused (wiqo_ops::screen_memory::tick).
     pub async fn keep_screen_memory(self: &Arc<Self>) {
         loop {

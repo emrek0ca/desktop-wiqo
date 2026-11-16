@@ -1190,6 +1190,10 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 phones.serve_relay().await;
             });
+            let front = desktop.clone();
+            tauri::async_runtime::spawn(async move {
+                front.keep_front_app().await;
+            });
             let memory = desktop.clone();
             tauri::async_runtime::spawn(async move {
                 memory.keep_screen_memory().await;

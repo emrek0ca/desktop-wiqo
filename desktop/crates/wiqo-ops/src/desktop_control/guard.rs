@@ -54,6 +54,25 @@ pub(super) fn is_wiqo(application: &str) -> bool {
     name == "wiqo" || name == "wiqo-desktop" || name == "wiqo desktop"
 }
 
+/// The application the person used last before Wiqo came to the front (desktop_control::note_frontmost keeps it). A request typed in Wiqo's own window
+/// is about what was in front before it: that one is read and driven, never Wiqo itself.
+fn behind() -> &'static Mutex<Option<String>> {
+    static BEHIND: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    BEHIND.get_or_init(Default::default)
+}
+
+pub fn note_frontmost() {
+    if let Some(front) = crate::apps::frontmost().filter(|front| !is_wiqo(front)) {
+        if let Ok(mut last) = behind().lock() {
+            *last = Some(front);
+        }
+    }
+}
+
+pub(super) fn app_behind_wiqo() -> Option<String> {
+    behind().lock().ok().and_then(|last| last.clone())
+}
+
 pub(super) fn own_window_refused() -> wiqo_core::wire::WireError {
     permission(
         "DESKTOP_SELF_OBSERVATION_UNAVAILABLE",

@@ -45,6 +45,7 @@ use cursor::*;
 use guard::*;
 use observe::*;
 pub use session::stop_all;
+pub use guard::note_frontmost;
 use session::*;
 
 pub(crate) fn operations() -> Vec<Op> {
@@ -470,15 +471,17 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
                 .as_deref()
                 .map(str::trim)
                 .filter(|name| !name.is_empty());
-            if !request.person
-                && named
-                    .map(str::to_string)
-                    .or_else(|| engine.frontmost())
-                    .is_some_and(|name| is_wiqo(&name))
-            {
+            // Wiqo in front because the person typed here: the look goes to the app they used before it, as a person would turn back to it.
+            let front_is_wiqo = engine.frontmost().is_some_and(|front| is_wiqo(&front));
+            let target = match named {
+                Some(name) => Some(name.to_string()),
+                None if front_is_wiqo => app_behind_wiqo(),
+                None => None,
+            };
+            if !request.person && (named.is_some_and(is_wiqo) || (named.is_none() && front_is_wiqo && target.is_none())) {
                 return Err(own_window_refused());
             }
-            let mut observation = observe(engine, request.text.as_deref())?;
+            let mut observation = observe(engine, target.as_deref())?;
             if !request.person && is_wiqo(&observation.application) {
                 return Err(own_window_refused());
             }
