@@ -89,8 +89,12 @@
       <div class="left-top" data-tauri-drag-region>
         <button class="icon-button" data-toggle="left" title="Kenar çubuğunu kapat (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
       </div>
-      <button id="new-chat" class="new-chat"><span data-symbol="square.and.pencil" data-size="15" data-weight="0"></span>Yeni sohbet</button>
-      <label class="search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="search" type="text" placeholder="Ara"></label>
+      <nav class="side-nav" aria-label="Bölümler">
+        <button id="new-chat" class="nav new-chat"><span data-symbol="square.and.pencil" data-size="15" data-weight="0"></span>Yeni sohbet</button>
+        <button class="nav" data-section="threads"><span data-symbol="person.2" data-size="15" data-weight="0"></span>Ajanlar</button>
+        <button class="nav" data-section="apps"><span data-symbol="link" data-size="15" data-weight="0"></span>Uygulamalar</button>
+      </nav>
+      <label class="search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="search" type="text" placeholder="Sohbetlerde ara"></label>
       <div id="conversation-list" class="conv-list"></div>
       <div id="voice-model" class="voice-model" hidden></div>
       <div class="me">
@@ -110,14 +114,8 @@
       <div class="topbar" data-tauri-drag-region>
         <button class="icon-button round" data-toggle="left" id="open-left" title="Kenar çubuğunu aç (⌘B)"><span data-symbol="sidebar.left" data-size="16" data-weight="0"></span></button>
         <div id="top-title" class="top-title" data-tauri-drag-region>Yeni sohbet</div>
-        <nav id="top-seg" class="seg" aria-label="Bölümler">
-          <button class="nav" data-section="chat" title="Sohbet"><span data-symbol="sparkle" data-size="15" data-weight="0"></span><span class="seg-label">Sohbet</span></button>
-          <button class="nav" data-section="threads" title="Ajanlar"><span data-symbol="person.2" data-size="15" data-weight="0"></span><span class="seg-label">Ajanlar</span></button>
-          <button class="nav" data-section="apps" title="Uygulamalar"><span data-symbol="link" data-size="15" data-weight="0"></span><span class="seg-label">Uygulamalar</span></button>
-          <button class="nav" data-section="settings" title="Ayarlar"><span data-symbol="gearshape" data-size="15" data-weight="0"></span><span class="seg-label">Ayarlar</span></button>
-        </nav>
         <div class="top-right">
-          <div id="side-state" class="pill"><span class="dot"></span><span class="label">—</span></div>
+          <span id="side-state" class="state"><span class="label">—</span></span>
           <button class="icon-button phones-link" title="Telefon"><span data-symbol="iphone" data-size="16" data-weight="0"></span></button>
           <button id="session-toggle" class="icon-button" data-toggle="right" title="Oturum çubuğu (⌘I)"><span data-symbol="list.bullet" data-size="16" data-weight="0"></span></button>
         </div>
@@ -148,6 +146,13 @@
             <textarea id="chat-input" rows="1" placeholder="Wiqo'ya yaz…"></textarea>
             <div class="card-bar">
               <label class="mini attach" title="Görsel ekle"><input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><span data-symbol="plus" data-size="18" data-weight="0"></span></label>
+              <div class="access">
+                <button id="access-button" class="access-button" type="button" aria-haspopup="menu" aria-expanded="false"><span id="access-label">Sorarak</span><span data-symbol="chevron.down" data-size="10" data-weight="0"></span></button>
+                <div id="access-menu" class="access-menu" role="menu" hidden>
+                  <button class="access-item" role="menuitem" data-access="ask"><span class="access-name">Sorarak</span><span class="access-hint">Değiştiren, silen ya da gönderen her adımı sana sorar.</span></button>
+                  <button class="access-item" role="menuitem" data-access="full"><span class="access-name">Tam yetki</span><span class="access-hint">Paket kurar, komut çalıştırır, dosyaları yazar; her şeye izin verirsin.</span></button>
+                </div>
+              </div>
               <span class="spacer"></span>
               <button id="voice-button" class="mini" type="button" title="Sesle yaz"><span data-symbol="mic" data-size="17" data-weight="0"></span></button>
               <button id="chat-stop" class="stop" type="button" title="Durdur (Esc)" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span></button>
@@ -197,7 +202,7 @@
         <p id="apps-error" class="error small" hidden></p>
       </div>
 
-      <!-- Ayarlar: one page, top to bottom. What a step may do is not a setting: every step that changes or sends something asks first. -->
+      <!-- Ayarlar: one short page. What a step may do is chosen next to the message box, not here. -->
       <div class="panel page settings-page" data-panel="settings" hidden>
         <section class="settings-section">
           <h3 class="settings-head">Hesap</h3>
@@ -207,8 +212,8 @@
               <div id="account-name" class="w-title"></div>
               <div id="account-mail" class="muted small"></div>
             </div>
-            <span id="account-provider" class="pill-status neutral"></span>
-            <button id="account-signout" class="secondary small"><span data-symbol="rectangle.portrait.and.arrow.right" data-size="13" data-weight="0"></span>Çıkış yap</button>
+            <span id="account-provider" class="muted small"></span>
+            <button id="account-signout" class="secondary small">Çıkış yap</button>
           </div>
         </section>
 
@@ -217,73 +222,36 @@
           <div class="card settings-rows">
             <div class="settings-row">
               <div><div id="state-title" class="w-title">—</div><div id="state-detail" class="muted small"></div></div>
-              <div class="hero-actions">
-                <button id="stop-work" class="secondary small" title="Esc">İşi durdur</button>
-                <button id="toggle-connection" class="secondary small">Bağlantıyı kes</button>
-              </div>
+              <button id="toggle-connection" class="secondary small">Bağlantıyı kes</button>
             </div>
             <div class="settings-row">
               <div><div id="device-name" class="w-title">—</div><div id="device-platform" class="muted small"></div></div>
-              <div class="muted small"><span id="phone-count">0</span> bağlı telefon</div>
+              <div class="muted small"><span id="phone-count">0</span> telefon bağlı</div>
             </div>
             <label class="settings-row toggle-row">
-              <div><div>Bilgisayarla birlikte başlat</div><div class="muted small">Açılışta tepside sessizce çalışır.</div></div>
+              <div>Bilgisayarla birlikte başlat</div>
               <input id="autostart" type="checkbox" class="switch">
+            </label>
+            <label class="settings-row toggle-row">
+              <div><div>Ekran hafızası</div><div id="memory-detail" class="muted small">Ekrandaki yazıları bu bilgisayarda saklar, hiçbir yere göndermez.</div></div>
+              <input id="memory-enabled" type="checkbox" class="switch">
             </label>
           </div>
         </section>
 
         <section id="system-permissions-card" class="settings-section" hidden>
-          <div class="row-head"><h3 class="settings-head">Sistem izinleri</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
+          <div class="row-head"><h3 class="settings-head">İzinler</h3><button id="permissions-restart" class="link small" hidden>Yeniden başlat</button></div>
           <div class="card"><ul id="system-permissions" class="list perms"></ul></div>
         </section>
 
         <section class="settings-section" id="recipes-section">
           <div class="row-head">
             <h3 class="settings-head">Tariflerim</h3>
-            <button id="record-open" class="secondary small"><span data-symbol="record.circle" data-size="13" data-weight="0"></span>Bir kez göster, öğreneyim</button>
+            <button id="record-open" class="secondary small">Bir kez göster, öğreneyim</button>
           </div>
-          <p class="muted small">Tek dokunuşla tekrar kullandığın istekler. Bir işi bilgisayarda bir kez yap, Wiqo izlesin ve tarife çevirsin; ya da sohbette "bunu tarif olarak kaydet" de.</p>
-          <div id="recipes-empty" class="card muted small" hidden>Henüz tarif yok.</div>
+          <div id="recipes-empty" class="card muted small" hidden>Henüz tarif yok. Bir işi bilgisayarda bir kez yap, Wiqo izleyip tarife çevirsin.</div>
           <div class="card"><ul id="recipes-list" class="list recipes"></ul></div>
-          <form id="recipe-import-form" class="inline-form">
-            <input id="recipe-code" type="text" maxlength="80" placeholder="Paylaşılan tarif kodu ya da bağlantısı" aria-label="Tarif kodu">
-            <button class="secondary small" type="submit">Kodla ekle</button>
-          </form>
-          <h4 class="settings-head">Paketler</h4>
-          <div class="card"><ul id="recipe-packs" class="list recipes"></ul></div>
           <p id="recipes-error" class="error small" hidden></p>
-        </section>
-
-        <section class="settings-section" id="access-section">
-          <h3 class="settings-head">Tam yetki</h3>
-          <div class="card settings-rows">
-            <label class="settings-row toggle-row">
-              <div><div>Wiqo bu bilgisayarda her şeyi terminalle yapabilsin</div><div class="muted small">Açıkken Wiqo paket ve program kurar, proje klasörlerinde komut çalıştırır, dosyaları yazar ve düzenler; her adım için sormaz. E-posta gönderme, silme ve geri alınamaz ekran basışları yine sorulur; diski, açılışı ya da ev klasörünü silmek her zaman yasaktır. Yalnız güvendiğin bilgisayarda aç.</div></div>
-              <input id="access-enabled" type="checkbox" class="switch">
-            </label>
-          </div>
-        </section>
-
-        <section class="settings-section" id="memory-section">
-          <h3 class="settings-head">Ekran hafızası</h3>
-          <div class="card settings-rows">
-            <label class="settings-row toggle-row">
-              <div><div>Bilgisayarda gördüklerimi hatırla</div><div class="muted small">Ekrandaki yazılar bu bilgisayarda saklanır (14 gün), hiçbir yere gönderilmez. "Geçen hafta gördüğüm tablo neydi?" diye sorabilirsin; yalnız bulunan kısa parça kullanılır. Gizli pencereler ve şifre yöneticileri hiç okunmaz.</div></div>
-              <input id="memory-enabled" type="checkbox" class="switch">
-            </label>
-            <div class="settings-row" id="memory-state-row" hidden>
-              <div><div id="memory-state" class="w-title">—</div><div id="memory-detail" class="muted small"></div></div>
-              <div class="hero-actions">
-                <button id="memory-pause" class="secondary small">Duraklat</button>
-                <button id="memory-forget" class="secondary small danger-text">Hepsini sil</button>
-              </div>
-            </div>
-            <form class="settings-row" id="memory-exclude-form" hidden>
-              <div class="grow"><div>Hiç okunmayacak uygulamalar</div><input id="memory-excluded" type="text" placeholder="Örn. Mail, WhatsApp" aria-label="Okunmayacak uygulamalar"></div>
-              <button class="secondary small" type="submit">Kaydet</button>
-            </form>
-          </div>
         </section>
 
         <section class="settings-section">
@@ -292,18 +260,13 @@
           <div id="agents-groups"></div>
           <p id="agents-error" class="error small" hidden></p>
         </section>
-
-        <section class="settings-section">
-          <div class="row-head"><h3 class="settings-head">Son işlemler</h3><button id="activity-more" class="link small">Tümü</button></div>
-          <div class="card"><ul id="activity" class="activity"></ul></div>
-        </section>
       </div>
     </main>
 
     <aside id="right" class="right session-pop" aria-label="Oturum çubuğu">
       <div class="right-top"><span class="pop-title">Oturum çubuğu</span></div>
       <section class="session-card">
-        <div class="card-head"><span class="overline">Bilgisayar</span><span id="right-state" class="pill"><span class="dot"></span><span class="label">—</span></span></div>
+        <div class="card-head"><span class="overline">Bilgisayar</span><span id="right-state" class="state"><span class="label">—</span></span></div>
         <div id="right-device" class="side-title">—</div>
         <div class="session-row"><span class="muted">Bağlı telefon</span><span id="session-phones">0</span></div>
         <button id="right-stop" class="secondary small stop-button" hidden><span data-symbol="stop.fill" data-size="11" data-weight="0"></span>İşi durdur</button>
@@ -320,10 +283,7 @@
         <div class="overline">Dosyalar</div>
         <div id="right-files" class="side-list"><div class="muted small">Henüz yok</div></div>
       </section>
-      <section class="session-card side-section">
-        <div class="overline">Son işlemler</div>
-        <ul id="right-activity" class="activity compact"></ul>
-      </section>
+      <ul id="right-activity" class="activity compact" hidden></ul>
     </aside>
   </div>
 

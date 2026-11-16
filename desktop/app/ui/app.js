@@ -92,9 +92,6 @@ function render() {
 
   if (!$("phones-pop").hidden && !phonesPopPairing) renderPhonesPop();
   activityItems(snapshot.activity, $("right-activity"), 6);
-  activityItems(snapshot.activity, $("activity"), activityAll ? 100 : 8, true);
-  $("activity-more").hidden = snapshot.activity.length <= 8;
-  $("activity-more").textContent = activityAll ? "Daha az" : "Tümü";
 }
 
 async function refresh() {
@@ -103,7 +100,6 @@ async function refresh() {
 }
 
 const SECTION_TITLES = { apps: "Uygulamalar", threads: "Ajanlar", settings: "Ayarlar" };
-let activityAll = false;
 
 function showSection(name) {
   for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === name);
@@ -112,25 +108,8 @@ function showSection(name) {
   if (name !== "chat") $("top-title").textContent = SECTION_TITLES[name] || "";
   window.dispatchEvent(new CustomEvent("wiqo-section", { detail: name }));
   if (name === "settings") loadPermissions();
-  slidePills();
 }
 
-// Pill navigation: the active item's pill is one element that slides to it (style.css .pill-slider).
-function slidePill(container) {
-  if (!container || container.hidden) return;
-  let slider = container.querySelector(":scope > .pill-slider");
-  if (!slider) { slider = document.createElement("span"); slider.className = "pill-slider"; container.prepend(slider); }
-  const active = container.querySelector(":scope > button.active");
-  if (!active || active.offsetWidth === 0) { slider.style.width = "0"; slider.style.height = "0"; container.classList.remove("sliding"); return; }
-  container.classList.add("sliding");
-  slider.style.width = `${active.offsetWidth}px`;
-  slider.style.height = `${active.offsetHeight}px`;
-  slider.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
-}
-function slidePills() {
-  requestAnimationFrame(() => slidePill($("top-seg")));
-}
-window.addEventListener("resize", slidePills);
 window.showSection = showSection;
 
 // ----- the three columns -----
@@ -614,8 +593,6 @@ async function stopWork() {
   await invoke("stop_work");
   toast("Çalışan iş durduruldu.");
 }
-$("stop-work").onclick = stopWork;
-$("activity-more").onclick = () => { activityAll = !activityAll; render(); };
 $("right-stop").onclick = stopWork;
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
