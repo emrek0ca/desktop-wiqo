@@ -239,18 +239,18 @@ impl TerminalStep {
             }
             _ => {
                 let named = value["workingDirectory"].as_str().map(str::to_string);
-                let Some(folder) = named.clone().or_else(|| {
-                    self.local
-                        .lock()
-                        .expect("terminal grants")
-                        .last_folder
-                        .clone()
-                }) else {
-                    return refused(
-                        "TERMINAL_ARGS_INVALID",
-                        "Açık terminal oturumu yok; directory ver (ör. ~/proje).",
-                    );
-                };
+                // A command that names no folder and follows none runs from the person's home folder, the way a new terminal window opens: asking the
+                // model for a folder it has no reason to know ("en büyük dosyalar", "pil durumu") only made it fail first and retry.
+                let folder = named
+                    .clone()
+                    .or_else(|| {
+                        self.local
+                            .lock()
+                            .expect("terminal grants")
+                            .last_folder
+                            .clone()
+                    })
+                    .unwrap_or_else(|| "~".to_string());
                 // Under the person's full access every step runs with a full grant: no command is sorted into read or write first.
                 let mode = if value["mode"] == "full" || super::policy::full_access() {
                     "full"
@@ -351,10 +351,10 @@ mod tests {
                 &step(json!({ "action": "run", "command": "ls" })),
             )
             .await;
-        assert_eq!(
-            nothing.error.unwrap().code,
-            "TERMINAL_ARGS_INVALID",
-            "no folder named and none before"
+        assert!(
+            nothing.error.is_none(),
+            "no folder named and none before: it runs from the home folder ({})",
+            nothing.message
         );
 
         let wrote = op.run(&context(&services), &step(json!({ "action": "run", "mode": "full", "workingDirectory": folder, "command": "echo merhaba > a.txt", "timeoutSeconds": 900 }))).await;
