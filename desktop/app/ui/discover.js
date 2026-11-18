@@ -1,15 +1,17 @@
 // Keşfet: Missions people shared (rova-backend social/, docs/missions.md). A Mission is a recipe someone chose to share; running one puts its words
 // in this person's composer with its code, they read and send it, and Wiqo runs it here with their own files and permissions, asking before every
 // change. Publishing goes through one dialog: the server checks every field and the person sees what blocked it next to that field.
+// One screen, like a social network on a computer: a rail of tabs (Akış, Ara, Bildirimler, Profil, Yeni Mission), the feed in the middle, and a
+// Mission or a person opened beside it, never by replacing the page.
 (() => {
   const { invoke } = window.__TAURI__.core;
   const R = window.WiqoRender;
   const $ = (id) => document.getElementById(id);
   const icon = (name, size = 14) => window.WiqoIcons.icon(name, size);
-  const TABS = [["new", "Yeni"], ["popular", "Popüler"], ["following", "Takip"]];
+  const FEEDS = [["popular", "Senin için"], ["following", "Takip"], ["new", "Yeni"]];
   const VISIBILITY = [["private", "Sadece ben", "Tariflerimde durur, kimse görmez."], ["link", "Bağlantısı olan", "Bağlantıyı verdiğin kişi açar; adın görünmez."],
     ["public", "Keşfet'te herkes", "Adınla Keşfet'te görünür; beğenilir, yorumlanır, remix'lenir."]];
-  const state = { tab: "new", category: "", q: "", next: null, missions: [], categories: [], needs: [], view: "feed", me: null };
+  const state = { tab: "feed", feed: "popular", category: "", q: "", next: null, missions: [], results: [], categories: [], needs: [], me: null };
   let searchTimer = null;
 
   async function call(method, path, body) {
@@ -66,11 +68,20 @@
 
   // ----- views -----
 
-  function setView(view) {
-    state.view = view;
-    for (const name of ["feed", "detail", "profile", "mine", "notices"]) $(`discover-${name}`).hidden = name !== view;
-    $("discover-back").hidden = view === "feed";
+  /** The middle of the page: one of the rail's tabs. */
+  function showTab(tab) {
+    state.tab = tab;
+    for (const name of ["feed", "search", "mine", "notices"]) $(`discover-${name}`).hidden = name !== tab;
+    for (const button of document.querySelectorAll(".rail-item")) button.classList.toggle("active", button.dataset.tab === tab);
     showError("");
+  }
+
+  /** The side of the page, where a Mission or a person opens next to the feed. */
+  function openSide() {
+    window.showSection("discover");
+    $("discover-side").hidden = false;
+    $("discover-side").scrollTop = 0;
+    return $("discover-side-body");
   }
 
   function missionCard(mission) {
@@ -98,29 +109,72 @@
     return card;
   }
 
+  /** One post: who shared it, the picture, the words, and the actions on it (like, comment, copy link, run). */
+  function post(mission) {
+    const node = R.el("article", "post");
+    if (mission.author) {
+      const head = R.el("div", "post-head");
+      const who = R.el("button", "post-author");
+      who.type = "button";
+      const names = R.el("div");
+      names.append(R.el("div", "w-title", mission.author.displayName || `@${mission.author.username}`),
+        R.el("div", "muted small", [`@${mission.author.username}`, label(state.categories, mission.category), mission.origin ? `remix: ${mission.origin.name}` : ""].filter(Boolean).join(" · ")));
+      who.append(avatar(mission.author), names);
+      who.onclick = () => openProfile(mission.author.username);
+      head.append(who);
+      node.append(head);
+    }
+    const body = R.el("button", "post-body");
+    body.type = "button";
+    if (mission.images?.length) {
+      const picture = R.el("img", "post-image");
+      picture.src = mission.images[0].url;
+      picture.alt = "";
+      body.append(picture);
+    }
+    body.append(R.el("div", "post-title", mission.name));
+    if (mission.description) body.append(R.el("p", "muted post-text", mission.description));
+    body.onclick = () => openMission(mission.code);
+    const actions = R.el("div", "post-actions");
+    const likeButton = R.button("", `post-action ${mission.liked ? "liked" : ""}`.trim(), async () => {
+      try {
+        const done = await call(mission.liked ? "DELETE" : "POST", `missions/${mission.code}/like`);
+        mission.liked = done.liked;
+        mission.counts.likes = done.likes;
+        node.replaceWith(post(mission));
+      } catch (error) { showError(error.message); }
+    });
+    likeButton.title = mission.liked ? "Beğenini geri al" : "Beğen";
+    likeButton.append(icon("heart", 16), document.createTextNode(String(mission.counts.likes)));
+    const commentButton = R.button("", "post-action", () => openMission(mission.code));
+    commentButton.title = "Yorumlar";
+    commentButton.append(icon("bubble.left", 16), document.createTextNode(String(mission.counts.comments)));
+    const linkButton = R.button("", "post-action", async () => {
+      try { await navigator.clipboard.writeText(mission.url); toast("Bağlantı kopyalandı."); } catch { /* clipboard off */ }
+    });
+    linkButton.title = "Bağlantıyı kopyala";
+    linkButton.append(icon("square.and.arrow.up", 16));
+    const runButton = R.button("Çalıştır", "primary small", () => run(mission));
+    actions.append(likeButton, commentButton, linkButton, R.el("span", "spacer"), runButton);
+    node.append(body, actions);
+    const used = [mission.counts.copies && `${mission.counts.copies} kez kullanıldı`, mission.counts.remixes && `${mission.counts.remixes} remix`].filter(Boolean).join(" · ");
+    if (used) node.append(R.el("div", "muted small post-foot", used));
+    return node;
+  }
+
   function renderFeed() {
-    const tabs = $("discover-tabs");
-    tabs.replaceChildren(...TABS.map(([id, text]) => {
-      const tab = R.button(text, `chip ${state.tab === id ? "on" : ""}`, () => { state.tab = id; load(); });
-      return tab;
-    }));
-    $("discover-categories").replaceChildren(...[{ id: "", label: "Tümü" }, ...state.categories].map((item) =>
-      R.button(item.label, `chip ${state.category === item.id ? "on" : ""}`, () => { state.category = item.id; load(); })));
-    const list = $("discover-list");
-    list.replaceChildren(...state.missions.map(missionCard));
-    const empty = state.missions.length === 0;
-    $("discover-empty").hidden = !empty;
-    $("discover-empty").textContent = state.tab === "following"
-      ? "Takip ettiğin kimse henüz bir şey paylaşmadı. Bir Mission'ın sahibine dokunup takip edebilirsin."
-      : state.q || state.category ? "Bu aramada Mission yok." : "Henüz paylaşılan Mission yok. Bitirdiğin bir işin altındaki paylaş düğmesiyle ilkini sen paylaş.";
+    $("discover-feeds").replaceChildren(...FEEDS.map(([id, text]) => R.button(text, `chip ${state.feed === id ? "on" : ""}`, () => { state.feed = id; load(); })));
+    $("discover-list").replaceChildren(...state.missions.map(post));
+    $("discover-empty").hidden = state.missions.length > 0;
+    $("discover-empty").textContent = state.feed === "following"
+      ? "Takip ettiğin kimse henüz bir şey paylaşmadı. Ara sekmesinden insanları bulup takip edebilirsin."
+      : "Henüz paylaşılan Mission yok. Yeni Mission ile ilkini sen paylaş.";
     $("discover-more").hidden = !state.next;
   }
 
   async function load(more = false) {
-    setView("feed");
-    const query = new URLSearchParams({ tab: state.tab });
-    if (state.category) query.set("category", state.category);
-    if (state.q) query.set("q", state.q);
+    showTab("feed");
+    const query = new URLSearchParams({ tab: state.feed });
     if (more && state.next) query.set("cursor", state.next);
     try {
       const answer = await call("GET", `missions/feed?${query}`);
@@ -135,6 +189,26 @@
     refreshUnread();
   }
 
+  /** Ara: words and a topic, the results as a grid. */
+  async function search() {
+    showTab("search");
+    const query = new URLSearchParams({ tab: state.q || state.category ? "new" : "popular" });
+    if (state.category) query.set("category", state.category);
+    if (state.q) query.set("q", state.q);
+    try {
+      const answer = await call("GET", `missions/feed?${query}`);
+      state.categories = answer.categories || state.categories;
+      state.results = answer.missions;
+    } catch (error) {
+      state.results = [];
+      showError(error.message);
+    }
+    $("discover-categories").replaceChildren(...[{ id: "", label: "Tümü" }, ...state.categories].map((item) =>
+      R.button(item.label, `chip ${state.category === item.id ? "on" : ""}`, () => { state.category = item.id; search(); })));
+    $("discover-results").replaceChildren(...state.results.map(missionCard));
+    $("discover-results-empty").hidden = state.results.length > 0;
+  }
+
   // ----- one Mission -----
 
   function section(title, items, ordered = false) {
@@ -145,9 +219,7 @@
   }
 
   async function openMission(code) {
-    window.showSection("discover");
-    setView("detail");
-    const host = $("discover-detail");
+    const host = openSide();
     host.replaceChildren(R.el("p", "muted small", "Yükleniyor…"));
     let answer;
     try {
@@ -236,6 +308,7 @@
     try {
       await call("DELETE", `missions/${mission.id}`);
       toast("Mission silindi.");
+      $("discover-side").hidden = true;
       openMine();
     } catch (error) { showError(error.message); }
   }
@@ -348,8 +421,7 @@
 
   async function openProfile(username) {
     window.showSection("discover");
-    setView("profile");
-    const host = $("discover-profile");
+    const host = openSide();
     host.replaceChildren(R.el("p", "muted small", "Yükleniyor…"));
     let answer;
     try {
@@ -372,7 +444,7 @@
       }));
       actions.append(R.button(profile.blocked ? "Engeli kaldır" : "Engelle", "link small", async () => {
         if (!profile.blocked && !(await window.WiqoDialog.confirm({ title: `@${profile.username} engellensin mi?`, message: "Birbirinizin Mission'larını, yorumlarını görmezsiniz; takip biter.", confirm: "Engelle", danger: true }))) return;
-        try { await call(profile.blocked ? "DELETE" : "POST", `missions/users/${profile.username}/block`); profile.blocked ? openProfile(profile.username) : load(); } catch (error) { showError(error.message); }
+        try { await call(profile.blocked ? "DELETE" : "POST", `missions/users/${profile.username}/block`); if (profile.blocked) openProfile(profile.username); else { $("discover-side").hidden = true; load(); } } catch (error) { showError(error.message); }
       }));
     }
     const list = R.el("div", "mission-grid");
@@ -383,7 +455,7 @@
 
   async function openMine() {
     window.showSection("discover");
-    setView("mine");
+    showTab("mine");
     const host = $("discover-mine");
     host.replaceChildren(R.el("p", "muted small", "Yükleniyor…"));
     let answer;
@@ -436,7 +508,7 @@
 
   async function openNotices() {
     window.showSection("discover");
-    setView("notices");
+    showTab("notices");
     const host = $("discover-notices");
     try {
       const answer = await call("GET", "missions/notifications");
@@ -463,8 +535,10 @@
   async function refreshUnread() {
     try {
       const answer = await call("GET", "missions/notifications");
-      $("discover-unread").textContent = answer.unread ? String(answer.unread) : "";
-      $("discover-unread").hidden = !answer.unread;
+      for (const id of ["discover-unread", "discover-unread-rail"]) {
+        $(id).textContent = answer.unread ? String(answer.unread) : "";
+        $(id).hidden = !answer.unread;
+      }
     } catch { /* the count waits for the next look */ }
   }
 
@@ -481,7 +555,7 @@
     findingsBox.replaceChildren();
     findingsBox.hidden = true;
     $("mission-error").hidden = true;
-    $("mission-dialog-title").textContent = { task: "Mission olarak paylaş", recipe: "Tarifi paylaş", edit: "Mission'ı düzenle", remix: "Remix yap" }[source.mode];
+    $("mission-dialog-title").textContent = { blank: "Yeni Mission", task: "Mission olarak paylaş", recipe: "Tarifi paylaş", edit: "Mission'ı düzenle", remix: "Remix yap" }[source.mode];
     if (!state.categories.length || !state.needs.length) {
       try {
         const me = await call("GET", "missions/me");
@@ -654,15 +728,16 @@
 
   // ----- wiring -----
 
-  $("discover-back").onclick = () => load();
+  const TAB_OPENERS = { feed: () => load(), search, notices: openNotices, mine: openMine };
+  for (const button of document.querySelectorAll(".rail-item")) button.onclick = () => TAB_OPENERS[button.dataset.tab]();
+  $("discover-new").onclick = () => publish({ mode: "blank" });
+  $("discover-side-close").onclick = () => { $("discover-side").hidden = true; };
   $("discover-more").onclick = () => load(true);
-  $("discover-mine-open").onclick = openMine;
-  $("discover-notices-open").onclick = openNotices;
-  $("discover-search").addEventListener("input", (event) => {
+  $("discover-search-input").addEventListener("input", (event) => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { state.q = event.target.value.trim(); load(); }, 300);
+    searchTimer = setTimeout(() => { state.q = event.target.value.trim(); search(); }, 300);
   });
-  window.addEventListener("wiqo-section", (event) => { if (event.detail === "discover" && state.view === "feed") load(); });
+  window.addEventListener("wiqo-section", (event) => { if (event.detail === "discover" && state.tab === "feed") load(); });
   window.addEventListener("wiqo-signed-in", refreshUnread);
   // A shared link (wiqo://recipe/CODE) opens the Mission it names.
   window.__TAURI__.event.listen("recipe-link", (event) => openMission(String(event.payload || "").toUpperCase()));

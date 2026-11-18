@@ -197,26 +197,36 @@
         <aside id="thread-side" class="thread-side" hidden></aside>
       </div>
 
-      <!-- Keşfet: Missions people shared (discover.js). -->
-      <div class="panel page discover-page" data-panel="discover" hidden>
-        <div class="discover-bar">
-          <button id="discover-back" class="icon-button" title="Keşfet'e dön" hidden><span data-symbol="chevron.left" data-size="14" data-weight="0"></span></button>
-          <label class="search discover-search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="discover-search" type="text" placeholder="Mission ya da kişi ara"></label>
-          <button id="discover-notices-open" class="icon-button" title="Bildirimler"><span data-symbol="bell" data-size="15" data-weight="0"></span></button>
-          <button id="discover-mine-open" class="secondary small">Mission'larım</button>
-        </div>
-        <p id="discover-error" class="error small" hidden></p>
-        <div id="discover-feed">
-          <div id="discover-tabs" class="chips"></div>
-          <div id="discover-categories" class="chips discover-categories"></div>
-          <div id="discover-list" class="mission-grid"></div>
-          <p id="discover-empty" class="muted small" hidden></p>
-          <button id="discover-more" class="secondary small" hidden>Daha fazla</button>
-        </div>
-        <div id="discover-detail" class="mission-detail" hidden></div>
-        <div id="discover-profile" class="mission-detail" hidden></div>
-        <div id="discover-mine" class="mission-detail" hidden></div>
-        <div id="discover-notices" class="mission-detail" hidden></div>
+      <!-- Keşfet: Missions people shared (discover.js). A rail of tabs, the feed in the middle, a Mission or a person beside it. -->
+      <div class="panel discover-page" data-panel="discover" hidden>
+        <nav class="discover-rail" aria-label="Keşfet">
+          <button class="rail-item active" data-tab="feed"><span data-symbol="house" data-size="17" data-weight="0"></span>Akış</button>
+          <button class="rail-item" data-tab="search"><span data-symbol="magnifyingglass" data-size="17" data-weight="0"></span>Ara</button>
+          <button class="rail-item" data-tab="notices"><span data-symbol="bell" data-size="17" data-weight="0"></span>Bildirimler<span id="discover-unread-rail" class="nav-count" hidden></span></button>
+          <button class="rail-item" data-tab="mine"><span data-symbol="person.crop.circle" data-size="17" data-weight="0"></span>Profil</button>
+          <button id="discover-new" class="primary rail-new"><span data-symbol="plus" data-size="14" data-weight="0"></span>Yeni Mission</button>
+        </nav>
+        <section class="discover-main">
+          <p id="discover-error" class="error small" hidden></p>
+          <div id="discover-feed">
+            <div id="discover-feeds" class="chips"></div>
+            <div id="discover-list" class="post-list"></div>
+            <p id="discover-empty" class="muted small" hidden></p>
+            <button id="discover-more" class="secondary small" hidden>Daha fazla</button>
+          </div>
+          <div id="discover-search" hidden>
+            <label class="search discover-search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="discover-search-input" type="text" placeholder="Mission ya da kişi ara"></label>
+            <div id="discover-categories" class="chips discover-categories"></div>
+            <div id="discover-results" class="mission-grid"></div>
+            <p id="discover-results-empty" class="muted small" hidden>Bu aramada Mission yok.</p>
+          </div>
+          <div id="discover-notices" class="mission-detail" hidden></div>
+          <div id="discover-mine" class="mission-detail" hidden></div>
+        </section>
+        <aside id="discover-side" class="discover-side" hidden>
+          <button id="discover-side-close" class="icon-button discover-side-close" title="Kapat"><span data-symbol="xmark" data-size="13" data-weight="0"></span></button>
+          <div id="discover-side-body" class="mission-detail"></div>
+        </aside>
       </div>
 
       <div class="panel page" data-panel="apps" hidden>
