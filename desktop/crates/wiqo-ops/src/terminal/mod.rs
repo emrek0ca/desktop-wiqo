@@ -56,6 +56,8 @@ struct Request {
     start_line: Option<usize>,
     end_line: Option<usize>,
     content: Option<String>,
+    /// `write_file`: the content goes after what the file already holds (a long file written in parts).
+    append: Option<bool>,
     pattern: Option<String>,
     glob: Option<String>,
     edits: Option<Vec<FileEdit>>,
@@ -207,8 +209,12 @@ fn finished(
     }
 }
 
+/// Under the person's full access a command writes wherever they could in their home folder (a clone next to the project, a dotfile, another
+/// project): confining it to the step's folder made "tam yetki" fail on ordinary engineering work. The catastrophic patterns stay refused.
 fn write_scope(grant: &Grant, root: &Path) -> WriteScope {
-    if grant.mode == "full" {
+    if grant.mode == "full" && policy::full_access() {
+        WriteScope::Folder(policy::home())
+    } else if grant.mode == "full" {
         WriteScope::Folder(root.to_path_buf())
     } else {
         WriteScope::ReadOnly
@@ -1081,7 +1087,12 @@ fn file_action(
                     "Dosyanın önceki hali güvenle okunamadı; değişiklik uygulanmadı.".into(),
                 )
             })?;
-            let created = edit::write(&path, &content.unwrap_or_default())?;
+            let mut content = content.unwrap_or_default();
+            if request.append == Some(true) && path.is_file() {
+                let held = std::fs::read_to_string(&path).map_err(|_| deny("TERMINAL_FILE_SCOPE", format!("{raw} metin olarak okunamadı; sonuna eklenemedi.")))?;
+                content = format!("{held}{content}");
+            }
+            let created = edit::write(&path, &content)?;
             let undo = edit::register_undo(&session.services, root, vec![before]);
             let text = if created { "created" } else { "updated" };
             Ok((

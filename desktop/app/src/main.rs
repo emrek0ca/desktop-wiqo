@@ -178,6 +178,12 @@ fn chat_account(app: State<'_, App>) -> Option<String> {
     app.desktop.chat.email()
 }
 
+/// Work on this computer that the app was closed in the middle of (told once each): the window offers to go on with it.
+#[tauri::command]
+fn chat_interrupted(app: State<'_, App>) -> Vec<serde_json::Value> {
+    app.desktop.chat.interrupted()
+}
+
 /// Signs in and makes this computer the account's device (online at once).
 #[tauri::command]
 async fn sign_in(app: State<'_, App>, email: String, password: String) -> Reply<Snapshot> {
@@ -1095,6 +1101,7 @@ fn main() {
             answer_approval,
             undo,
             chat_account,
+            chat_interrupted,
             sign_in,
             register,
             google_sign_in,

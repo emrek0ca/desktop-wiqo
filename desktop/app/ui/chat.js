@@ -591,6 +591,9 @@
         messages.push(reply);
       }
       if ((reply.revision || 0) > row.revision || (reply.cancelled && !row.cancelled)) continue;
+      // A run this window's own agent finished: its words stand. Only that run's finished record may replace them (the turn that handed it over
+      // still says "çalışıyorum…", and a snapshot taken a moment before the end shows the run as running with no text).
+      if (reply.localRun && !(row.requestId === reply.localRun && row.status === "done")) continue;
       reply.revision = row.revision;
       reply.error = row.status === "failed";
       reply.trace ||= newTrace();
@@ -710,6 +713,7 @@
         askFor(reply.confirmations);
         break;
       case "done":
+        if (data.localRun) reply.localRun = data.localRun;
         if (data.reply) reply.text = data.reply;
         if (data.widgets) reply.widgets = data.widgets;
         if (data.artifacts) reply.artifacts = data.artifacts;
@@ -816,6 +820,18 @@
     if (generation !== accountGeneration) return;
     syncAccount = email;
     if (email) loadConversations();
+    if (email) offerInterrupted();
+  }
+  // Work the app was closed in the middle of: its conversation opens with "devam et" in the composer, for the person to send (never sent for them:
+  // what was running may be the very thing they closed the app to stop).
+  async function offerInterrupted() {
+    try {
+      const [cut] = await invoke("chat_interrupted");
+      if (!cut || turn) return;
+      await open(cut.conversation);
+      compose("devam et");
+      toast(`Yarım kalan çalışma: ${String(cut.goal || "").slice(0, 80)} — sürdürmek için gönder.`);
+    } catch { /* nothing was cut off, or it cannot be read: the app starts as usual */ }
   }
   window.addEventListener("wiqo-signed-in", refreshAccount);
   window.addEventListener("wiqo-signed-out", () => { accountGeneration++; syncAccount = null; syncHistoryKey = ""; latestSync = null; remoteTask = null; remoteAgent = null; turn = null; task = null; messages = []; conversations = []; render(); renderList(); });

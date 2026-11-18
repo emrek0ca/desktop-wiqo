@@ -433,6 +433,10 @@ pub fn sandbox_profile(scope: &WriteScope) -> String {
                 quote_profile(&format!("{home}{cache}"))
             ));
         }
+        // The whole home folder is full access: apps the work builds may be put where apps go.
+        if *root == super::policy::home() {
+            writable.push(format!("(subpath {})", quote_profile("/Applications")));
+        }
         for path in ["/opt/homebrew", "/usr/local"] {
             writable.push(format!("(subpath {})", quote_profile(path)));
         }

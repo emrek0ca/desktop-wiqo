@@ -3,7 +3,8 @@
   "about": "Frames between the phone and the desktop. The desktop holds the chat stream (/copilot/chat) and runs every PC step; the phone is its remote screen. The server is a plain pipe: it passes frames on as they came and never reads, keeps or answers them. There is no direct local-network connection.",
   "transport": {
     "toDesktop": "POST /devices/{desktopId}/frames with { frame }: the server writes { type: 'companionFrame', frame } to that desktop's socket and answers 202 { delivered }. The phone decides by the desktop's ack, never by delivered.",
-    "toPhone": "The desktop writes { type: 'companionFrame', frame, notify? } to its socket; the server passes it to GET /devices/events as { type: 'companion_frame', deviceId, frame }. notify is an approvalId: the server sends the generic approval push (rova.type = 'pcApproval', Android data.pcApprovalId) and does nothing else with it."
+    "toPhone": "The desktop writes { type: 'companionFrame', frame, notify? } to its socket; the server passes it to GET /devices/events as { type: 'companion_frame', deviceId, frame }. notify is an approvalId: the server sends the generic approval push (rova.type = 'pcApproval', Android data.pcApprovalId) and does nothing else with it.",
+    "openLine": "Optional, the same pipe on one connection: the phone opens a WebSocket at /devices/socket (account session) and keeps it. It sends { type: 'frame', deviceId, frame, ref? } and is answered { type: 'frame_result', ref, delivered }; { type: 'ping' } is answered { type: 'pong' }; every event of GET /devices/events arrives on it as written there. A phone without the line, or whose line is down, uses the two requests above. The desktop sees no difference."
   },
   "timing": {
     "ackSeconds": 3,

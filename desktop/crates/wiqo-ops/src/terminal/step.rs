@@ -315,7 +315,7 @@ impl TerminalStep {
 fn takes_long(command: &str) -> bool {
     static SLOW: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     SLOW.get_or_init(|| {
-        regex::Regex::new(r"(?i)\b(?:(?:npm|pnpm|yarn|bun)\s+(?:i|install|ci|add|create|build|run\s+build)|npx\s+create-|pip3?\s+install|pipx\s+install|uv\s+(?:pip\s+install|sync)|brew\s+(?:install|upgrade|update|reinstall)|cargo\s+(?:build|install)|git\s+clone|docker\s+(?:build|pull|compose\s+up)|xcodebuild|swift\s+build|winget\s+install|choco\s+install|scoop\s+install|gradlew?\s|mvn\s|go\s+(?:build|install|mod\s+download)|flutter\s+(?:build|pub\s+get)|dotnet\s+(?:build|restore|publish))")
+        regex::Regex::new(r"(?i)\b(?:(?:npm|pnpm|yarn|bun)\s+(?:i|install|ci|add|create|build|run\s+build)|npx\s+create-|pip3?\s+install|pipx\s+install|uv\s+(?:pip\s+install|sync)|brew\s+(?:install|upgrade|update|reinstall)|cargo\s+(?:build|install)|git\s+clone|docker\s+(?:build|pull|compose\s+up)|xcodebuild|swift\s+build|winget\s+install|choco\s+install|scoop\s+install|gradlew?\s|mvn\s|go\s+(?:build|install|test|mod\s+download)|(?:npm|pnpm|yarn|bun)\s+(?:test|run\s+(?:test|lint|typecheck|e2e)\S*)|cargo\s+(?:test|check|clippy)|pytest|python3?\s+-m\s+pytest|swift\s+test|make(?:\s|$)|tsc(?:\s|$)|flutter\s+(?:build|pub\s+get)|dotnet\s+(?:build|restore|publish))")
             .expect("slow command pattern")
     })
     .is_match(command)

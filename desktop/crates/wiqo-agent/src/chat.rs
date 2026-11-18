@@ -21,10 +21,12 @@ use crate::Event;
 
 mod local;
 
-const CLIENT_FEATURES: [&str; 5] = [
+const CLIENT_FEATURES: [&str; 6] = [
     "artifact-directory-v1",
     // PC work runs on this computer's own agent (chat/local.rs); the server only answers its model calls.
     "local-agent-v1",
+    // This build takes a handoff in any round of a task (the model reached for the terminal after other PC steps), not only as the first answer.
+    "local-agent-v2",
     "relay-execution-v1",
     "receipt-card-v1",
     // A look at a window that says little carries its picture, which the server reads for what the controls do not name.
@@ -256,7 +258,7 @@ impl Asker {
                     .as_array()
                     .cloned()
                     .unwrap_or_default();
-                for own in ["relay-execution-v1", "local-agent-v1"] {
+                for own in ["relay-execution-v1", "local-agent-v1", "local-agent-v2"] {
                     if !features.iter().any(|feature| feature == own) {
                         features.push(json!(own));
                     }
@@ -1235,15 +1237,16 @@ impl Chat {
         merge(&mut body, &context);
         emit(json!({ "type": "task", "taskId": task }));
         let mut answer = self.stream(token, &body, &emit).await?;
-        // PC work handed to this computer's own agent: the loop runs here from now on.
-        if answer["localAgent"].is_object() {
-            return self.local_agent(engine, &answer["localAgent"], &history, text, token, approve, stop, &emit).await;
-        }
         let started = std::time::Instant::now();
         let mut stalls = 0usize;
         while started.elapsed() < Duration::from_secs(TASK_MINUTES * 60) {
             if answer["type"] == "error" {
                 return Ok(());
+            }
+            // PC work handed to this computer's own agent (at the first answer, or in a later round, when the model reached for the terminal): the loop
+            // runs here from now on.
+            if answer["localAgent"].is_object() {
+                return self.local_agent(engine, device_id, &answer["localAgent"], conversation, &history, text, token, approve, stop, &emit).await;
             }
             // The server's turn ran out of time with the task not done: a new window of the same task, from its notes (rova-backend continueTask).
             if answer["continueTask"] == true {
@@ -1491,7 +1494,7 @@ impl Chat {
             let Ok(state) = self
                 .call(
                     reqwest::Method::GET,
-                    &format!("copilot/requests/{request_id}"),
+                    &format!("copilot/requests/{request_id}?handoff=1"),
                     None,
                     Some(token),
                 )
@@ -1747,14 +1750,20 @@ pub(crate) async fn run_step(engine: &Engine, step: &Value) -> Value {
 /// Runs a step the server planned. `card_approved` is set only by this computer's own re-run after the person's yes to an irreversible press,
 /// `send_approved` only after this computer's yes to a send from a signed-in account.
 pub(crate) async fn run_step_as(engine: &Engine, step: &Value, card_approved: bool, send_approved: bool) -> Value {
+    run_step_whole(engine, step, card_approved, send_approved).await.0
+}
+
+/// `run_step_as`, with the step's data as the operation gave it. What goes to the server is fitted to a size (`dataText`); this computer's own agent
+/// (chat/local.rs) reads the whole thing and keeps the end of a long output, where a build says what went wrong.
+pub(crate) async fn run_step_whole(engine: &Engine, step: &Value, card_approved: bool, send_approved: bool) -> (Value, Option<Value>) {
     let kind = step["type"].as_str().unwrap_or("unknown").to_string();
     let refused = |message: &str, code: &str| json!({ "stepId": step["id"], "type": kind, "status": "denied", "message": message, "errorCode": code });
     let Some(id) = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
-        return refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP");
+        return (refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP"), None);
     };
     let payload = payload_of(step);
     if payload.is_null() {
-        return refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP");
+        return (refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP"), None);
     }
     let payload = without_server_authority(payload, card_approved, send_approved);
     let summary = step["summary"].as_str().unwrap_or("").to_string();
@@ -1824,7 +1833,7 @@ pub(crate) async fn run_step_as(engine: &Engine, step: &Value, card_approved: bo
             });
         }
     }
-    fields
+    (fields, result.data)
 }
 
 /// A thread or agent id from the window: letters, digits and dashes only, so it can never change the path it is put into.
@@ -2160,7 +2169,7 @@ mod tests {
         assert_eq!(body["locale"], "de");
         assert_eq!(
             body["clientFeatures"],
-            json!(["receipt-card-v1", "voice-reply-v1", "relay-execution-v1"]),
+            json!(["receipt-card-v1", "voice-reply-v1", "relay-execution-v1", "local-agent-v1", "local-agent-v2"]),
             "the phone's features, run here"
         );
         assert_eq!(body["agentId"], 7, "the phone's own fields go as they are");
