@@ -76,6 +76,12 @@
   function missionCard(mission) {
     const card = R.el("button", "mission-card");
     card.type = "button";
+    if (mission.images?.length) {
+      const cover = R.el("img", "mission-cover");
+      cover.src = mission.images[0].url;
+      cover.alt = "";
+      card.append(cover);
+    }
     const head = R.el("div", "mission-card-head");
     head.append(icon(mission.icon || "sparkle", 16), R.el("div", "w-title ellipsis", mission.name));
     card.append(head);
@@ -194,7 +200,13 @@
       actions,
       R.el("h4", "", "Wiqo'ya verilecek istek"), R.el("p", "mission-prompt", mission.prompt),
       ...section("Adımlar", mission.steps, true), ...section("Senden istenecekler", mission.inputs), ...section("Gerekenler", needs),
-      ...(mission.preview ? [R.el("h4", "", "Örnek sonuç"), R.el("p", "mission-prompt muted", mission.preview)] : []));
+      ...(mission.preview ? [R.el("h4", "", "Örnek sonuç"), R.el("p", "mission-prompt muted", mission.preview)] : []),
+      ...mission.images.map((image) => {
+        const picture = R.el("img", "mission-image");
+        picture.src = image.url;
+        picture.alt = "";
+        return picture;
+      }));
     if (mission.visibility === "public") host.append(await commentsBlock(mission));
   }
 
@@ -513,6 +525,7 @@
       for (const radio of dialog.querySelectorAll('[name="visibility"]')) radio.checked = radio.value === (mission.visibility || "private");
     };
     fill({});
+    renderImages(source.mode === "edit" ? source.mission : null);
     if (source.mode === "edit") fill(source.mission);
     if (source.mode === "recipe") fill({ ...source.recipe, visibility: source.recipe.visibility === "private" ? "link" : source.recipe.visibility });
     if (source.mode === "remix") fill({ ...source.mission, name: `${source.mission.name} (remix)`, preview: "", visibility: "private" });
@@ -571,6 +584,64 @@
         save.textContent = "Kaydet";
       }
     };
+  }
+
+  /** A saved Mission's pictures: each one is checked on the server before it is kept, so adding one waits for that check. */
+  function renderImages(mission) {
+    const host = $("mission-images");
+    const error = R.el("p", "error small");
+    error.hidden = true;
+    if (!mission?.id) {
+      host.replaceChildren(R.el("p", "muted small", "Görselleri kaydettikten sonra Düzenle'den ekleyebilirsin (en fazla 3)."));
+      return;
+    }
+    const thumbs = R.el("div", "mission-thumbs");
+    for (const image of mission.images) {
+      const cell = R.el("div", "mission-thumb");
+      const picture = R.el("img");
+      picture.src = image.url;
+      picture.alt = "";
+      const drop = R.button("", "icon-button", async () => {
+        try {
+          await call("DELETE", `missions/images/${image.id}`);
+          mission.images = mission.images.filter((item) => item.id !== image.id);
+          renderImages(mission);
+        } catch (failure) { error.textContent = failure.message; error.hidden = false; }
+      });
+      drop.title = "Görseli kaldır";
+      drop.append(icon("xmark", 12));
+      cell.append(picture, drop);
+      thumbs.append(cell);
+    }
+    host.replaceChildren(thumbs, error);
+    if (mission.images.length >= 3) return;
+    const pick = R.el("label", "secondary small file-pick", "Görsel ekle");
+    const input = R.el("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp";
+    input.hidden = true;
+    pick.append(input);
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 6_000_000) { error.textContent = "Görsel 6 MB'tan büyük."; error.hidden = false; return; }
+      pick.firstChild.textContent = "Kontrol ediliyor…";
+      try {
+        const dataBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]+,/, ""));
+          reader.onerror = () => reject(new Error("Görsel okunamadı."));
+          reader.readAsDataURL(file);
+        });
+        mission.images = (await call("POST", `missions/${mission.id}/images`, { dataBase64 })).images;
+        renderImages(mission);
+      } catch (failure) {
+        pick.firstChild.textContent = "Görsel ekle";
+        error.textContent = failure.message;
+        error.hidden = false;
+      }
+    };
+    host.append(pick, R.el("p", "muted small", "Görseller paylaşılmadan önce kontrol edilir; yüz, iletişim bilgisi ya da özel mesaj görünen görsel eklenmez."));
   }
 
   const FIELD_NAMES = { name: "Başlık", description: "Açıklama", prompt: "İstek", steps: "Adımlar", inputs: "Senden istenecekler", preview: "Örnek sonuç", tags: "Etiketler" };
