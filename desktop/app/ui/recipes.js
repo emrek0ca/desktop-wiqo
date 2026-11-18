@@ -1,16 +1,16 @@
 // Tariflerim: the person's recipes (rova-backend agent/skills.ts). A recipe goes into the composer to be read and sent by the person, never sent for
 // them. "Bir kez göster, öğreneyim" records a task done once on this computer (wiqo-ops recorder.rs); its steps are shown here before anything
-// leaves the computer, and the server's model turns them into a recipe. A shared recipe comes in by its code or its link (wiqo://recipe/CODE).
+// leaves the computer, and the server's model turns them into a recipe. Sharing one, or opening a shared link (wiqo://recipe/CODE), goes through
+// Keşfet (discover.js): the same dialog and the same checks as any Mission.
 (() => {
   const { invoke } = window.__TAURI__.core;
-  const { listen } = window.__TAURI__.event;
   const $ = (id) => document.getElementById(id);
   const icon = (name, size = 15) => window.WiqoIcons.icon(name, size);
   const SOURCE = { chat: "Sohbetten", recording: "Kayıttan", shared: "Paylaşılan" };
+  const SHARED = { link: "Bağlantıyla paylaşıldı", public: "Keşfet'te" };
   let recipes = [];
   let recordedSteps = [];
   let recordTimer = null;
-  let previewCode = null;
 
   function toast(message, tone = "") {
     const box = $("toast");
@@ -30,17 +30,6 @@
   function use(recipe) {
     window.WiqoChat.compose(recipe.prompt);
     invoke("skill_action", { id: recipe.id, action: "used" }).catch(() => {});
-  }
-
-  async function share(recipe) {
-    try {
-      const answer = recipe.shareUrl ? { url: recipe.shareUrl } : await invoke("skill_action", { id: recipe.id, action: "share" });
-      await navigator.clipboard.writeText(answer.url);
-      toast("Tarif bağlantısı kopyalandı.");
-      load();
-    } catch (error) {
-      showError(String(error));
-    }
   }
 
   async function remove(recipe) {
@@ -68,7 +57,7 @@
     name.textContent = recipe.name;
     const meta = document.createElement("div");
     meta.className = "muted small";
-    meta.textContent = [SOURCE[recipe.source] || "", recipe.steps?.length ? `${recipe.steps.length} adım` : "", recipe.uses ? `${recipe.uses} kez kullanıldı` : ""].filter(Boolean).join(" · ");
+    meta.textContent = [SOURCE[recipe.source] || "", SHARED[recipe.visibility] || "", recipe.steps?.length ? `${recipe.steps.length} adım` : "", recipe.uses ? `${recipe.uses} kez kullanıldı` : ""].filter(Boolean).join(" · ");
     text.append(name, meta);
     main.append(text);
     main.onclick = () => use(recipe);
@@ -76,9 +65,9 @@
     actions.className = "recipe-actions";
     const shareButton = document.createElement("button");
     shareButton.className = "icon-button";
-    shareButton.title = recipe.shareCode ? `Bağlantıyı kopyala (kod ${recipe.shareCode})` : "Paylaş";
+    shareButton.title = "Paylaş";
     shareButton.append(icon("square.and.arrow.up", 14));
-    shareButton.onclick = () => share(recipe);
+    shareButton.onclick = () => window.WiqoDiscover.publishRecipe(recipe);
     const deleteButton = document.createElement("button");
     deleteButton.className = "icon-button";
     deleteButton.title = "Sil";
@@ -117,41 +106,6 @@
     $("recipes-empty").hidden = recipes.length > 0;
     renderIdeas();
   }
-
-  // ----- a shared recipe opened from its link -----
-
-  async function openPreview(code) {
-    try {
-      const answer = await invoke("skill_import", { code, preview: true });
-      const recipe = answer.recipe;
-      previewCode = recipe.code;
-      $("recipe-preview-title").textContent = recipe.name;
-      $("recipe-preview-prompt").textContent = recipe.prompt;
-      $("recipe-preview-steps").replaceChildren(...(recipe.steps || []).map((step) => {
-        const item = document.createElement("li");
-        item.textContent = step;
-        return item;
-      }));
-      $("recipe-preview").hidden = false;
-    } catch (error) {
-      showError(String(error));
-      window.showSection("settings");
-    }
-  }
-
-  $("recipe-preview-cancel").onclick = () => { $("recipe-preview").hidden = true; previewCode = null; };
-  $("recipe-preview-add").onclick = async () => {
-    if (!previewCode) return;
-    try {
-      await invoke("skill_import", { code: previewCode, preview: false });
-      $("recipe-preview").hidden = true;
-      toast("Tarif eklendi.");
-      load();
-    } catch (error) {
-      showError(String(error));
-    }
-  };
-  listen("recipe-link", (event) => openPreview(String(event.payload || "")));
 
   // ----- "Bir kez göster, öğreneyim" -----
 
@@ -242,6 +196,7 @@
 
   invoke("recording_since").then((since) => showRecording(since)).catch(() => {});
   window.addEventListener("wiqo-signed-in", load);
+  window.addEventListener("wiqo-recipes-changed", load);
   window.addEventListener("wiqo-section", (event) => { if (event.detail === "settings" || event.detail === "chat") load(); });
   load();
 })();

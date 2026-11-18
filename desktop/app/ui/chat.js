@@ -21,6 +21,8 @@
   let remoteAgent = null;
   let syncHistoryKey = "";
   let pending = [];
+  /** The code of the Mission whose words are in the composer (Keşfet), until it is sent or the box is emptied. */
+  let composedMission = null;
   let renderQueued = false;
 
   const toast = (message, tone) => {
@@ -336,6 +338,13 @@
       copy.title = "Kopyala";
       copy.append(window.WiqoIcons.icon("doc.on.doc", 14));
       tools.append(copy);
+      const asked = messages[messages.indexOf(message) - 1];
+      if (message.role === "assistant" && asked?.role === "user" && window.WiqoDiscover) {
+        const share = R.button("", "icon-button", () => window.WiqoDiscover.publishTask(asked.text, message.text));
+        share.title = "Mission olarak paylaş";
+        share.append(window.WiqoIcons.icon("square.and.arrow.up", 14));
+        tools.append(share);
+      }
       if (latest) {
         const again = R.button("", "icon-button", () => context(message, true).retry());
         again.title = "Yeniden oluştur";
@@ -535,6 +544,8 @@
     renderAttachments();
     turn = uuid();
     render(true);
+    const mission = answer ? null : composedMission;
+    composedMission = null;
     await invoke("chat_send", {
       turn,
       conversation,
@@ -543,6 +554,7 @@
       taskId: answer?.taskId || null,
       questionId: answer?.questionId || null,
       attachments,
+      mission,
     });
   }
 
@@ -749,6 +761,8 @@
     input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
   }
   input.addEventListener("input", autosize);
+  // Emptied, the box no longer holds the Mission's words.
+  input.addEventListener("input", () => { if (!input.value.trim()) composedMission = null; });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
@@ -839,7 +853,9 @@
   render(true);
   // The Ajanlar page opens a teammate's direct chat here: it is Wiqo's own chat, the server resolves the agent from the conversation id.
   // A recipe goes into the composer to be read and sent by the person, never sent for them (recipes.js).
-  function compose(text) {
+  // A Mission from Keşfet goes in the same way, and its code rides with the message so the server treats the task as someone else's words.
+  function compose(text, mission = null) {
+    composedMission = mission;
     window.showSection("chat");
     input.value = text;
     autosize();

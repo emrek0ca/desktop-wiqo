@@ -426,6 +426,7 @@ fn chat_send(
     task_id: Option<String>,
     question_id: Option<String>,
     attachments: Option<serde_json::Value>,
+    mission: Option<String>,
 ) {
     let desktop = app.desktop.clone();
     let answer_to = task_id.zip(question_id);
@@ -439,6 +440,7 @@ fn chat_send(
                 &message,
                 answer_to,
                 attachments,
+                mission,
             )
             .await
     });
@@ -559,7 +561,7 @@ async fn chat_conversations(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.conversations().await.map_err(text)
 }
 
-/// Tariflerim: the person's recipes, a recording turned into one, its actions (used, share, unshare, delete) and a shared one added by code.
+/// Tariflerim: the person's recipes, a recording turned into one and its actions (used, delete). Sharing and shared ones go through Keşfet.
 #[tauri::command]
 async fn skills_list(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.skills().await.map_err(text)
@@ -570,9 +572,10 @@ async fn skill_action(app: State<'_, App>, id: u64, action: String) -> Reply<ser
     app.desktop.chat.skill_action(id, &action).await.map_err(text)
 }
 
+/// Keşfet: one call to the server's `missions/` API (the feed, a Mission, publishing, likes, comments, people, notices).
 #[tauri::command]
-async fn skill_import(app: State<'_, App>, code: String, preview: bool) -> Reply<serde_json::Value> {
-    app.desktop.chat.skill_import(&code, preview).await.map_err(text)
+async fn missions_call(app: State<'_, App>, method: String, path: String, body: Option<serde_json::Value>) -> Reply<serde_json::Value> {
+    app.desktop.chat.missions(&method, &path, body).await.map_err(text)
 }
 
 /// Recipe packs: the list (no id) or one pack added to the person's recipes.
@@ -1078,8 +1081,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             snapshot,
             skills_list,
+            missions_call,
             skill_action,
-            skill_import,
             skill_packs,
             record_start,
             record_stop,

@@ -91,6 +91,7 @@
       </div>
       <nav class="side-nav" aria-label="Bölümler">
         <button id="new-chat" class="nav new-chat"><span data-symbol="square.and.pencil" data-size="15" data-weight="0"></span>Yeni sohbet</button>
+        <button class="nav" data-section="discover"><span data-symbol="globe" data-size="15" data-weight="0"></span>Keşfet<span id="discover-unread" class="nav-count" hidden></span></button>
         <button class="nav" data-section="threads"><span data-symbol="person.2" data-size="15" data-weight="0"></span>Ajanlar</button>
         <button class="nav" data-section="apps"><span data-symbol="link" data-size="15" data-weight="0"></span>Uygulamalar</button>
       </nav>
@@ -194,6 +195,28 @@
           </div>
         </section>
         <aside id="thread-side" class="thread-side" hidden></aside>
+      </div>
+
+      <!-- Keşfet: Missions people shared (discover.js). -->
+      <div class="panel page discover-page" data-panel="discover" hidden>
+        <div class="discover-bar">
+          <button id="discover-back" class="icon-button" title="Keşfet'e dön" hidden><span data-symbol="chevron.left" data-size="14" data-weight="0"></span></button>
+          <label class="search discover-search"><span data-symbol="magnifyingglass" data-size="13" data-weight="0"></span><input id="discover-search" type="text" placeholder="Mission ya da kişi ara"></label>
+          <button id="discover-notices-open" class="icon-button" title="Bildirimler"><span data-symbol="bell" data-size="15" data-weight="0"></span></button>
+          <button id="discover-mine-open" class="secondary small">Mission'larım</button>
+        </div>
+        <p id="discover-error" class="error small" hidden></p>
+        <div id="discover-feed">
+          <div id="discover-tabs" class="chips"></div>
+          <div id="discover-categories" class="chips discover-categories"></div>
+          <div id="discover-list" class="mission-grid"></div>
+          <p id="discover-empty" class="muted small" hidden></p>
+          <button id="discover-more" class="secondary small" hidden>Daha fazla</button>
+        </div>
+        <div id="discover-detail" class="mission-detail" hidden></div>
+        <div id="discover-profile" class="mission-detail" hidden></div>
+        <div id="discover-mine" class="mission-detail" hidden></div>
+        <div id="discover-notices" class="mission-detail" hidden></div>
       </div>
 
       <div class="panel page" data-panel="apps" hidden>
@@ -332,17 +355,28 @@
       </div>
     </form>
   </div>
-  <div id="recipe-preview" class="modal" hidden>
-    <div class="modal-card">
-      <h2 id="recipe-preview-title">Tarif</h2>
-      <p id="recipe-preview-prompt" class="muted recipe-prompt"></p>
-      <ol id="recipe-preview-steps" class="recipe-steps"></ol>
+  <!-- One dialog for every way a Mission is written (discover.js publish). The server checks every field again before anything is shown to others. -->
+  <div id="mission-dialog" class="modal" hidden>
+    <form id="mission-form" class="modal-card mission-form">
+      <h2 id="mission-dialog-title">Mission olarak paylaş</h2>
+      <p class="muted small">Dosya yolları, adlar, hesaplar ve anahtarlar paylaşılmaz; Wiqo bunları bulursa hangi alanda olduğunu gösterir.</p>
+      <input type="text" name="name" maxlength="60" placeholder="Başlık" required>
+      <input type="text" name="description" maxlength="400" placeholder="Ne işe yarar? (bir iki cümle)">
+      <textarea name="prompt" rows="4" maxlength="4000" placeholder="Wiqo'ya verilecek istek" required></textarea>
+      <textarea name="steps" rows="3" placeholder="Adımlar (her satıra bir adım)"></textarea>
+      <textarea name="inputs" rows="2" placeholder="Çalıştıran kişiden istenecekler (her satıra bir tane)"></textarea>
+      <div class="mission-row"><select name="category"></select><input type="text" name="tags" placeholder="Etiketler (virgülle)"></div>
+      <div id="mission-needs" class="mission-checks"></div>
+      <textarea name="preview" rows="3" maxlength="1200" placeholder="Örnek sonuç (isteğe bağlı, kişisel bilgi olmadan)"></textarea>
+      <div id="mission-visibility" class="mission-checks"></div>
+      <ul id="mission-findings" class="mission-findings" hidden></ul>
+      <p id="mission-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <span class="spacer"></span>
-        <button id="recipe-preview-cancel" class="secondary">Vazgeç</button>
-        <button id="recipe-preview-add" class="primary">Tariflerime ekle</button>
+        <button id="mission-cancel" type="button" class="secondary">Vazgeç</button>
+        <button id="mission-save" type="submit" class="primary">Kaydet</button>
       </div>
-    </div>
+    </form>
   </div>
 
     <!-- The phone bubble: the QR code when no phone is linked, the linked phones otherwise. -->
@@ -361,6 +395,7 @@
   <script src="agents.js"></script>
   <script src="threads.js"></script>
   <script src="recipes.js"></script>
+  <script src="discover.js"></script>
   <script src="memory.js"></script>
   <script src="access.js"></script>
 </body>

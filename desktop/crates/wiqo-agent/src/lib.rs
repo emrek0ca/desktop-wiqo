@@ -810,6 +810,7 @@ impl Desktop {
         text: &str,
         answer_to: Option<(String, String)>,
         attachments: serde_json::Value,
+        mission: Option<String>,
     ) {
         let device = self.runtime.identity.device_id.clone();
         let outcome = self
@@ -826,7 +827,7 @@ impl Desktop {
                 answer_to.as_ref().map(|(task, _)| task.clone()),
                 answer_to.map(|(_, question)| question),
                 attachments,
-                &chat::Asker::Window,
+                &chat::Asker::Window { mission },
                 &self.approver(None),
             )
             .await;
@@ -950,7 +951,7 @@ impl Desktop {
                     None,
                     None,
                     serde_json::json!([]),
-                    &chat::Asker::Window,
+                    &chat::Asker::Window { mission: None },
                     &self.approver(Some(request_id.to_string())),
                 )
                 .await;

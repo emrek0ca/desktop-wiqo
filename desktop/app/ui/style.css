@@ -915,3 +915,37 @@ button.side-item:hover { background: var(--fill); }
 .work-text span:first-child { font-weight: 500; }
 .work-text .muted { overflow: hidden; text-overflow: ellipsis; }
 .work-spin { width: 14px; height: 14px; flex: none; border: 2px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin .9s linear infinite; }
+
+/* Keşfet (discover.js): Missions people shared, one Mission, a person, the publish dialog. */
+.nav-count { margin-left: auto; min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--ink); color: var(--ink-on); font-size: 11px; line-height: 18px; text-align: center; }
+.discover-bar { display: flex; align-items: center; gap: 8px; }
+.discover-search { flex: 1; }
+.discover-categories { margin-top: 8px; }
+.mission-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+.mission-card { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: var(--r-card); background: var(--canvas); box-shadow: var(--lift); color: var(--ink); }
+.mission-card:hover { background: var(--fill); }
+.mission-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mission-card-head .sf { color: var(--text2); flex: none; }
+.mission-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mission-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.avatar.tiny { width: 18px; height: 18px; font-size: 9px; }
+.mission-detail { display: flex; flex-direction: column; gap: 10px; user-select: text; }
+.mission-head { display: flex; align-items: center; gap: 10px; }
+.mission-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mission-prompt { white-space: pre-wrap; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--fill); border-radius: var(--r-sm); }
+.mission-list { margin: 0; padding-left: 20px; }
+.mission-comments { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.comment { display: flex; flex-direction: column; gap: 2px; }
+.comment.reply { margin-left: 26px; padding-left: 12px; border-left: 2px solid var(--line-soft); }
+.comment-tools { display: flex; gap: 12px; }
+.comment-form { display: flex; align-items: flex-end; gap: 8px; }
+.comment-form textarea { flex: 1; }
+.profile-head { display: flex; align-items: center; gap: 12px; }
+.profile-form { display: flex; flex-direction: column; gap: 8px; }
+.list li.unread .recipe-main { font-weight: 600; }
+.recipe-main.notice { white-space: normal; }
+.mission-form { width: min(620px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; }
+.mission-form input[type=text], .mission-form textarea, .mission-form select, .profile-form input[type=text] { width: 100%; }
+.mission-row { display: flex; gap: 8px; }
+.mission-checks { display: flex; flex-direction: column; gap: 6px; }
+.mission-findings { margin: 0; padding: 10px 14px 10px 28px; border-radius: var(--r-sm); background: var(--warning-fill); color: var(--warning-text); font-size: 12.5px; }

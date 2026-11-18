@@ -225,8 +225,9 @@ fn without_server_authority(mut payload: Value, card_approved: bool, send_approv
 
 /// Who a turn is for.
 pub enum Asker {
-    /// The person typed it in this window.
-    Window,
+    /// The person typed it in this window. `mission`: the message came from a Mission in Keşfet (someone else's words); the server reads the whole
+    /// task as an outsider's instruction.
+    Window { mission: Option<String> },
     /// A paired phone handed its message here (frames.json `remoteMessage`): `request` is the `/copilot/chat` body the phone would have sent itself. It
     /// goes out as it is, written from the phone with the phone's features and language; only what describes the computer is this computer's. Every
     /// event of the answer also goes to `forward`.
@@ -240,7 +241,7 @@ impl Asker {
     /// The request's `clientFeatures` and `locale`, and where the person writes from.
     fn client(&self, context: &Value) -> Value {
         match self {
-            Asker::Window => {
+            Asker::Window { .. } => {
                 let mut client = context.clone();
                 merge(
                     &mut client,
@@ -276,7 +277,8 @@ impl Asker {
     /// computer, and the results of PC steps, are never taken from it.
     fn own_fields(&self) -> Value {
         match self {
-            Asker::Window => json!({}),
+            Asker::Window { mission: Some(code) } => json!({ "missionCode": code }),
+            Asker::Window { mission: None } => json!({}),
             Asker::Phone { request, .. } => {
                 let mut fields = request.clone();
                 if let Some(object) = fields.as_object_mut() {
@@ -850,6 +852,41 @@ impl Chat {
         .await
     }
 
+    /// Keşfet (rova-backend social/routes.ts): one call under `missions/`. A refusal comes back as `{ "status", "error" }` and not as an error, so
+    /// the window can show what blocked a Mission (its findings) next to the field each one is in.
+    pub async fn missions(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
+        let path = path.trim_start_matches('/');
+        if !(path == "missions" || path.starts_with("missions/") || path.starts_with("missions?")) || path.contains("..") {
+            bail!("Bu Keşfet isteği tanınmıyor.");
+        }
+        let method = match method {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "PATCH" => reqwest::Method::PATCH,
+            "DELETE" => reqwest::Method::DELETE,
+            _ => bail!("Bu Keşfet isteği tanınmıyor."),
+        };
+        let token = self.token()?;
+        // A draft and a publish each wait on a model call on the server.
+        let mut request = self.http.request(method, format!("{}/{path}", self.server)).timeout(Duration::from_secs(90)).bearer_auth(&token);
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
+        let status = response.status();
+        let value: Value = response.json().await.unwrap_or(Value::Null);
+        if status.as_u16() == 401 {
+            let _ = self.store(None, Some(&token));
+            bail!("Oturumun sona erdi; yeniden giriş yap.");
+        }
+        if status.is_success() {
+            return Ok(value);
+        }
+        let error = if value["error"].is_object() { value["error"].clone() } else { json!({ "message": "İstek reddedildi." }) };
+        Ok(json!({ "status": status.as_u16(), "error": error }))
+    }
+
     /// The person's recipes ("Tariflerim", rova-backend agent/skills.ts): their own, recorded and imported, most used first.
     pub async fn skills(&self) -> Result<Value> {
         let token = self.token()?;
@@ -863,27 +900,15 @@ impl Chat {
         self.call(reqwest::Method::POST, "skills/from-recording", Some(json!({ "events": events, "note": note })), Some(&token)).await
     }
 
-    /// `action`: "used" (the recipe went into the composer), "share" (its link, made once and kept), "unshare", "delete".
+    /// `action`: "used" (the recipe went into the composer) or "delete". Sharing goes through Keşfet (`missions`).
     pub async fn skill_action(&self, id: u64, action: &str) -> Result<Value> {
         let token = self.token()?;
         let (method, path) = match action {
             "used" => (reqwest::Method::POST, format!("skills/{id}/used")),
-            "share" => (reqwest::Method::POST, format!("skills/{id}/share")),
-            "unshare" => (reqwest::Method::DELETE, format!("skills/{id}/share")),
             "delete" => (reqwest::Method::DELETE, format!("skills/{id}")),
             _ => bail!("Bu tarif işlemi tanınmıyor."),
         };
         self.call(method, &path, None, Some(&token)).await
-    }
-
-    /// A recipe someone shared, by its code (or its link): first `preview` (what it does), then added to this person's recipes.
-    pub async fn skill_import(&self, code: &str, preview: bool) -> Result<Value> {
-        let code: String = code.rsplit('/').next().unwrap_or(code).chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_uppercase();
-        if preview {
-            return self.call(reqwest::Method::GET, &format!("skills/shared/{code}"), None, None).await;
-        }
-        let token = self.token()?;
-        self.call(reqwest::Method::POST, "skills/import", Some(json!({ "code": code })), Some(&token)).await
     }
 
     /// Recipe packs ("Paketler"): the list without an id, or that pack's recipes added to this person's recipes.
@@ -2062,7 +2087,7 @@ mod tests {
                 None,
                 None,
                 json!([]),
-                &Asker::Window,
+                &Asker::Window { mission: None },
                 &|_, _| Box::pin(async { Decision::Yes }),
             )
             .await;

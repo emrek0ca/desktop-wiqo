@@ -372,6 +372,8 @@ struct Reach {
     briefed: Vec<PathBuf>,
     /// The folder each change's undo record belongs to (undo id, folder): an undo runs under the same folder's grant.
     undo: Vec<(String, String)>,
+    /// The run started from someone else's Mission (the handoff says `untrusted`): every change is asked, full access or not, and no yes carries over.
+    untrusted: bool,
 }
 
 /// What marks the root of a project.
@@ -781,7 +783,8 @@ impl Chat {
         let notes = if names.is_empty() { String::new() } else { format!("\n\n{PC_NOTES}") };
         let mut work = Work {
             messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), budget: CONTEXT_BYTES,
-            tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(), reach: Reach::default(),
+            tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(),
+            reach: Reach { untrusted: handoff["untrusted"] == true, ..Reach::default() },
         };
         work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}", text_of(&handoff["instructions"]), environment()) }));
         // This conversation's earlier work on this computer, if any: the model goes on with what it wrote and ran, not only with what was said.
@@ -1182,7 +1185,7 @@ impl Chat {
 
     /// One tool call, run by this computer's terminal session; what goes back to the model is its status, its message and its output.
     async fn local_tool(&self, engine: &Engine, name: &str, args: &Value, reach: &mut Reach, approve: &Approve, stop: &Stop) -> ToolOutcome {
-        let full = wiqo_ops::full_access();
+        let full = wiqo_ops::full_access() && !reach.untrusted;
         let mut outward = false;
         let (value, changes, question) = match name {
             "shell" => {
@@ -1311,9 +1314,9 @@ impl Chat {
         let folder = touched_folder(name, args);
         let covers = |allowed: &PathBuf| folder.as_ref().is_some_and(|folder| folder.starts_with(allowed));
         let confined = name != "shell" || (cfg!(target_os = "macos") && !outward);
-        let covered = name != "job" && confined && reach.allowed.iter().any(covers);
+        let covered = !reach.untrusted && name != "job" && confined && reach.allowed.iter().any(covers);
         if changes && !full && !covered {
-            let scope = folder.as_deref().and_then(allowable).filter(|_| name != "job" && confined);
+            let scope = folder.as_deref().and_then(allowable).filter(|_| name != "job" && confined && !reach.untrusted);
             let question = match &scope {
                 Some(scope) => format!("{question}\n\nOnaylarsan bu iş boyunca {} içindeki değişiklikler yeniden sorulmaz.", scope.display()),
                 None => question,
