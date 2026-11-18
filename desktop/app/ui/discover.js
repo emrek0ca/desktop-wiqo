@@ -71,6 +71,7 @@
   /** The middle of the page: one of the rail's tabs. */
   function showTab(tab) {
     state.tab = tab;
+    $("discover-title").textContent = { feed: "Akış", search: "Ara", notices: "Bildirimler", mine: "Profil" }[tab];
     for (const name of ["feed", "search", "mine", "notices"]) $(`discover-${name}`).hidden = name !== tab;
     for (const button of document.querySelectorAll(".rail-item")) button.classList.toggle("active", button.dataset.tab === tab);
     showError("");
