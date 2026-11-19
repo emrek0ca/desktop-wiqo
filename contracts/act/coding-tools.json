@@ -1,0 +1,87 @@
+{
+  "version": 2,
+  "about": "One logical set of coding abilities for Act. Each device runs only what it can; the model is given only the tools of the device doing the work, so it never calls one that is not there. Kept identical in mobile-wiqo and desktop-wiqo.",
+  "abilities": {
+    "workspace_discovery": {
+      "desktop": "repo_map (overview) + PROJECT brief",
+      "mobile": "ActRepoIndex (iOS) / act-repo.ts (Android), on the device"
+    },
+    "file_read_write": {
+      "desktop": "read_file, write_file, edit_file",
+      "mobile": "writer returns full changed files; editor saves by hand"
+    },
+    "project_search": {
+      "desktop": "search (content), repo_map query (symbols/paths)",
+      "mobile": "project search in the code tab"
+    },
+    "symbol_dependency": {
+      "desktop": "repo_map file: symbols, imports, dependents up to 3 levels",
+      "mobile": "select(): symbols + one import hop, picks <=40 files for the writer"
+    },
+    "apply_patch": {
+      "desktop": "apply_patch (all-or-nothing, <=10 files)",
+      "mobile": "writer patch blocks, applied on the device copy"
+    },
+    "diff_snapshot_restore": {
+      "desktop": "undo (undo_id)",
+      "mobile": "history entries with before/after; undo and restore to a version"
+    },
+    "version_guard": {
+      "desktop": "FILE_CHANGED / FILE_NOT_READ: no write over a file changed since the agent read it",
+      "mobile": "sealed sync baseVersion + conflict copies; GitHub pull keeps both sides as '… - GitHub kopyası'"
+    },
+    "git": {
+      "desktop": "git through shell; push/reset/clean always asked",
+      "mobile": "POST /code-sync/git/import|pull|push via the person's GitHub account; push only to a non-default branch, after a yes, refused on upstream overlap"
+    },
+    "build_lint_test": {
+      "desktop": "shell (long commands become jobs)",
+      "mobile": "not available; JSON and plain JS syntax checked on the device, everything else reported as unchecked; 'Mac'te derle/test et' hands it to the PC"
+    },
+    "execution_status": {
+      "desktop": "plan + job wait/status",
+      "mobile": "writer job stages (writing, verifying, saving)"
+    },
+    "user_api": {
+      "desktop": "api tool → POST /agent/api (list, describe, call; writes asked on the PC)",
+      "mobile": "Uygulamalar → Kendi sunucun: add (key sealed on the server), test, OpenAPI import; chat uses user_api (writes go through the confirmation card)"
+    },
+    "web_research": {
+      "desktop": "web (search / read a page) → /agent/web",
+      "mobile": "chat research tools; Act pages may GET public keyless APIs listed in act.network.json"
+    },
+    "verification_report": {
+      "desktop": "ledger.rs: answer ends with Yapıldı / Doğrulandı / Doğrulanmadı from real exit codes; one turn-back when files changed and nothing checked them",
+      "mobile": "history entry verified flag + 'Derlenmedi ve test edilmedi' note; server/database work goes to a Node project for the PC"
+    }
+  },
+  "limits": {
+    "desktop": {
+      "turns": 400,
+      "minutes": 345,
+      "same_call_failures": 3
+    },
+    "writer": {
+      "files": 40,
+      "file_chars": 120000,
+      "path_chars": 160,
+      "folders": 7
+    },
+    "git_import": {
+      "synced_project_files": 40,
+      "device_only_files": 400,
+      "file_chars": 120000
+    },
+    "git_push": {
+      "files": 30
+    },
+    "user_api": {
+      "apis_per_person": 20,
+      "calls_per_minute": 60,
+      "timeout_s": 15,
+      "response_kb": 600,
+      "redirects": "not followed"
+    }
+  },
+  "privacy": "Code from a GitHub repository passes through the server only on its way between GitHub and the phone and is never stored; a device-only project never syncs; nothing from a private repository reaches Missions or Keşfet unless the person shares it."
+}

@@ -562,6 +562,11 @@ pub struct Desktop {
 
 impl Desktop {
     /// Opens the desktop's state in the platform's application data folder (or `WIQO_DATA_DIR`). `server` overrides the paired server.
+    /// One project task through the local agent (see `Chat::eval_task`), for `wiqo-agent eval`.
+    pub async fn eval_task(&self, handoff: &serde_json::Value, token: &str, approve: &chat::Approve, emit: &(dyn Fn(serde_json::Value) + Sync)) -> Result<()> {
+        self.chat.eval_task(&self.runtime.engine, &self.runtime.identity.device_id, handoff, token, approve, emit).await
+    }
+
     pub fn open(server: Option<String>) -> Result<Arc<Desktop>> {
         let dir = DataDir::default_location().context("data folder")?;
         let platform = Platform::current();

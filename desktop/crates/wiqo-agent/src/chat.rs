@@ -19,7 +19,9 @@ use wiqo_core::wire::{CommandStatus, Request};
 
 use crate::Event;
 
+mod ledger;
 mod local;
+mod repo;
 mod vault;
 
 const CLIENT_FEATURES: [&str; 6] = [
@@ -354,6 +356,16 @@ impl Chat {
             .expect("account lock")
             .as_ref()
             .map(|account| account.email.clone())
+    }
+
+    /// The project-task evals (`wiqo-agent eval`): one task through the real local agent loop, against the gateway the runner names. The account is
+    /// held in memory only, approvals are the runner's (`approve`), and every event goes to `emit` (the last one is `done` with the reply).
+    pub async fn eval_task(&self, engine: &Engine, device_id: &str, handoff: &Value, token: &str, approve: &Approve, emit: &(dyn Fn(Value) + Sync)) -> Result<()> {
+        *self.account.lock().expect("account lock") = Some(Account { email: "eval@wiqo.invalid".into(), token: token.to_string() });
+        let goal = handoff["goal"].as_str().unwrap_or("").to_string();
+        let stop = Stop::default();
+        let conversation = Uuid::new_v4().to_string();
+        self.local_agent(engine, device_id, handoff, &conversation, &json!([]), &goal, token, approve, &stop, &|event: Value| emit(event)).await
     }
 
     fn token(&self) -> Result<String> {

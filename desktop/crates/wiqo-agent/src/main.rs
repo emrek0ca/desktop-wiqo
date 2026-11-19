@@ -4,6 +4,7 @@
 //!   wiqo-agent run                    connect to the server and run the commands that arrive
 //!   wiqo-agent status                 what this desktop is, who it is paired with, what it can do
 //!   wiqo-agent selftest [--app NAME]  run every everyday tool for real on this computer (a scratch folder on the Desktop) and report each one
+//!   wiqo-agent eval --handoff FILE    one project task through the local agent, against an eval gateway (rova-backend `npm run eval:projects`)
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -39,6 +40,13 @@ enum Command {
         /// Print what each tool returned (its data), shortened.
         #[arg(long)]
         verbose: bool,
+    },
+    /// One project task through the real local agent loop. Use with --server pointing at the eval gateway and WIQO_DATA_DIR set to a scratch
+    /// folder (no keychain, no real sessions). Prints one JSON event per line; the last is {"type":"done","reply":…}.
+    Eval {
+        /// A JSON file: {"runId", "instructions", "goal"} (the handoff a chat turn would give).
+        #[arg(long)]
+        handoff: std::path::PathBuf,
     },
 }
 
@@ -101,6 +109,29 @@ async fn main() -> Result<()> {
                 bail!("{failures} step(s) failed");
             }
             println!("all steps passed");
+        }
+        Command::Eval { handoff } => {
+            if std::env::var_os("WIQO_DATA_DIR").is_none() {
+                bail!("eval needs WIQO_DATA_DIR set to a scratch folder, so it never touches this computer's own Wiqo data");
+            }
+            let handoff: serde_json::Value = serde_json::from_slice(&std::fs::read(handoff)?)?;
+            let token = std::env::var("WIQO_EVAL_TOKEN").unwrap_or_else(|_| "eval".into());
+            // The runner's task folder is the only place the agent works; questions that reach past it (network sends, other processes) are refused.
+            let risky = regex::Regex::new(r"(?i)\b(push|ssh|scp|rsync|publish|sudo|launchctl|crontab|defaults|osascript|killall|pkill)\b").expect("pattern");
+            let approve: Box<wiqo_agent::chat::Approve> = Box::new(move |_kind: String, question: String| {
+                let yes = !risky.is_match(&question);
+                println!("{}", serde_json::json!({ "type": "approval", "question": question.chars().take(300).collect::<String>(), "yes": yes }));
+                Box::pin(async move { if yes { wiqo_agent::chat::Decision::Yes } else { wiqo_agent::chat::Decision::No } })
+            });
+            let emit = |event: serde_json::Value| {
+                // Steps, plan and the answer; streamed text deltas are left out.
+                if !matches!(event["type"].as_str(), Some("delta" | "reset" | "thinking")) {
+                    println!("{event}");
+                }
+            };
+            desktop.eval_task(&handoff, &token, approve.as_ref(), &emit).await?;
+            // The answer is delivered to the gateway in the background: give it a moment before the process ends.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         Command::Run => {
             if !desktop.is_paired() {

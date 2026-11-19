@@ -1194,7 +1194,8 @@
       case "workspace": return workspaceCard(item);
       case "inline_app": return inlineApp(item);
       case "file_undo": return undoCard(item);
-      case "act_handoff": return card(item.title || item.projectName || "Act projesi", item.summary || "Bu iş telefondaki Wiqo'nun Act bölümünde devam eder.", "hammer");
+      // A project started from the phone's chat: it is written and tried in that chat's project card on the phone.
+      case "act_handoff": return card(item.projectName || item.title || "Proje", item.summary || "Bu proje telefondaki sohbette, proje kartında yazılıyor ve deneniyor.", "hammer");
       // A quiet action seen instead of read ("Görev eklendi · Süt al"): the icon says what kind, the check says it is done.
       case "receipt": {
         const icons = { task: "checklist", goal: "sparkle", memory: "doc.text", undo: "arrow.uturn.backward", automation: "clock.badge.checkmark" };
