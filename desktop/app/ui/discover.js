@@ -11,7 +11,11 @@
   const FEEDS = [["popular", "Senin için"], ["following", "Takip"], ["new", "Yeni"]];
   const VISIBILITY = [["private", "Sadece ben", "Tariflerimde durur, kimse görmez."], ["link", "Bağlantısı olan", "Bağlantıyı verdiğin kişi açar; adın görünmez."],
     ["public", "Keşfet'te herkes", "Adınla Keşfet'te görünür; beğenilir, yorumlanır, remix'lenir."]];
-  const state = { tab: "feed", feed: "popular", category: "", q: "", next: null, missions: [], results: [], categories: [], needs: [], me: null };
+  const COVERS = { ink: ["#121214", "#47474f"], ocean: ["#1a549e", "#40999f"], forest: ["#145c45", "#59a16b"], sunset: ["#db4f33", "#f7a847"],
+    rose: ["#c73366", "#f5849e"], violet: ["#5c38b3", "#9e80eb"], sand: ["#b39466", "#e6d1a8"], slate: ["#404d61", "#8090a3"] };
+  const coverBackground = (name) => `linear-gradient(135deg, ${(COVERS[name] || COVERS.ink).join(", ")})`;
+  const PROFILE_TABS = [["missions", "Mission'lar"], ["remixes", "Remix'ler"], ["liked", "Beğenilenler"], ["saved", "Kaydedilenler"]];
+  const state = { tab: "feed", covers: Object.keys(COVERS), feed: "popular", category: "", q: "", next: null, missions: [], results: [], categories: [], needs: [], me: null };
   let searchTimer = null;
 
   async function call(method, path, body) {
@@ -155,8 +159,16 @@
     });
     linkButton.title = "Bağlantıyı kopyala";
     linkButton.append(icon("square.and.arrow.up", 16));
-    const runButton = R.button("Çalıştır", "primary small", () => run(mission));
-    actions.append(likeButton, commentButton, linkButton, R.el("span", "spacer"), runButton);
+    const saveButton = R.button("", `post-action ${mission.saved ? "liked" : ""}`.trim(), async () => {
+      try {
+        mission.saved = (await call(mission.saved ? "DELETE" : "POST", `missions/${mission.code}/save`)).saved;
+        node.replaceWith(post(mission));
+      } catch (error) { showError(error.message); }
+    });
+    saveButton.title = mission.saved ? "Kaydedilenlerden çıkar" : "Kaydet";
+    saveButton.append(icon(mission.saved ? "bookmark.fill" : "bookmark", 16));
+    const runButton = R.button("Dene", "primary small", () => openMission(mission.code));
+    actions.append(likeButton, commentButton, saveButton, linkButton, R.el("span", "spacer"), runButton);
     node.append(body, actions);
     const used = [mission.counts.copies && `${mission.counts.copies} kez kullanıldı`, mission.counts.remixes && `${mission.counts.remixes} remix`].filter(Boolean).join(" · ");
     if (used) node.append(R.el("div", "muted small post-foot", used));
@@ -206,6 +218,12 @@
     }
     $("discover-categories").replaceChildren(...[{ id: "", label: "Tümü" }, ...state.categories].map((item) =>
       R.button(item.label, `chip ${state.category === item.id ? "on" : ""}`, () => { state.category = item.id; search(); })));
+    let people = [];
+    if (!state.category) { try { people = (await call("GET", `missions/people${state.q ? `?q=${encodeURIComponent(state.q)}` : ""}`)).people; } catch { /* the Missions still show */ } }
+    const peopleBox = $("discover-people");
+    peopleBox.replaceChildren(...(people.length ? [R.el("h4", "", state.q ? "Kişiler" : "Takip etmeye değer kişiler"), ...people.slice(0, state.q ? 8 : 5).map(personRow)] : []));
+    peopleBox.hidden = people.length === 0;
+    $("discover-results-title").hidden = state.results.length === 0;
     $("discover-results").replaceChildren(...state.results.map(missionCard));
     $("discover-results-empty").hidden = state.results.length > 0;
   }
@@ -235,18 +253,38 @@
     const head = R.el("div", "mission-head");
     head.append(icon(mission.icon || "sparkle", 20), R.el("h2", "", mission.name));
     const byline = R.el("div", "mission-meta muted small");
-    if (mission.author) byline.append(avatar(mission.author, "tiny"), personLink(mission.author));
     if (mission.origin) {
       byline.append(R.el("span", "", "remix:"));
       byline.append(R.button(mission.origin.name, "link small", () => openMission(mission.origin.code)));
     }
     if (mission.visibility === "public" && counts(mission)) byline.append(R.el("span", "", counts(mission)));
     if (mission.hidden) byline.append(R.el("span", "error", "Bildirimler nedeniyle Keşfet'te gizlendi"));
+    let following = false;
+    if (mission.author && !mission.mine) {
+      try { following = (await call("GET", `missions/users/${encodeURIComponent(mission.author.username)}`)).profile.following === true; } catch { /* the button starts as Takip et */ }
+    }
+    const authorRow = mission.author ? R.el("div", "author-row") : null;
+    if (authorRow) {
+      const who = R.el("button", "post-author");
+      who.type = "button";
+      const names = R.el("div");
+      names.append(R.el("div", "w-title", mission.author.displayName || `@${mission.author.username}`), R.el("div", "muted small", mission.author.headline || `@${mission.author.username}`));
+      who.append(avatar(mission.author), names);
+      who.onclick = () => openProfile(mission.author.username);
+      authorRow.append(who, R.el("span", "spacer"));
+      if (!mission.mine) {
+        const follow = R.button(following ? "Takipte" : "Takip et", following ? "secondary small" : "primary small", async () => {
+          try { await call(following ? "DELETE" : "POST", `missions/users/${mission.author.username}/follow`); following = !following; follow.textContent = following ? "Takipte" : "Takip et"; follow.className = following ? "secondary small" : "primary small"; } catch (error) { showError(error.message); }
+        });
+        authorRow.append(follow);
+      }
+    }
 
     const actions = R.el("div", "mission-actions");
-    actions.append(R.button("Kendi Wiqo'mda çalıştır", "primary", () => run(mission)));
+    actions.append(R.button("Dene · kendi Wiqo'mda çalıştır", "primary", () => run(mission)));
+    const chips = R.el("div", "mission-actions");
     if (mission.visibility === "public") {
-      const likeButton = R.button(mission.liked ? "Beğendin" : "Beğen", "secondary", async () => {
+      const likeButton = R.button(mission.liked ? "Beğendin" : "Beğen", "secondary small", async () => {
         try {
           const done = await call(mission.liked ? "DELETE" : "POST", `missions/${mission.code}/like`);
           mission.liked = done.liked;
@@ -254,33 +292,44 @@
           likeButton.textContent = mission.liked ? "Beğendin" : "Beğen";
         } catch (error) { showError(error.message); }
       });
-      actions.append(likeButton);
+      chips.append(likeButton);
     }
-    actions.append(R.button("Remix", "secondary", () => publish({ mode: "remix", mission })));
-    actions.append(R.button("Bağlantıyı kopyala", "secondary", async () => {
+    const saveButton = R.button(mission.saved ? "Kaydedildi" : "Kaydet", "secondary small", async () => {
+      try { mission.saved = (await call(mission.saved ? "DELETE" : "POST", `missions/${mission.code}/save`)).saved; saveButton.textContent = mission.saved ? "Kaydedildi" : "Kaydet"; } catch (error) { showError(error.message); }
+    });
+    chips.append(saveButton);
+    chips.append(R.button("Remix", "secondary small", () => publish({ mode: "remix", mission })));
+    chips.append(R.button("Bağlantıyı kopyala", "secondary small", async () => {
       try { await navigator.clipboard.writeText(mission.url); toast("Bağlantı kopyalandı."); } catch { /* clipboard off */ }
     }));
     if (mission.mine) {
-      actions.append(R.button("Düzenle", "secondary", () => publish({ mode: "edit", mission })));
-      actions.append(R.button("Sil", "danger", () => remove(mission)));
+      chips.append(R.button("Düzenle", "secondary small", () => publish({ mode: "edit", mission })));
+      chips.append(R.button("Sil", "danger small", () => remove(mission)));
     } else if (mission.visibility === "public") {
-      actions.append(R.button("Bildir", "link small", () => reportMission(mission)));
+      chips.append(R.button("Bildir", "link small", () => reportMission(mission)));
     }
 
     const needs = mission.needs.map((id) => label(state.needs, id)).filter(Boolean);
-    host.replaceChildren(head, byline,
+    const gallery = mission.images.map((image) => {
+      const picture = R.el("img", "mission-image");
+      picture.src = image.url;
+      picture.alt = "";
+      return picture;
+    });
+    host.replaceChildren(...gallery.slice(0, 1), head, ...(authorRow ? [authorRow] : []), byline,
       ...(mission.description ? [R.el("p", "", mission.description)] : []),
-      actions,
+      actions, chips,
       R.el("h4", "", "Wiqo'ya verilecek istek"), R.el("p", "mission-prompt", mission.prompt),
       ...section("Adımlar", mission.steps, true), ...section("Senden istenecekler", mission.inputs), ...section("Gerekenler", needs),
       ...(mission.preview ? [R.el("h4", "", "Örnek sonuç"), R.el("p", "mission-prompt muted", mission.preview)] : []),
-      ...mission.images.map((image) => {
-        const picture = R.el("img", "mission-image");
-        picture.src = image.url;
-        picture.alt = "";
-        return picture;
-      }));
-    if (mission.visibility === "public") host.append(await commentsBlock(mission));
+      ...gallery.slice(1));
+    if (mission.visibility === "public") {
+      try {
+        const remixes = (await call("GET", `missions/${mission.code}/remixes`)).missions;
+        if (remixes.length) host.append(R.el("h4", "", "Remix'ler"), (() => { const grid = R.el("div", "mission-grid"); grid.append(...remixes.slice(0, 6).map(missionCard)); return grid; })());
+      } catch { /* the page is complete without them */ }
+      host.append(await commentsBlock(mission));
+    }
   }
 
   /** Copies the Mission into the person's recipes and puts it in the composer: nothing runs until they read and send it. */
@@ -373,7 +422,7 @@
         const tools = R.el("div", "comment-tools");
         tools.append(R.button("Yanıtla", "link small", async () => {
           const body = await ask("Yanıt", "Yanıtını yaz");
-          if (body) post(mission, body, comment.id, reload);
+          if (body) sendComment(mission, body, comment.id, reload);
         }));
         if (comment.mine) tools.append(R.button("Düzenle", "link small", async () => {
           const body = await ask("Yorumu düzenle", "", comment.body);
@@ -402,13 +451,13 @@
     form.append(field, send);
     form.onsubmit = (event) => {
       event.preventDefault();
-      if (field.value.trim()) post(mission, field.value.trim(), null, reload);
+      if (field.value.trim()) sendComment(mission, field.value.trim(), null, reload);
     };
     block.append(form);
     return block;
   }
 
-  async function post(mission, body, parentId, done) {
+  async function sendComment(mission, body, parentId, done) {
     try {
       await call("POST", `missions/${mission.code}/comments`, { body, parentId });
       done();
@@ -420,38 +469,197 @@
 
   // ----- people -----
 
-  async function openProfile(username) {
-    window.showSection("discover");
-    const host = openSide();
+  /** A person as a row: face, name and headline, one follow button. */
+  function personRow(person) {
+    const row = R.el("div", "person-row");
+    const main = R.el("button", "post-author");
+    main.type = "button";
+    const names = R.el("div");
+    names.append(R.el("div", "w-title", person.displayName || `@${person.username}`), R.el("div", "muted small ellipsis", person.headline || `@${person.username}`));
+    main.append(avatar(person), names);
+    main.onclick = () => openProfile(person.username);
+    row.append(main, R.el("span", "spacer"));
+    if (!person.mine) {
+      const follow = R.button(person.following ? "Takipte" : "Takip et", person.following ? "secondary small" : "primary small", async () => {
+        try {
+          await call(person.following ? "DELETE" : "POST", `missions/users/${person.username}/follow`);
+          person.following = !person.following;
+          follow.textContent = person.following ? "Takipte" : "Takip et";
+          follow.className = person.following ? "secondary small" : "primary small";
+        } catch (error) { showError(error.message); }
+      });
+      row.append(follow);
+    }
+    return row;
+  }
+
+  /** Followers or following of one person, in the same place as their profile, with a way back. */
+  async function showPeople(host, username, kind, back) {
+    host.replaceChildren(R.el("p", "muted small", "Yükleniyor…"));
+    try {
+      const people = (await call("GET", `missions/users/${encodeURIComponent(username)}/${kind}`)).people;
+      host.replaceChildren(R.button("‹ Geri", "link small", back), R.el("h3", "", kind === "followers" ? "Takipçiler" : "Takip edilenler"),
+        ...(people.length ? people.map(personRow) : [R.el("p", "muted small", "Kimse yok.")]));
+    } catch (error) { host.replaceChildren(R.el("p", "error small", error.message)); }
+  }
+
+  /** A profile as a professional network draws it: cover, face, name and headline, place and link, the numbers, then tabs of what they made. */
+  async function renderProfile(host, username, tab = "missions") {
     host.replaceChildren(R.el("p", "muted small", "Yükleniyor…"));
     let answer;
     try {
-      answer = await call("GET", `missions/users/${encodeURIComponent(username)}`);
+      answer = await call("GET", `missions/users/${encodeURIComponent(username)}?tab=${tab}`);
     } catch (error) {
       host.replaceChildren(R.el("p", "error small", error.message));
       return;
     }
     const profile = answer.profile;
-    const head = R.el("div", "profile-head");
-    const names = R.el("div");
-    names.append(R.el("h2", "", profile.displayName || `@${profile.username}`), R.el("div", "muted small", `@${profile.username}`));
-    head.append(avatar(profile, "big"), names);
-    const c = profile.counts;
-    const stats = R.el("div", "mission-meta muted small", `${c.missions} Mission · ${c.followers} takipçi · ${c.following} takip · ${c.remixed} remix aldı`);
+    const again = (next = tab) => renderProfile(host, username, next);
+    const cover = R.el("div", "profile-cover");
+    cover.style.background = coverBackground(profile.cover);
+    const top = R.el("div", "profile-top");
     const actions = R.el("div", "mission-actions");
-    if (!profile.mine) {
-      actions.append(R.button(profile.following ? "Takibi bırak" : "Takip et", profile.following ? "secondary" : "primary", async () => {
-        try { await call(profile.following ? "DELETE" : "POST", `missions/users/${profile.username}/follow`); openProfile(profile.username); } catch (error) { showError(error.message); }
+    if (profile.mine) {
+      actions.append(R.button("Profili düzenle", "secondary small", () => editProfile(profile, () => again())), R.button("Yeni Mission", "primary small", () => publish({ mode: "blank" })));
+    } else if (profile.blocked) {
+      actions.append(R.button("Engeli kaldır", "secondary small", async () => {
+        try { await call("DELETE", `missions/users/${profile.username}/block`); again(); } catch (error) { showError(error.message); }
       }));
-      actions.append(R.button(profile.blocked ? "Engeli kaldır" : "Engelle", "link small", async () => {
-        if (!profile.blocked && !(await window.WiqoDialog.confirm({ title: `@${profile.username} engellensin mi?`, message: "Birbirinizin Mission'larını, yorumlarını görmezsiniz; takip biter.", confirm: "Engelle", danger: true }))) return;
-        try { await call(profile.blocked ? "DELETE" : "POST", `missions/users/${profile.username}/block`); if (profile.blocked) openProfile(profile.username); else { $("discover-side").hidden = true; load(); } } catch (error) { showError(error.message); }
+    } else {
+      actions.append(R.button(profile.following ? "Takipte" : "Takip et", profile.following ? "secondary small" : "primary small", async () => {
+        try { await call(profile.following ? "DELETE" : "POST", `missions/users/${profile.username}/follow`); again(); } catch (error) { showError(error.message); }
+      }), R.button("Engelle", "link small", async () => {
+        if (!(await window.WiqoDialog.confirm({ title: `@${profile.username} engellensin mi?`, message: "Birbirinizin Mission'larını, yorumlarını görmezsiniz; takip biter.", confirm: "Engelle", danger: true }))) return;
+        try { await call("POST", `missions/users/${profile.username}/block`); $("discover-side").hidden = true; load(); } catch (error) { showError(error.message); }
       }));
     }
+    top.append(avatar(profile, "huge"), R.el("span", "spacer"), actions);
+    const info = R.el("div", "profile-info");
+    info.append(R.el("h2", "", profile.displayName || `@${profile.username}`), R.el("div", "muted small", `@${profile.username}`));
+    if (profile.headline) info.append(R.el("div", "profile-headline", profile.headline));
+    if (profile.bio) info.append(R.el("p", "", profile.bio));
+    const links = R.el("div", "mission-meta muted small");
+    if (profile.place) links.append(R.el("span", "", profile.place));
+    if (profile.website) links.append(R.button(profile.website, "link small", () => invoke("open_link", { url: `https://${profile.website}` }).catch(() => {})));
+    if (links.childNodes.length) info.append(links);
+    const c = profile.counts;
+    const stats = R.el("div", "profile-stats");
+    const stat = (value, text, onClick) => {
+      const cell = R.el(onClick ? "button" : "div", "profile-stat");
+      if (onClick) { cell.type = "button"; cell.onclick = onClick; }
+      cell.append(R.el("strong", "", String(value)), R.el("span", "muted small", text));
+      return cell;
+    };
+    stats.append(stat(c.followers, "Takipçi", () => showPeople(host, username, "followers", () => again())), stat(c.following, "Takip", () => showPeople(host, username, "following", () => again())),
+      stat(c.missions, "Mission"), stat(c.likes, "Beğeni"), stat(c.uses, "Deneme"));
+    const tabs = R.el("div", "profile-tabs");
+    for (const [id, text] of PROFILE_TABS) {
+      if (id === "saved" && !profile.mine) continue;
+      tabs.append(R.button(text, `profile-tab ${tab === id ? "on" : ""}`.trim(), () => again(id)));
+    }
     const list = R.el("div", "mission-grid");
-    list.append(...answer.missions.map(missionCard));
-    host.replaceChildren(head, ...(profile.bio ? [R.el("p", "", profile.bio)] : []), stats, actions, list);
-    if (answer.missions.length === 0) host.append(R.el("p", "muted small", "Henüz paylaşılan Mission yok."));
+    const own = profile.mine;
+    const card = (mission) => {
+      const node = missionCard(mission);
+      if (!mission.code) node.onclick = () => publish({ mode: "edit", mission });
+      else if (own && tab === "missions") node.querySelector(".mission-meta")?.append(R.el("span", "", VISIBILITY.find(([id]) => id === mission.visibility)?.[1] || ""));
+      return node;
+    };
+    list.append(...answer.missions.map(card));
+    const empty = { remixes: own ? "Henüz bir Mission'ı remix'lemedin. Birinin Mission'ında Remix'e bas." : "Henüz remix yok.", liked: "Henüz beğenilen Mission yok.",
+      saved: "Kaydettiğin Mission'lar burada durur; yalnızca sen görürsün.", missions: own ? "Henüz paylaştığın bir Mission yok. Yeni Mission'a bas." : "Henüz paylaşılan Mission yok." }[tab];
+    host.replaceChildren(cover, top, info, stats, tabs, list, ...(answer.missions.length ? [] : [R.el("p", "muted small", empty)]));
+    if (answer.next) {
+      const more = R.button("Daha fazla", "secondary small", async () => {
+        try {
+          const page = await call("GET", `missions/users/${encodeURIComponent(username)}?tab=${tab}&cursor=${encodeURIComponent(more.dataset.next)}`);
+          list.append(...page.missions.map(card));
+          if (page.next) more.dataset.next = page.next; else more.remove();
+        } catch (error) { showError(error.message); }
+      });
+      more.dataset.next = answer.next;
+      host.append(more);
+    }
+  }
+
+  async function openProfile(username) {
+    window.showSection("discover");
+    await renderProfile(openSide(), username);
+  }
+
+  /** The public profile in one small window: the cover is a row of colours, the rest are short fields with what is left to write beside them. */
+  function editProfile(profile, done) {
+    const root = R.el("div", "modal");
+    const card = R.el("form", "modal-card profile-editor");
+    const preview = R.el("div", "profile-preview");
+    const previewName = R.el("div", "w-title");
+    const previewLine = R.el("div", "small");
+    const previewText = R.el("div");
+    previewText.append(previewName, previewLine);
+    preview.append(avatar(profile, "big"), previewText);
+    const values = { cover: profile.cover || "ink" };
+    const fields = {};
+    const field = (name, text, limit, placeholder, multiline = false) => {
+      const wrap = R.el("label", "profile-field");
+      const input = R.el(multiline ? "textarea" : "input");
+      if (!multiline) input.type = "text";
+      else input.rows = 3;
+      input.maxLength = limit;
+      input.placeholder = placeholder;
+      input.value = profile[name] || "";
+      const counter = R.el("span", "muted small", `${input.value.length}/${limit}`);
+      const head = R.el("div", "profile-field-head");
+      head.append(R.el("span", "small", text), counter);
+      input.addEventListener("input", () => { counter.textContent = `${input.value.length}/${limit}`; paint(); });
+      wrap.append(head, input);
+      fields[name] = input;
+      return wrap;
+    };
+    const paint = () => {
+      preview.style.background = coverBackground(values.cover);
+      previewName.textContent = profile.displayName || `@${fields.username.value || ""}`;
+      previewLine.textContent = fields.headline.value;
+    };
+    const swatches = R.el("div", "swatches");
+    const drawSwatches = () => swatches.replaceChildren(...state.covers.map((name) => {
+      const swatch = R.button("", `swatch ${values.cover === name ? "on" : ""}`.trim(), () => { values.cover = name; drawSwatches(); paint(); });
+      swatch.title = name;
+      swatch.style.background = coverBackground(name);
+      swatch.type = "button";
+      return swatch;
+    }));
+    const error = R.el("p", "form-error");
+    error.hidden = true;
+    const actions = R.el("div", "modal-actions");
+    const close = () => root.remove();
+    const save = R.el("button", "primary", "Kaydet");
+    save.type = "submit";
+    actions.append(R.el("span", "spacer"), R.button("Vazgeç", "secondary", close), save);
+    card.append(R.el("h2", "", "Profili düzenle"), preview, R.el("div", "small muted", "Kapak rengi"), swatches,
+      field("username", "Kullanıcı adı", 20, "kullanici_adi"), field("headline", "Başlık", 80, "Ne yaptığını bir cümlede söyle"),
+      field("bio", "Hakkında", 280, "Kendini ve neyle ilgilendiğini anlat", true), field("place", "Konum", 40, "Şehir, ülke"), field("website", "Web sitesi", 80, "ornek.com/ben"),
+      R.el("p", "muted small", "Ad ve fotoğraf, Ayarlar'daki profilinden gelir. Burada yazdığın her şey herkese açıktır; kişisel bilgi ve iletişim bilgisi yazma."), error, actions);
+    fields.username.addEventListener("input", () => { fields.username.value = fields.username.value.toLowerCase(); });
+    card.onsubmit = async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      error.hidden = true;
+      try {
+        await call("PUT", "missions/me", { username: fields.username.value.trim(), headline: fields.headline.value.trim(), bio: fields.bio.value.trim(),
+          place: fields.place.value.trim(), website: fields.website.value.trim(), cover: values.cover });
+        close();
+        toast("Profil kaydedildi.");
+        done();
+      } catch (failure) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      } finally { save.disabled = false; }
+    };
+    root.append(card);
+    document.body.append(root);
+    drawSwatches();
+    paint();
+    fields.headline.focus();
   }
 
   async function openMine() {
@@ -469,42 +677,12 @@
     state.me = answer.profile;
     state.categories = answer.categories;
     state.needs = answer.needs;
-    const form = R.el("form", "card profile-form");
-    const username = R.el("input");
-    username.type = "text";
-    username.placeholder = "kullanici_adi";
-    username.value = answer.profile.username || "";
-    username.maxLength = 20;
-    const bio = R.el("input");
-    bio.type = "text";
-    bio.placeholder = "Kısa biyografi (isteğe bağlı)";
-    bio.value = answer.profile.bio || "";
-    bio.maxLength = 160;
-    const save = R.el("button", "primary small", "Kaydet");
-    save.type = "submit";
-    const note = R.el("p", "muted small", "Keşfet'te Mission paylaşmak ve yorum yazmak için bir kullanıcı adı gerekir. Adın ve fotoğrafın Ayarlar'daki profilinden gelir.");
-    form.append(R.el("h3", "", "Keşfet profilin"), note, username, bio, save);
-    form.onsubmit = async (event) => {
-      event.preventDefault();
-      try {
-        await call("PUT", "missions/me", { username: username.value.trim(), bio: bio.value.trim() });
-        toast("Profil kaydedildi.");
-      } catch (error) { showError(error.message); }
-    };
-    const list = R.el("div", "card");
-    const rows = R.el("ul", "list");
-    for (const mission of answer.missions) {
-      const row = R.el("li");
-      const main = R.button("", "recipe-main", () => openMission(mission.code));
-      const text = R.el("div", "recipe-text");
-      text.append(R.el("div", "w-title", mission.name), R.el("div", "muted small", [VISIBILITY.find(([id]) => id === mission.visibility)?.[1], mission.hidden ? "gizlendi" : "", counts(mission)].filter(Boolean).join(" · ")));
-      main.append(icon(mission.icon || "sparkle", 16), text);
-      const edit = R.button("Düzenle", "secondary small", () => publish({ mode: "edit", mission }));
-      row.append(main, edit);
-      rows.append(row);
-    }
-    list.append(rows);
-    host.replaceChildren(form, R.el("h3", "settings-head", "Mission'larım"), answer.missions.length ? list : R.el("p", "muted small", "Henüz paylaştığın bir Mission yok. Bitirdiğin bir işin altındaki paylaş düğmesine bas."));
+    state.covers = answer.covers || state.covers;
+    if (answer.profile.username) { await renderProfile(host, answer.profile.username); return; }
+    const card = R.el("div", "card profile-form");
+    card.append(R.el("h3", "", "Keşfet profilin"), R.el("p", "muted small", "Keşfet'te Mission paylaşmak ve yorum yazmak için bir kullanıcı adı gerekir."),
+      R.button("Profili oluştur", "primary small", () => editProfile(answer.profile, openMine)));
+    host.replaceChildren(card);
   }
 
   async function openNotices() {
@@ -571,22 +749,28 @@
       return option;
     }));
     $("mission-needs").replaceChildren(...state.needs.map((item) => {
-      const wrap = R.el("label", "check small");
+      const wrap = R.el("label", "pick");
       const box = R.el("input");
       box.type = "checkbox";
       box.value = item.id;
-      wrap.append(box, document.createTextNode(` ${item.label}`));
+      wrap.append(box, R.el("span", "", item.label));
       return wrap;
     }));
     $("mission-visibility").replaceChildren(...VISIBILITY.map(([id, text, hint]) => {
-      const wrap = R.el("label", "check");
+      const wrap = R.el("label", "pick");
+      wrap.title = hint;
       const radio = R.el("input");
       radio.type = "radio";
       radio.name = "visibility";
       radio.value = id;
-      wrap.append(radio, document.createTextNode(` ${text} `), R.el("span", "muted small", hint));
+      radio.onchange = showHint;
+      wrap.append(radio, R.el("span", "", text));
       return wrap;
     }));
+    const showHint = () => {
+      const chosen = dialog.querySelector('[name="visibility"]:checked')?.value || "private";
+      $("mission-visibility-hint").textContent = VISIBILITY.find(([id]) => id === chosen)?.[2] || "";
+    };
     const fill = (mission) => {
       field("name").value = mission.name || "";
       field("description").value = mission.description || "";
@@ -598,6 +782,7 @@
       field("category").value = mission.category || "other";
       for (const box of $("mission-needs").querySelectorAll("input")) box.checked = (mission.needs || []).includes(box.value);
       for (const radio of dialog.querySelectorAll('[name="visibility"]')) radio.checked = radio.value === (mission.visibility || "private");
+      showHint();
     };
     fill({});
     renderImages(source.mode === "edit" ? source.mission : null);
@@ -624,7 +809,8 @@
       }
     }
 
-    $("mission-cancel").onclick = () => { dialog.hidden = true; };
+    $("mission-cancel").onclick = $("mission-close").onclick = () => { dialog.hidden = true; };
+    dialog.querySelector("details").open = source.mode === "edit";
     $("mission-form").onsubmit = async (event) => {
       event.preventDefault();
       const lines = (name) => field(name).value.split("\n").map((line) => line.trim()).filter(Boolean);

@@ -1015,3 +1015,42 @@ button.side-item:hover { background: var(--fill); }
 .assist-actions { display: flex; gap: 8px; }
 .assist-actions input { flex: 1; }
 .assist-tip { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+
+/* Keşfet, professional pass: the compact Mission window, profiles with a cover and tabs, people rows. */
+.mission-form { width: min(560px, 100%); gap: 10px; display: flex; flex-direction: column; }
+.mission-top { display: flex; align-items: center; justify-content: space-between; }
+.picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick { position: relative; cursor: pointer; }
+.pick input { position: absolute; opacity: 0; pointer-events: none; }
+.pick span { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px; font-size: 12.5px; color: var(--ink); }
+.pick:has(input:checked) span { background: var(--ink); border-color: var(--ink); color: var(--ink-on); }
+.pick:has(input:focus-visible) span { outline: 2px solid var(--ink); outline-offset: 2px; }
+.mission-more { border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 8px 12px; }
+.mission-more summary { cursor: pointer; font-size: 13px; color: var(--text2); }
+.mission-more[open] { display: flex; flex-direction: column; gap: 8px; }
+.mission-more[open] summary { margin-bottom: 2px; }
+.mission-more input[type=text], .mission-more textarea { width: 100%; }
+.author-row, .person-row { display: flex; align-items: center; gap: 10px; }
+.person-row { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.people-list { display: flex; flex-direction: column; gap: 2px; }
+.avatar.huge { width: 84px; height: 84px; font-size: 32px; border: 4px solid var(--canvas); box-sizing: border-box; }
+.profile-cover { height: 116px; border-radius: var(--r-card); margin: 0 0 -42px; }
+.profile-top { display: flex; align-items: flex-end; gap: 10px; padding: 0 14px; }
+.profile-info { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.profile-info h2 { margin: 0; font-size: 22px; }
+.profile-headline { font-weight: 500; }
+.profile-stats { display: flex; background: var(--fill); border-radius: var(--r-card); padding: 8px 0; }
+.profile-stat { flex: 1; display: flex; flex-direction: column; align-items: center; border: 0; background: none; color: var(--ink); padding: 2px 0; }
+button.profile-stat:hover strong { text-decoration: underline; }
+.profile-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
+.profile-tab { border: 0; border-radius: 0; background: none; padding: 8px 0; color: var(--text2); border-bottom: 2px solid transparent; white-space: nowrap; }
+.profile-tab.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
+.profile-editor { width: min(520px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.profile-preview { display: flex; align-items: flex-end; gap: 10px; padding: 12px; min-height: 76px; border-radius: var(--r-card); color: #fff; }
+.profile-preview .small { color: rgba(255, 255, 255, .85); }
+.swatches { display: flex; gap: 8px; }
+.swatch { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid transparent; outline: 2px solid transparent; background-clip: padding-box; }
+.swatch.on { outline-color: var(--ink); }
+.profile-field { display: flex; flex-direction: column; gap: 4px; }
+.profile-field-head { display: flex; justify-content: space-between; }
+.profile-field input, .profile-field textarea { width: 100%; }
