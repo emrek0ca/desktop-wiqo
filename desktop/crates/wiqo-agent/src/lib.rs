@@ -7,6 +7,7 @@ pub mod chat;
 pub mod diagnostics;
 pub mod location;
 pub mod permissions;
+mod remote_screen;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -308,6 +309,10 @@ impl Observer for Shared {
         let _ = self.inbox.send(Inbox::Phone(request));
     }
 
+    fn remote_screen(&self, session: wiqo_core::relay::RemoteSession) {
+        let _ = self.inbox.send(Inbox::RemoteScreen(session));
+    }
+
     fn automation(&self, steps: Vec<(i64, serde_json::Value)>) {
         let _ = self.inbox.send(Inbox::Automation(steps));
     }
@@ -484,6 +489,8 @@ enum Inbox {
     Watches(Vec<serde_json::Value>),
     /// Background tasks' steps to run on this computer (rova-backend agent/pcUnits.ts).
     AgentSteps(Vec<serde_json::Value>),
+    /// A paired phone opened the live remote screen (frames.json remoteScreen, signature checked by the relay).
+    RemoteScreen(wiqo_core::relay::RemoteSession),
 }
 
 /// A phone's `remoteMessage` (frames.json): the request it would have sent to `/copilot/chat` itself.
@@ -873,6 +880,19 @@ impl Desktop {
                 Inbox::Watches(watches) => {
                     let desktop = self.clone();
                     tokio::spawn(async move { desktop.read_watches(watches).await });
+                    continue;
+                }
+                // The phone's live remote screen: shown in this window's work list while it runs, so the person here always sees it.
+                Inbox::RemoteScreen(session) => {
+                    let shared = self.shared.clone();
+                    tokio::spawn(remote_screen::serve(session, move |on| {
+                        let key = "remote-screen";
+                        if on {
+                            wiqo_core::relay::Observer::started(shared.as_ref(), key, "remoteScreen", "Telefondan uzaktan kontrol", None);
+                        } else {
+                            wiqo_core::relay::Observer::finished(shared.as_ref(), key);
+                        }
+                    }));
                     continue;
                 }
             };

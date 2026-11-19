@@ -341,7 +341,7 @@
       const asked = messages[messages.indexOf(message) - 1];
       if (message.role === "assistant" && asked?.role === "user" && window.WiqoDiscover) {
         const share = R.button("", "icon-button", () => window.WiqoDiscover.publishTask(asked.text, message.text));
-        share.title = "Mission olarak paylaş";
+        share.title = "Wiqo'da paylaş";
         share.append(window.WiqoIcons.icon("square.and.arrow.up", 14));
         tools.append(share);
       }
@@ -854,13 +854,15 @@
   // The Ajanlar page opens a teammate's direct chat here: it is Wiqo's own chat, the server resolves the agent from the conversation id.
   // A recipe goes into the composer to be read and sent by the person, never sent for them (recipes.js).
   // A Mission from Keşfet goes in the same way, and its code rides with the message so the server treats the task as someone else's words.
-  function compose(text, mission = null) {
+  /** Puts words in the composer; `sendNow` sends them at once (a Mission run with "Çalıştır": someone else's still asks before every change). */
+  function compose(text, mission = null, sendNow = false) {
     composedMission = mission;
     window.showSection("chat");
     input.value = text;
     autosize();
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+    if (sendNow) $("chat-form").requestSubmit();
   }
   window.WiqoChat = { open, compose, inGroup: () => isGroup(), userTurns: () => messages.filter((item) => item.role === "user").length };
 })();

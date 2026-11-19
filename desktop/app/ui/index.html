@@ -204,9 +204,9 @@
         <nav class="discover-rail" aria-label="Keşfet">
           <button class="rail-item active" data-tab="feed"><span data-symbol="house" data-size="17" data-weight="0"></span>Akış</button>
           <button class="rail-item" data-tab="search"><span data-symbol="magnifyingglass" data-size="17" data-weight="0"></span>Ara</button>
-          <button class="rail-item" data-tab="notices"><span data-symbol="bell" data-size="17" data-weight="0"></span>Bildirimler<span id="discover-unread-rail" class="nav-count" hidden></span></button>
+          <button class="rail-item" data-tab="notices"><span data-symbol="bell" data-size="17" data-weight="0"></span>Gelen kutusu<span id="discover-unread-rail" class="nav-count" hidden></span></button>
           <button class="rail-item" data-tab="mine"><span data-symbol="person.crop.circle" data-size="17" data-weight="0"></span>Profil</button>
-          <button id="discover-new" class="primary rail-new"><span data-symbol="plus" data-size="14" data-weight="0"></span>Yeni Mission</button>
+          <button id="discover-new" class="primary rail-new"><span data-symbol="plus" data-size="14" data-weight="0"></span>Wiqo'da paylaş</button>
         </nav>
         <section class="discover-main">
           <h1 id="discover-title" class="page-title">Akış</h1>
@@ -256,6 +256,7 @@
               <div id="account-mail" class="muted small"></div>
             </div>
             <span id="account-provider" class="muted small"></span>
+            <button id="account-edit" class="secondary small">Profili düzenle</button>
             <button id="account-signout" class="secondary small">Çıkış yap</button>
           </div>
         </section>
@@ -276,7 +277,7 @@
               <input id="autostart" type="checkbox" class="switch">
             </label>
             <label class="settings-row toggle-row">
-              <div><div>Ekran hafızası</div><div id="memory-detail" class="muted small">Ekrandaki yazıları bu bilgisayarda saklar, hiçbir yere göndermez.</div></div>
+              <div><div>Ekran hafızası</div><div id="memory-detail" class="muted small"></div></div>
               <input id="memory-enabled" type="checkbox" class="switch">
             </label>
           </div>
@@ -289,7 +290,7 @@
 
         <section class="settings-section" id="recipes-section">
           <div class="row-head">
-            <h3 class="settings-head">Tariflerim</h3>
+            <h3 class="settings-head">İşlerim</h3>
             <button id="record-open" class="secondary small">Bir kez göster, öğreneyim</button>
           </div>
           <div id="recipes-empty" class="card muted small" hidden>Henüz tarif yok. Bir işi bilgisayarda bir kez yap, Wiqo izleyip tarife çevirsin.</div>
@@ -298,7 +299,7 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="settings-head">Rutinler</h3>
+          <h3 class="settings-head">Zamanlanmış ve çalışan işler</h3>
           <div id="agents-empty" class="card muted small" hidden>Henüz bir şey yok. Wiqo'ya “yarın 11'de toplantıyı hatırlat” de; burada görünür.</div>
           <div id="agents-groups"></div>
           <p id="agents-error" class="error small" hidden></p>

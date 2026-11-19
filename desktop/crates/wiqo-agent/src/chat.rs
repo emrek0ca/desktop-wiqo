@@ -20,6 +20,7 @@ use wiqo_core::wire::{CommandStatus, Request};
 use crate::Event;
 
 mod local;
+mod vault;
 
 const CLIENT_FEATURES: [&str; 6] = [
     "artifact-directory-v1",
@@ -856,7 +857,9 @@ impl Chat {
     /// the window can show what blocked a Mission (its findings) next to the field each one is in.
     pub async fn missions(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
         let path = path.trim_start_matches('/');
-        if !(path == "missions" || path.starts_with("missions/") || path.starts_with("missions?")) || path.contains("..") {
+        // `profile` is the one profile (name, handle, headline, colour, cover…) Settings edits, and its free cover library; Keşfet reads the same row through `missions/`.
+        let own_profile = (path == "profile" && matches!(method, "GET" | "PUT")) || (path.starts_with("profile/cover-library") && method == "GET");
+        if !(own_profile || path == "missions" || path.starts_with("missions/") || path.starts_with("missions?")) || path.contains("..") {
             bail!("Bu Keşfet isteği tanınmıyor.");
         }
         let method = match method {

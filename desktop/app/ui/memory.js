@@ -9,7 +9,7 @@
     $("memory-enabled").checked = on;
     if (!on) return;
     const size = state.bytes > 1024 * 1024 ? `${(state.bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(state.bytes / 1024)} KB`;
-    $("memory-detail").textContent = `${state.days} günde ${state.entries} okuma, ${size}. Bu bilgisayardan çıkmaz.`;
+    $("memory-detail").textContent = `${state.days} günde ${state.entries} okuma, ${size}`;
   }
 
   async function load() {
@@ -22,7 +22,7 @@
       const yes = await window.WiqoDialog.confirm({ title: "Ekran hafızası kapatılsın mı?", message: "Kapatınca şimdiye kadar okunanların hepsi bu bilgisayardan silinir.", confirm: "Kapat ve sil", danger: true });
       if (!yes) { event.target.checked = true; return; }
     }
-    $("memory-detail").textContent = "Ekrandaki yazıları bu bilgisayarda saklar, hiçbir yere göndermez.";
+    $("memory-detail").textContent = "";
     render(await invoke("set_screen_memory", { on }).catch(() => null));
   };
 

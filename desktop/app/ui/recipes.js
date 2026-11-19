@@ -68,12 +68,18 @@
     shareButton.title = "Paylaş";
     shareButton.append(icon("square.and.arrow.up", 14));
     shareButton.onclick = () => window.WiqoDiscover.publishRecipe(recipe);
+    // "Zamanla" (İşlerim): the recipe's words with the question of when, left in the composer to say it in one's own words.
+    const scheduleButton = document.createElement("button");
+    scheduleButton.className = "icon-button";
+    scheduleButton.title = "Zamanla";
+    scheduleButton.append(icon("clock", 14));
+    scheduleButton.onclick = () => window.WiqoChat.compose(`Bu işi düzenli olarak çalıştır (ne sıklıkla ve saat kaçta olacağını yaz):\n\n${recipe.prompt}`);
     const deleteButton = document.createElement("button");
     deleteButton.className = "icon-button";
     deleteButton.title = "Sil";
     deleteButton.append(icon("trash", 14));
     deleteButton.onclick = () => remove(recipe);
-    actions.append(shareButton, deleteButton);
+    actions.append(scheduleButton, shareButton, deleteButton);
     item.append(main, actions);
     return item;
   }

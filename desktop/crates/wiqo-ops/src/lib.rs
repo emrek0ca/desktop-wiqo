@@ -13,6 +13,7 @@ mod personal;
 mod process;
 mod screen;
 pub mod recorder;
+pub mod remote;
 pub mod screen_memory;
 mod system;
 pub mod terminal;

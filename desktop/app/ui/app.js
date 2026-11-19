@@ -365,6 +365,9 @@ function renderAccount() {
   $("account-provider").textContent = provider === "google" ? "Google" : provider === "apple" ? "Apple" : "E-posta";
 }
 
+// Keşfet saves the profile too (discover.js) and refreshes the name shown here.
+window.WiqoReloadProfile = () => loadProfile();
+
 async function loadProfile() {
   try {
     profile = await invoke("profile");
@@ -396,6 +399,8 @@ async function signOut() {
 }
 $("sign-out").onclick = signOut;
 $("account-signout").onclick = signOut;
+// The one profile editor (discover.js): name, handle, headline, bio, location, link and cover; the photo is chosen on the phone.
+$("account-edit").onclick = () => window.WiqoDiscover?.editProfile(loadProfile);
 
 // ----- stage 2: permissions (also in Ayarlar) -----
 

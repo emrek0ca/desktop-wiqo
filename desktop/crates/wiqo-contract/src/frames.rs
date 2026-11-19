@@ -11,6 +11,8 @@ pub const APPROVAL_DECISION: &str = "approvalDecision";
 pub const CANCEL_JOB: &str = "cancelJob";
 pub const CANCEL_TURN: &str = "cancelTurn";
 pub const APPROVALS_OPEN: &str = "approvalsOpen";
+/// The live remote screen: join the session the phone opened on the server, and stream the screen to it (wiqo-agent remote_screen).
+pub const REMOTE_SCREEN: &str = "remoteScreen";
 
 /// Frames to the phone (`kind`).
 pub const ACK: &str = "ack";

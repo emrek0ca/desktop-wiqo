@@ -13,7 +13,14 @@
     ["public", "Keşfet'te herkes", "Adınla Keşfet'te görünür; beğenilir, yorumlanır, remix'lenir."]];
   const COVERS = { ink: ["#121214", "#47474f"], ocean: ["#1a549e", "#40999f"], forest: ["#145c45", "#59a16b"], sunset: ["#db4f33", "#f7a847"],
     rose: ["#c73366", "#f5849e"], violet: ["#5c38b3", "#9e80eb"], sand: ["#b39466", "#e6d1a8"], slate: ["#404d61", "#8090a3"] };
-  const coverBackground = (name) => `linear-gradient(135deg, ${(COVERS[name] || COVERS.ink).join(", ")})`;
+  // One colour per person (backend PROFILE_COLORS): the circle behind the initial, and the cover when no picture is chosen.
+  const PROFILE_COLORS = { indigo: "#555bd8", blue: "#2978f0", teal: "#0da0a3", green: "#33a854", orange: "#f28721", pink: "#e84987", purple: "#8c54e6", graphite: "#5c6470" };
+  const colorOf = (key) => PROFILE_COLORS[key] || PROFILE_COLORS.indigo;
+  const coverBackground = (name) => PROFILE_COLORS[name] ? `linear-gradient(135deg, ${colorOf(name)}d9, ${colorOf(name)})` : `linear-gradient(135deg, ${(COVERS[name] || COVERS.ink).join(", ")})`;
+  /** A cover: the colour, and a chosen picture over it. */
+  const paintCover = (node, color, url) => {
+    node.style.background = url ? `center / cover no-repeat url("${url}"), ${coverBackground(color)}` : coverBackground(color);
+  };
   const PROFILE_TABS = [["missions", "Mission'lar"], ["remixes", "Remix'ler"], ["liked", "Beğenilenler"], ["saved", "Kaydedilenler"]];
   const state = { tab: "feed", covers: Object.keys(COVERS), feed: "popular", category: "", q: "", next: null, missions: [], results: [], categories: [], needs: [], me: null };
   let searchTimer = null;
@@ -56,6 +63,8 @@
       node.append(image);
     } else {
       node.textContent = author?.avatar?.emoji || (author?.displayName || author?.username || "?").slice(0, 1).toUpperCase();
+      node.style.background = colorOf(author?.avatar?.color);
+      node.style.color = "#fff";
     }
     return node;
   }
@@ -67,7 +76,7 @@
 
   function counts(mission) {
     const c = mission.counts;
-    return [c.likes && `${c.likes} beğeni`, c.comments && `${c.comments} yorum`, c.copies && `${c.copies} kez kullanıldı`, c.remixes && `${c.remixes} remix`].filter(Boolean).join(" · ");
+    return [c.succeeded && `${c.succeeded} kişi kendi versiyonunu üretti`, c.likes && `${c.likes} beğeni`, c.comments && `${c.comments} yorum`, c.copies && `${c.copies} kez kullanıldı`, c.remixes && `${c.remixes} remix`].filter(Boolean).join(" · ");
   }
 
   // ----- views -----
@@ -75,7 +84,7 @@
   /** The middle of the page: one of the rail's tabs. */
   function showTab(tab) {
     state.tab = tab;
-    $("discover-title").textContent = { feed: "Akış", search: "Ara", notices: "Bildirimler", mine: "Profil" }[tab];
+    $("discover-title").textContent = { feed: "Akış", search: "Ara", notices: "Gelen kutusu", mine: "Profil" }[tab];
     for (const name of ["feed", "search", "mine", "notices"]) $(`discover-${name}`).hidden = name !== tab;
     for (const button of document.querySelectorAll(".rail-item")) button.classList.toggle("active", button.dataset.tab === tab);
     showError("");
@@ -256,6 +265,7 @@
     if (mission.origin) {
       byline.append(R.el("span", "", "remix:"));
       byline.append(R.button(mission.origin.name, "link small", () => openMission(mission.origin.code)));
+      if (mission.origin.updatedSince) byline.append(R.el("span", "", "kaynak güncellendi"));
     }
     if (mission.visibility === "public" && counts(mission)) byline.append(R.el("span", "", counts(mission)));
     if (mission.hidden) byline.append(R.el("span", "error", "Bildirimler nedeniyle Keşfet'te gizlendi"));
@@ -333,23 +343,59 @@
   }
 
   /** Copies the Mission into the person's recipes and puts it in the composer: nothing runs until they read and send it. */
+  /**
+   * "Dene": what the Mission made for its author, the person's own inputs, and two ways to go: run it now on this computer with their own data
+   * (someone else's Mission still asks before every change), or put its words in the composer to read first.
+   */
   async function run(mission) {
     const needs = mission.needs.map((id) => label(state.needs, id)).filter(Boolean);
     const offline = mission.needs.includes("pc") && !document.querySelector("#side-state.online");
-    const lines = [
-      mission.mine ? "" : "Bu istek başka biri tarafından yazıldı. Yazı kutusuna gelecek; göndermeden önce oku ve istersen değiştir. Bu iş boyunca her değişiklik için senden onay istenir.",
-      needs.length ? `Gerekenler: ${needs.join("; ")}.` : "",
-      mission.inputs.length ? `Senden istenecekler: ${mission.inputs.join("; ")}.` : "",
-      offline ? "Bu bilgisayar şu an Wiqo'ya bağlı değil; bağlanmadan bilgisayar adımları çalışmaz." : ""
-    ].filter(Boolean);
-    const yes = await window.WiqoDialog.confirm({ title: `“${mission.name}” yazı kutusuna gelsin mi?`, message: lines.join("\n\n"), confirm: "Yazı kutusuna koy" });
-    if (!yes) return;
-    try {
-      const answer = await call("POST", `missions/${mission.code}/copy`);
-      window.WiqoChat.compose(answer.recipe.prompt, mission.mine ? null : mission.code);
-    } catch (error) {
-      showError(error.message);
+    const root = R.el("div", "modal");
+    const card = R.el("form", "modal-card try-card");
+    card.append(R.el("h2", "", mission.name));
+    if (!mission.mine) card.append(R.el("p", "muted small", "Başka biri yazdı; bu bilgisayarda, kendi verilerinle çalışır. Bilgisayarındaki her değişiklik için senden onay istenir."));
+    if (needs.length) card.append(R.el("p", "muted small", `Gerekenler: ${needs.join("; ")}`));
+    card.append(R.el("p", "muted small", "Hesabına yalnızca istek ve adımlar kopyalanır; paylaşan kişinin dosyaları, hesapları ve bilgisayarı kopyalanmaz."));
+    if (offline) card.append(R.el("p", "muted small", "Bu bilgisayar şu an Wiqo'ya bağlı değil; bağlanmadan bilgisayar adımları çalışmaz."));
+    if (mission.preview) {
+      const result = R.el("div", "try-result");
+      result.append(R.el("div", "small muted", mission.mine || !mission.author ? "Örnek sonuç" : `@${mission.author.username} için üretilen sonuç`), R.el("p", "", mission.preview));
+      card.append(result);
     }
+    const fields = mission.inputs.map((text) => {
+      const field = R.el("textarea");
+      field.rows = 2;
+      field.placeholder = text;
+      return [text, field];
+    });
+    if (fields.length) card.append(R.el("div", "small muted", "Senin bilgilerin"), ...fields.map(([, field]) => field));
+    const error = R.el("p", "form-error");
+    error.hidden = true;
+    const start = async (sendNow) => {
+      try {
+        const answer = await call("POST", `missions/${mission.code}/copy`);
+        const filled = fields.map(([text, field]) => [text, field.value.trim()]).filter(([, value]) => value);
+        const prompt = filled.length ? `${answer.recipe.prompt}\n\nBenim bilgilerim:\n${filled.map(([text, value]) => `- ${text}: ${value}`).join("\n")}` : answer.recipe.prompt;
+        root.remove();
+        window.WiqoChat.compose(prompt, mission.mine ? null : mission.code, sendNow);
+      } catch (failure) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      }
+    };
+    const actions = R.el("div", "modal-actions");
+    const later = R.button("Önce yazı kutusunda gör", "secondary", () => start(false));
+    later.type = "button";
+    const now = R.el("button", "primary", mission.needs.includes("pc") || mission.needs.includes("files") ? "Bu bilgisayarda çalıştır" : "Çalıştır");
+    now.type = "submit";
+    const cancel = R.button("Vazgeç", "secondary", () => root.remove());
+    cancel.type = "button";
+    actions.append(cancel, R.el("span", "spacer"), later, now);
+    card.append(error, actions);
+    card.onsubmit = (event) => { event.preventDefault(); start(true); };
+    root.append(card);
+    document.body.append(root);
+    (fields[0]?.[1] || now).focus();
   }
 
   async function remove(mission) {
@@ -516,11 +562,11 @@
     const profile = answer.profile;
     const again = (next = tab) => renderProfile(host, username, next);
     const cover = R.el("div", "profile-cover");
-    cover.style.background = coverBackground(profile.cover);
+    paintCover(cover, profile.cover, profile.coverUrl);
     const top = R.el("div", "profile-top");
     const actions = R.el("div", "mission-actions");
     if (profile.mine) {
-      actions.append(R.button("Profili düzenle", "secondary small", () => editProfile(profile, () => again())), R.button("Yeni Mission", "primary small", () => publish({ mode: "blank" })));
+      actions.append(R.button("Profili düzenle", "secondary small", editInSettings), R.button("Paylaş", "primary small", shareFromWork));
     } else if (profile.blocked) {
       actions.append(R.button("Engeli kaldır", "secondary small", async () => {
         try { await call("DELETE", `missions/users/${profile.username}/block`); again(); } catch (error) { showError(error.message); }
@@ -568,7 +614,21 @@
     list.append(...answer.missions.map(card));
     const empty = { remixes: own ? "Henüz bir Mission'ı remix'lemedin. Birinin Mission'ında Remix'e bas." : "Henüz remix yok.", liked: "Henüz beğenilen Mission yok.",
       saved: "Kaydettiğin Mission'lar burada durur; yalnızca sen görürsün.", missions: own ? "Henüz paylaştığın bir Mission yok. Yeni Mission'a bas." : "Henüz paylaşılan Mission yok." }[tab];
-    host.replaceChildren(cover, top, info, stats, tabs, list, ...(answer.missions.length ? [] : [R.el("p", "muted small", empty)]));
+    // The people this person makes things with (public remixes only): who built on their work, and whose work they built on.
+    const makers = R.el("div", "profile-circle");
+    call("GET", `missions/users/${encodeURIComponent(username)}/circle`).then((found) => {
+      const people = [...found.builtOnThem.map((person) => [person, `${person.count} remix'ledi`]), ...found.builtOn.map((person) => [person, `${person.count} işinden üretti`])];
+      if (!people.length) return;
+      const row = R.el("div", "profile-circle-row");
+      for (const [person, caption] of people) {
+        const cell = R.button("", "profile-circle-person", () => openProfile(person.username));
+        cell.type = "button";
+        cell.append(avatar(person, "big"), R.el("div", "small ellipsis", person.displayName || `@${person.username}`), R.el("div", "muted small", caption));
+        row.append(cell);
+      }
+      makers.append(R.el("div", "small muted", "Birlikte üretenler"), row);
+    }).catch(() => {});
+    host.replaceChildren(cover, top, info, stats, makers, tabs, list, ...(answer.missions.length ? [] : [R.el("p", "muted small", empty)]));
     if (answer.next) {
       const more = R.button("Daha fazla", "secondary small", async () => {
         try {
@@ -587,8 +647,13 @@
     await renderProfile(openSide(), username);
   }
 
-  /** The public profile in one small window: the cover is a row of colours, the rest are short fields with what is left to write beside them. */
-  function editProfile(profile, done) {
+  /**
+   * The one profile, in one window opened from Settings (Keşfet's "Profili düzenle" leads here too): the name, then what others see on Keşfet —
+   * handle, headline, bio, location, link and cover. Saved through `/profile`, the same row the phone's Settings edits. The photo is chosen on the phone.
+   */
+  async function editProfile(done = () => {}) {
+    let profile;
+    try { profile = await call("GET", "profile"); } catch (failure) { toast(failure.message); return; }
     const root = R.el("div", "modal");
     const card = R.el("form", "modal-card profile-editor");
     const preview = R.el("div", "profile-preview");
@@ -596,8 +661,11 @@
     const previewLine = R.el("div", "small");
     const previewText = R.el("div");
     previewText.append(previewName, previewLine);
-    preview.append(avatar(profile, "big"), previewText);
-    const values = { cover: profile.cover || "ink" };
+    const face = () => avatar({ avatar: { kind: profile.avatarKind, emoji: profile.avatarKind === "emoji" ? profile.avatarEmoji : null, color: values.color,
+      url: profile.avatarKind === "photo" && profile.avatarImage ? `data:image/jpeg;base64,${profile.avatarImage}` : profile.avatarKind === "initial" ? profile.avatarUrl : null }, displayName: profile.displayName }, "big");
+    // `cover`: undefined (unchanged), null (back to the colour) or a cropped picture as base64.
+    const values = { color: profile.avatarColor || "indigo", cover: undefined };
+    const coverShown = () => (values.cover === undefined ? profile.coverUrl : values.cover ? `data:image/jpeg;base64,${values.cover}` : null);
     const fields = {};
     const field = (name, text, limit, placeholder, multiline = false) => {
       const wrap = R.el("label", "profile-field");
@@ -616,18 +684,33 @@
       return wrap;
     };
     const paint = () => {
-      preview.style.background = coverBackground(values.cover);
-      previewName.textContent = profile.displayName || `@${fields.username.value || ""}`;
+      paintCover(preview, values.color, coverShown());
+      preview.replaceChildren(face(), previewText);
+      previewName.textContent = fields.displayName.value || `@${fields.username.value || ""}`;
       previewLine.textContent = fields.headline.value;
+      remove.hidden = !coverShown();
     };
     const swatches = R.el("div", "swatches");
-    const drawSwatches = () => swatches.replaceChildren(...state.covers.map((name) => {
-      const swatch = R.button("", `swatch ${values.cover === name ? "on" : ""}`.trim(), () => { values.cover = name; drawSwatches(); paint(); });
+    const drawSwatches = () => swatches.replaceChildren(...Object.keys(PROFILE_COLORS).map((name) => {
+      const swatch = R.button("", `swatch ${values.color === name ? "on" : ""}`.trim(), () => { values.color = name; drawSwatches(); paint(); });
       swatch.title = name;
-      swatch.style.background = coverBackground(name);
+      swatch.style.background = colorOf(name);
       swatch.type = "button";
       return swatch;
     }));
+    const file = R.el("input");
+    file.type = "file";
+    file.accept = "image/*";
+    file.hidden = true;
+    file.onchange = () => { const chosen = file.files?.[0]; file.value = ""; if (chosen) cropCover(URL.createObjectURL(chosen), (base64) => { values.cover = base64; paint(); }); };
+    const remove = R.button("Renk", "secondary small", () => { values.cover = null; paint(); });
+    remove.type = "button";
+    const coverActions = R.el("div", "mission-actions");
+    const fromLibrary = R.button("Kütüphane", "secondary small", () => coverLibrary((url) => cropCover(url, (base64) => { values.cover = base64; paint(); })));
+    const fromDisk = R.button("Bilgisayardan", "secondary small", () => file.click());
+    fromLibrary.type = "button";
+    fromDisk.type = "button";
+    coverActions.append(fromLibrary, fromDisk, remove, file);
     const error = R.el("p", "form-error");
     error.hidden = true;
     const actions = R.el("div", "modal-actions");
@@ -635,21 +718,24 @@
     const save = R.el("button", "primary", "Kaydet");
     save.type = "submit";
     actions.append(R.el("span", "spacer"), R.button("Vazgeç", "secondary", close), save);
-    card.append(R.el("h2", "", "Profili düzenle"), preview, R.el("div", "small muted", "Kapak rengi"), swatches,
-      field("username", "Kullanıcı adı", 20, "kullanici_adi"), field("headline", "Başlık", 80, "Ne yaptığını bir cümlede söyle"),
-      field("bio", "Hakkında", 280, "Kendini ve neyle ilgilendiğini anlat", true), field("place", "Konum", 40, "Şehir, ülke"), field("website", "Web sitesi", 80, "ornek.com/ben"),
-      R.el("p", "muted small", "Ad ve fotoğraf, Ayarlar'daki profilinden gelir. Burada yazdığın her şey herkese açıktır; kişisel bilgi ve iletişim bilgisi yazma."), error, actions);
-    fields.username.addEventListener("input", () => { fields.username.value = fields.username.value.toLowerCase(); });
+    card.append(R.el("h2", "", "Profili düzenle"), preview, coverActions, R.el("div", "small muted", "Renk · profil ve kapak"), swatches,
+      field("displayName", "Ad", 40, "Adın"), field("username", "Kullanıcı adı", 20, "kullanici_adi"), field("headline", "Başlık", 80, "Ne yaptığını bir cümlede söyle"),
+      field("bio", "Hakkında", 280, "Kendini ve neyle ilgilendiğini anlat", true), field("location", "Konum", 40, "Şehir, ülke"), field("website", "Web sitesi", 80, "ornek.com/ben"),
+      field("preferredAddress", "Hitap", 40, "Örn. Emre, Hocam"), error, actions);
+    fields.username.addEventListener("input", () => { fields.username.value = fields.username.value.toLowerCase().replace(/^@/, ""); });
     card.onsubmit = async (event) => {
       event.preventDefault();
       save.disabled = true;
       error.hidden = true;
+      const handle = fields.username.value.trim();
       try {
-        await call("PUT", "missions/me", { username: fields.username.value.trim(), headline: fields.headline.value.trim(), bio: fields.bio.value.trim(),
-          place: fields.place.value.trim(), website: fields.website.value.trim(), cover: values.cover });
+        await call("PUT", "profile", { displayName: fields.displayName.value.trim() || null, preferredAddress: fields.preferredAddress.value.trim() || null, headline: fields.headline.value.trim(),
+          bio: fields.bio.value.trim(), location: fields.location.value.trim() || null, website: fields.website.value.trim(), avatarColor: values.color,
+          ...(values.cover !== undefined ? { coverImage: values.cover } : {}), ...(handle ? { username: handle } : {}) });
         close();
         toast("Profil kaydedildi.");
         done();
+        if (state.tab === "mine") openMine();
       } catch (failure) {
         error.textContent = failure.message;
         error.hidden = false;
@@ -659,7 +745,118 @@
     document.body.append(root);
     drawSwatches();
     paint();
-    fields.headline.focus();
+    fields.displayName.focus();
+  }
+
+  /** The free cover library (backend profile/cover-library, Lorem Picsum · Unsplash): wide pictures, more on scroll; a click hands the large one on. */
+  function coverLibrary(choose) {
+    const root = R.el("div", "modal");
+    const card = R.el("div", "modal-card cover-library");
+    const grid = R.el("div", "cover-grid");
+    const status = R.el("p", "muted small", "Yükleniyor…");
+    const close = R.button("Kapat", "secondary", () => root.remove());
+    const actions = R.el("div", "modal-actions");
+    actions.append(R.el("span", "muted small", "Fotoğraflar: Lorem Picsum · Unsplash"), R.el("span", "spacer"), close);
+    card.append(R.el("h2", "", "Kapak kütüphanesi"), grid, status, actions);
+    root.append(card);
+    document.body.append(root);
+    let page = 0;
+    let loading = false;
+    const more = async () => {
+      if (loading || page >= 30) return;
+      loading = true;
+      try {
+        const answer = await call("GET", `profile/cover-library?page=${page + 1}`);
+        page = answer.page;
+        for (const pick of answer.picks) {
+          const tile = R.button("", "cover-tile", () => { root.remove(); choose(pick.image); });
+          tile.type = "button";
+          tile.title = pick.author;
+          tile.style.backgroundImage = `url("${pick.thumb}")`;
+          grid.append(tile);
+        }
+        status.textContent = "";
+      } catch (failure) {
+        status.textContent = failure.message;
+      } finally { loading = false; }
+    };
+    grid.addEventListener("scroll", () => { if (grid.scrollTop + grid.clientHeight > grid.scrollHeight - 300) more(); });
+    more();
+  }
+
+  /** Cropping like X: the picture under a fixed 3:1 frame, dragged to place and zoomed with the wheel or the slider. Output 1500×500 JPEG (base64). */
+  function cropCover(source, done) {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onerror = () => toast("Görsel açılamadı.");
+    image.onload = () => {
+      const root = R.el("div", "modal");
+      const card = R.el("div", "modal-card cover-cropper");
+      const canvas = R.el("canvas", "cover-crop");
+      canvas.width = 900;
+      canvas.height = 300;
+      const zoomInput = R.el("input");
+      zoomInput.type = "range";
+      zoomInput.min = "1";
+      zoomInput.max = "5";
+      zoomInput.step = "0.01";
+      zoomInput.value = "1";
+      const view = { zoom: 1, x: 0, y: 0 };
+      const base = Math.max(canvas.width / image.width, canvas.height / image.height);
+      const size = () => ({ w: image.width * base * view.zoom, h: image.height * base * view.zoom });
+      const clamp = () => {
+        const { w, h } = size();
+        const mx = Math.max((w - canvas.width) / 2, 0);
+        const my = Math.max((h - canvas.height) / 2, 0);
+        view.x = Math.min(Math.max(view.x, -mx), mx);
+        view.y = Math.min(Math.max(view.y, -my), my);
+      };
+      const draw = (target, scale) => {
+        const ctx = target.getContext("2d");
+        const { w, h } = size();
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, target.width, target.height);
+        ctx.drawImage(image, (canvas.width / 2 + view.x - w / 2) * scale, (canvas.height / 2 + view.y - h / 2) * scale, w * scale, h * scale);
+      };
+      const redraw = () => { clamp(); draw(canvas, 1); };
+      let dragging = null;
+      canvas.addEventListener("pointerdown", (event) => { dragging = { x: event.clientX, y: event.clientY, from: { x: view.x, y: view.y } }; canvas.setPointerCapture(event.pointerId); });
+      canvas.addEventListener("pointermove", (event) => {
+        if (!dragging) return;
+        const ratio = canvas.width / canvas.getBoundingClientRect().width;
+        view.x = dragging.from.x + (event.clientX - dragging.x) * ratio;
+        view.y = dragging.from.y + (event.clientY - dragging.y) * ratio;
+        redraw();
+      });
+      canvas.addEventListener("pointerup", () => { dragging = null; });
+      canvas.addEventListener("wheel", (event) => { event.preventDefault(); view.zoom = Math.min(Math.max(view.zoom * (event.deltaY < 0 ? 1.06 : 0.94), 1), 5); zoomInput.value = String(view.zoom); redraw(); }, { passive: false });
+      zoomInput.addEventListener("input", () => { view.zoom = Number(zoomInput.value); redraw(); });
+      const apply = R.button("Uygula", "primary", () => {
+        const output = R.el("canvas");
+        output.width = 1500;
+        output.height = 500;
+        draw(output, output.width / canvas.width);
+        try {
+          done(output.toDataURL("image/jpeg", 0.85).split(",")[1]);
+          root.remove();
+        } catch {
+          toast("Bu görsel kırpılamadı; başka birini dene.");
+        }
+      });
+      const actions = R.el("div", "modal-actions");
+      actions.append(zoomInput, R.el("span", "spacer"), R.button("Vazgeç", "secondary", () => root.remove()), apply);
+      card.append(R.el("h2", "", "Kapağı kırp"), canvas, actions);
+      root.append(card);
+      document.body.append(root);
+      redraw();
+    };
+    image.src = source;
+  }
+
+  /** Keşfet has no editor of its own: the profile is edited in Settings. */
+  function editInSettings() {
+    window.showSection("settings");
+    editProfile(() => window.WiqoReloadProfile?.());
   }
 
   async function openMine() {
@@ -681,7 +878,7 @@
     if (answer.profile.username) { await renderProfile(host, answer.profile.username); return; }
     const card = R.el("div", "card profile-form");
     card.append(R.el("h3", "", "Keşfet profilin"), R.el("p", "muted small", "Keşfet'te Mission paylaşmak ve yorum yazmak için bir kullanıcı adı gerekir."),
-      R.button("Profili oluştur", "primary small", () => editProfile(answer.profile, openMine)));
+      R.button("Profili düzenle", "primary small", editInSettings));
     host.replaceChildren(card);
   }
 
@@ -703,7 +900,24 @@
       }
       const card = R.el("div", "card");
       card.append(rows);
-      host.replaceChildren(answer.notices.length ? card : R.el("p", "muted small", "Henüz bildirim yok."));
+      // Gelen kutusu: what waits for the person's yes on this computer first (answered right here), then what people did on Keşfet.
+      const waiting = await invoke("pending_approvals").catch(() => []);
+      const parts = [];
+      if (waiting.length) {
+        const list = R.el("ul", "list");
+        for (const question of waiting) {
+          const row = R.el("li", "unread");
+          const yes = R.button("Onayla", "primary small", async () => { await invoke("answer_approval", { id: question.id, allow: true }); row.remove(); });
+          const no = R.button("Reddet", "secondary small", async () => { await invoke("answer_approval", { id: question.id, allow: false }); row.remove(); });
+          row.append(R.el("span", "recipe-main notice", question.detail || question.kind), yes, no);
+          list.append(row);
+        }
+        const box = R.el("div", "card");
+        box.append(list);
+        parts.push(R.el("h3", "settings-head", "Seni bekleyenler"), box);
+      }
+      if (answer.notices.length) parts.push(R.el("h3", "settings-head", "Keşfet"), card);
+      host.replaceChildren(...(parts.length ? parts : [R.el("p", "muted small", "Gelen kutun boş.")]));
       if (answer.unread) await call("POST", "missions/notifications/read");
       refreshUnread();
     } catch (error) {
@@ -727,6 +941,52 @@
    * One dialog for every way a Mission is written: from a finished task (the server drafts it), from a recipe, an edit, or a remix.
    * Nothing leaves the account until the person presses Kaydet, and the default is "Sadece ben".
    */
+  /**
+   * "Wiqo'da paylaş": a post is made from work Wiqo finished, never from a blank page. The last finished task of the recent chats and the saved
+   * recipes are listed; choosing one opens the dialog filled from that work.
+   */
+  async function shareFromWork() {
+    const root = R.el("div", "modal");
+    const card = R.el("div", "modal-card share-work");
+    const list = R.el("div", "share-work-list");
+    const status = R.el("p", "muted small", "Yükleniyor…");
+    const actions = R.el("div", "modal-actions");
+    actions.append(R.el("span", "spacer"), R.button("Kapat", "secondary", () => root.remove()));
+    card.append(R.el("h2", "", "Wiqo'da paylaş"), status, list, actions);
+    root.append(card);
+    document.body.append(root);
+    const snippet = (text) => (String(text || "").split("\n").map((line) => line.replace(/^[#*>\-`| ]+/, "").trim()).find((line) => line.length > 3) || "").slice(0, 120);
+    const row = (title, line, onPick) => {
+      const button = R.button("", "share-work-row", () => { root.remove(); onPick(); });
+      button.type = "button";
+      button.append(R.el("div", "w-title", title), R.el("div", "muted small", line));
+      return button;
+    };
+    const [tasks, recipes] = await Promise.all([finishedTasks().catch(() => []), invoke("skills_list").then((value) => value.skills || value.recipes || []).catch(() => [])]);
+    if (tasks.length) list.append(R.el("h3", "", "Tamamlanan görevler"), ...tasks.map((task) => row(task.title, snippet(task.result), () => publish({ mode: "task", request: task.request, result: task.result }))));
+    if (recipes.length) list.append(R.el("h3", "", "Tariflerin"), ...recipes.slice(0, 10).map((recipe) => row(recipe.name, snippet(recipe.prompt), () => publish({ mode: "recipe", recipe }))));
+    status.textContent = tasks.length || recipes.length ? "" : "Paylaşılacak bir iş yok. Wiqo'ya bir iş yaptır; bitince buradan paylaşırsın.";
+  }
+
+  /** The last finished ask of each recent chat: a request and an answer of some substance. */
+  async function finishedTasks() {
+    const conversations = ((await invoke("chat_conversations")).conversations || []).slice(0, 10);
+    const found = await Promise.all(conversations.map(async (conversation) => {
+      try {
+        const messages = ((await invoke("chat_messages", { conversation: conversation.id })).messages || []).filter((item) => item.role === "user" || item.role === "assistant");
+        let answer = -1;
+        for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index].role === "assistant" && String(messages[index].content || "").trim().length >= 80) { answer = index; break; }
+        if (answer < 0) return null;
+        let ask = -1;
+        for (let index = answer - 1; index >= 0; index -= 1) if (messages[index].role === "user") { ask = index; break; }
+        const request = ask >= 0 ? String(messages[ask].content || "").trim() : "";
+        if (request.length < 8) return null;
+        return { title: conversation.title || request.slice(0, 60), request, result: messages[answer].content };
+      } catch { return null; }
+    }));
+    return found.filter(Boolean);
+  }
+
   async function publish(source) {
     const dialog = $("mission-dialog");
     const field = (name) => dialog.querySelector(`[name="${name}"]`);
@@ -734,7 +994,7 @@
     findingsBox.replaceChildren();
     findingsBox.hidden = true;
     $("mission-error").hidden = true;
-    $("mission-dialog-title").textContent = { blank: "Yeni Mission", task: "Mission olarak paylaş", recipe: "Tarifi paylaş", edit: "Mission'ı düzenle", remix: "Remix yap" }[source.mode];
+    $("mission-dialog-title").textContent = { task: "Wiqo'da paylaş", recipe: "Tarifi paylaş", edit: "Mission'ı düzenle", remix: "Remix yap" }[source.mode];
     if (!state.categories.length || !state.needs.length) {
       try {
         const me = await call("GET", "missions/me");
@@ -784,20 +1044,24 @@
       for (const radio of dialog.querySelectorAll('[name="visibility"]')) radio.checked = radio.value === (mission.visibility || "private");
       showHint();
     };
-    fill({});
+    // A new post is shared to Keşfet by default; a draft from a chat (task) is filled as private below.
+    fill({ visibility: "public" });
     renderImages(source.mode === "edit" ? source.mission : null);
     if (source.mode === "edit") fill(source.mission);
     if (source.mode === "recipe") fill({ ...source.recipe, visibility: source.recipe.visibility === "private" ? "link" : source.recipe.visibility });
-    if (source.mode === "remix") fill({ ...source.mission, name: `${source.mission.name} (remix)`, preview: "", visibility: "private" });
+    if (source.mode === "remix") fill({ ...source.mission, name: `${source.mission.name} (remix)`, preview: "", visibility: "public" });
     dialog.hidden = false;
 
+    // The server's proof of the finished work (backend social/workProof.ts), sent with the save so the post may go out.
+    let workToken = null;
     if (source.mode === "task") {
       const save = $("mission-save");
       save.disabled = true;
       save.textContent = "Taslak yazılıyor…";
       try {
         const answer = await call("POST", "missions/draft", { request: source.request, result: source.result });
-        fill({ ...answer.draft, visibility: "private" });
+        fill({ ...answer.draft, description: answer.draft.description || `Wiqo ile hazırladığım ${answer.draft.name}. Sen de kendi versiyonunu oluşturabilirsin.`, visibility: "public" });
+        workToken = answer.workToken || null;
         showFindings(answer.findings);
       } catch (error) {
         fill({ prompt: source.request, visibility: "private" });
@@ -818,7 +1082,7 @@
       const body = {
         name: field("name").value, description: field("description").value, prompt: field("prompt").value, steps: lines("steps"), inputs: lines("inputs"),
         tags: field("tags").value.split(",").map((tag) => tag.trim()).filter(Boolean), preview: field("preview").value, category: field("category").value,
-        needs: [...$("mission-needs").querySelectorAll("input:checked")].map((box) => box.value), visibility
+        needs: [...$("mission-needs").querySelectorAll("input:checked")].map((box) => box.value), visibility, ...(workToken ? { workToken } : {})
       };
       const save = $("mission-save");
       save.disabled = true;
@@ -917,7 +1181,7 @@
 
   const TAB_OPENERS = { feed: () => load(), search, notices: openNotices, mine: openMine };
   for (const button of document.querySelectorAll(".rail-item")) button.onclick = () => TAB_OPENERS[button.dataset.tab]();
-  $("discover-new").onclick = () => publish({ mode: "blank" });
+  $("discover-new").onclick = shareFromWork;
   $("discover-side-close").onclick = () => { $("discover-side").hidden = true; };
   $("discover-more").onclick = () => load(true);
   $("discover-search-input").addEventListener("input", (event) => {
@@ -930,6 +1194,7 @@
   window.__TAURI__.event.listen("recipe-link", (event) => openMission(String(event.payload || "").toUpperCase()));
 
   window.WiqoDiscover = {
+    editProfile,
     open: openMission,
     publishTask: (request, result) => publish({ mode: "task", request, result }),
     publishRecipe: (recipe) => publish({ mode: "recipe", recipe }),

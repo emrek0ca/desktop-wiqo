@@ -17,7 +17,7 @@ pub use errors::{Effect, ErrorClass, ErrorCodes, Recovery};
 pub use manifest::{Manifest, Operation, Platform, TimeoutClass};
 pub use names::AppAliases;
 pub use policy::{is_valid_file_name, is_valid_local_path, FilePolicy};
-pub use signature::{command_signature, verify_signature};
+pub use signature::{command_signature, remote_input_signature, remote_session_key, verify_signature};
 
 /// The contract files, embedded at build time so a desktop build can never run against a different contract than it was tested with.
 pub(crate) const OPERATIONS_JSON: &str = include_str!(concat!(

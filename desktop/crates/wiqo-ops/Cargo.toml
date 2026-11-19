@@ -29,6 +29,7 @@ quick-xml.workspace = true
 calamine.workspace = true
 plist.workspace = true
 image.workspace = true
+anyhow.workspace = true
 reqwest.workspace = true
 arboard.workspace = true
 url.workspace = true
@@ -54,6 +55,8 @@ libloading.workspace = true
 objc2-app-kit = { version = "0.3" }
 objc2-foundation = { version = "0.3" }
 objc2-vision = { version = "0.3.2", features = ["VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes", "objc2-core-foundation"] }
+# The live remote screen (remote.rs): the display drawn small by the system, and input posted straight to the event queue.
+core-graphics = { version = "0.25", features = ["highsierra"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap.workspace = true

@@ -33,6 +33,9 @@ const NOTES: &str = "UZUN İŞ\n- Üç adımdan uzun işte önce plan aracıyla 
 /// Said only when this computer's tools beyond the terminal are on offer.
 const PC_NOTES: &str = "EKRAN VE SİSTEM ARAÇLARI\n- Dosya, komut, kurulum, kod işlerini terminal araçlarınla yap; onlar daha hızlı ve kesin.\n- computer_interface: yalnız ekranda görmek, tıklamak, yazmak gereken işler (bir uygulamanın penceresi, düğmesi, formu). Önce observe, sonra gözlemdeki ref'lerle çalış.\n- computer_files: terminalin yapamadığı dosya işleri (telefona gönder: send_to_phone, PDF'e çevir, Word/Excel/PDF içeriğini oku, çöpten geri al).\n- computer_system: ses, parlaklık, medya, pano, uygulama açma/kapama, ekran görüntüsü. Ekran görüntüsü bu çalışmada telefona kendiliğinden gitmez: saveTo ile dosyaya kaydet, sonra computer_files send_to_phone ile gönder.\n- Bu araçlardan biri reddederse nedenini oku; aynı işi terminalle yapabiliyorsan öyle yap.";
 
+/// What the model is told about the stand-ins the vault puts in place of private values (vault.rs).
+const PRIVATE_NOTE: &str = "Gizlilik: ⟦EPOSTA_1⟧, ⟦TELEFON_2⟧, ⟦IBAN_1⟧, ⟦SIFRE_1⟧ gibi değerler kullanıcının bu bilgisayarda kalan özel verileridir; gerçek değerleri sana gösterilmez. Onları tahmin etmeye ya da açmaya çalışma: gerektiğinde araç argümanlarına ve cevabına aynen (köşeli işaretleriyle) yaz; bu bilgisayar gerçek değeri kendisi koyar.";
+
 fn tools() -> Value {
     json!([
         { "type": "function", "function": { "name": "shell", "description": "Bu bilgisayarda bir kabuk komutu çalıştırır (macOS zsh, Windows PowerShell). workdir vermezsen ev klasöründe ya da son klasörde çalışır. Kurulum, derleme, indirme gibi uzun komutlar kendiliğinden arka plan işi olur ve job_id döner.",
@@ -361,6 +364,8 @@ struct Work {
     /// Turns of the chat this computer's record already took in (role and first words), so a turn summarised away is not added a second time.
     held: Vec<(String, String)>,
     reach: Reach,
+    /// Private values read on this computer, swapped for stand-ins before the model sees them (vault.rs).
+    vault: super::vault::Vault,
 }
 
 /// What this run may do without asking again, and what it already knows of the projects it works in.
@@ -613,7 +618,7 @@ impl Chat {
         let log: Vec<&String> = work.log.iter().rev().take(200).rev().collect();
         let held: Vec<Value> = work.held.iter().map(|(role, begin)| json!([role, begin])).collect();
         // `open`: the run is still going. A session found open when the app starts was cut off (the app closed, the computer restarted).
-        let session = json!({ "v": 1, "savedAt": chrono::Utc::now().timestamp(), "conversation": conversation, "open": open, "goal": work.goal, "messages": work.messages.get(1..).unwrap_or(&[]), "plan": work.plan, "log": log, "held": held });
+        let session = json!({ "v": 1, "savedAt": chrono::Utc::now().timestamp(), "conversation": conversation, "open": open, "goal": work.goal, "messages": work.messages.get(1..).unwrap_or(&[]), "plan": work.plan, "log": log, "held": held, "vault": work.vault.saved() });
         let side = file.with_extension("json.tmp");
         if std::fs::write(&side, session.to_string()).is_ok() {
             let _ = std::fs::rename(&side, &file);
@@ -785,8 +790,9 @@ impl Chat {
             messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), budget: CONTEXT_BYTES,
             tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(),
             reach: Reach { untrusted: handoff["untrusted"] == true, ..Reach::default() },
+            vault: super::vault::Vault::default(),
         };
-        work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}", text_of(&handoff["instructions"]), environment()) }));
+        work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}\n\n{PRIVATE_NOTE}", text_of(&handoff["instructions"]), environment()) }));
         // This conversation's earlier work on this computer, if any: the model goes on with what it wrote and ran, not only with what was said.
         match self.load_session(conversation) {
             Some(session) => {
@@ -797,6 +803,7 @@ impl Chat {
                 }
                 work.log = session["log"].as_array().map(|lines| lines.iter().map(text_of).collect()).unwrap_or_default();
                 work.held = session["held"].as_array().map(|turns| turns.iter().map(|turn| (text_of(&turn[0]), text_of(&turn[1]))).collect()).unwrap_or_default();
+                work.vault = super::vault::Vault::from_saved(&session["vault"]);
                 shorten_old(&mut work.messages, 4);
             }
             None => {}
@@ -819,9 +826,11 @@ impl Chat {
         };
         let (reply, ()) = tokio::join!(working, self.report(token, &run_id, received));
 
+        // The model's words keep the stand-ins in this run's record; the person reads the real values (this computer puts them back).
         work.messages.push(json!({ "role": "assistant", "content": reply }));
         self.save_session(conversation, &work, false);
-        emit(json!({ "type": "done", "reply": reply, "localRun": run_id }));
+        let reply = work.vault.open(&reply);
+        emit(json!({ "type": "done", "reply": reply, "localRun": run_id, "privateKept": work.vault.len() }));
         // Delivered in the background: the turn ends for the person now, and a server that is out of reach gets the answer when it is back.
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
         tokio::spawn(deliver(self.http.clone(), self.server.clone(), bearer, run_id, reply, std::mem::take(&mut work.sent)));
@@ -943,7 +952,8 @@ impl Chat {
                 let id = text_of(&call["id"]);
                 let name = text_of(&call["function"]["name"]);
                 let raw = call["function"]["arguments"].as_str().unwrap_or("{}").to_string();
-                let args = serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { &raw }).ok().filter(Value::is_object);
+                // The model wrote stand-ins (⟦EPOSTA_1⟧); the tool gets the real values, here and only here.
+                let args = serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { &raw }).ok().filter(Value::is_object).map(|args| work.vault.open_value(&args));
                 if name == "plan" {
                     let output = match args.as_ref().and_then(|args| args["steps"].as_array()).filter(|steps| !steps.is_empty()) {
                         Some(steps) => {
@@ -1017,7 +1027,9 @@ impl Chat {
                 }
                 say(json!({ "type": "step_update", "step": step }));
                 work.log.push(format!("{} {words}{}", if outcome.ok { "✓" } else { "✗" }, if outcome.ok { String::new() } else { format!(" ({})", outcome.brief) }));
-                work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": outcome.output }));
+                // What the tool read goes to the model with its private values swapped for stand-ins (vault.rs).
+                let sealed = work.vault.seal(&outcome.output);
+                work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": sealed }));
             }
             if failures >= FAILURES_MOST {
                 self.cancel_jobs(engine, &jobs).await;

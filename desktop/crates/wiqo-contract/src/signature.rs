@@ -6,6 +6,17 @@ use crate::canonical::{canonical_json, CanonicalError};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// The live remote screen's key (frames.json remoteScreen): HMAC of the session and its nonce with the phone's pairing token, so the phone and this
+/// desktop hold it and the server that joins them does not. Every input of the session is signed with it (`remote_input_signature`).
+pub fn remote_session_key(token: &str, session: &str, nonce: &str) -> String {
+    hmac_hex(token, &format!("wiqo-remote:v1:{session}:{nonce}"))
+}
+
+/// The signature of one input message of a live remote screen: HMAC of the message text with the session key.
+pub fn remote_input_signature(session_key: &str, message: &str) -> String {
+    hmac_hex(session_key, message)
+}
+
 fn hmac_hex(key: &str, message: &str) -> String {
     let mut mac =
         HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC accepts keys of any length");

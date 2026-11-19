@@ -59,10 +59,41 @@ pub trait Observer: Send + Sync {
     /// A background task's steps that have to run on this computer, handed over with the same answer (`{unitId, requestId, conversationId, prompt}`,
     /// rova-backend agent/pcUnits.ts): each runs as a chat turn this desktop holds, and `agentStepDone` says it ended. The server reads what it achieved.
     fn agent_steps(&self, _units: Vec<Value>) {}
+    /// A paired phone asked for the live remote screen (frames.json remoteScreen, signature checked): join its session and stream.
+    fn remote_screen(&self, _session: RemoteSession) {}
     /// A command started (`key` is its relay id; `detail` a short line about what it touches) and, later, ended.
     /// `task` groups the commands of one task: the run id the server sends, or a terminal session's grant id.
     fn started(&self, _key: &str, _kind: &str, _detail: &str, _task: Option<&str>) {}
     fn finished(&self, _key: &str) {}
+}
+
+/// A live remote screen to serve: where to connect, as whom, and the key the phone signs every input with.
+#[derive(Clone, Debug)]
+pub struct RemoteSession {
+    pub socket_url: String,
+    pub access_token: String,
+    pub session_key: String,
+    /// The widest picture the phone asked for (its screen), in pixels.
+    pub max_width: u32,
+}
+
+/// The phone's remoteScreen frame, when its signature holds: the session to join, with its key derived from the signing phone's pairing token.
+fn remote_session(runtime: &Runtime, request: &Request, raw_payload: &Value) -> Option<RemoteSession> {
+    let phones = runtime.phones.list();
+    let signer = signer_of(request, raw_payload, phones.iter().map(|phone| (phone.pairing_id.as_str(), phone.token.as_str())), &runtime.nonces, Utc::now()).ok()?;
+    let token = phones.iter().find(|phone| phone.pairing_id == signer)?.token.clone();
+    let value = &raw_payload["value"];
+    let session = value["sessionId"].as_str().filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))?;
+    let nonce = value["nonce"].as_str().filter(|nonce| (16..=128).contains(&nonce.len()))?;
+    let credentials = runtime.credentials.get()?;
+    let base = credentials.api_base.trim_end_matches('/');
+    let socket = if let Some(rest) = base.strip_prefix("https://") { format!("wss://{rest}") } else if let Some(rest) = base.strip_prefix("http://") { format!("ws://{rest}") } else { base.to_string() };
+    Some(RemoteSession {
+        socket_url: format!("{socket}/remote/socket?session={session}&role=host"),
+        access_token: credentials.access_token,
+        session_key: wiqo_contract::remote_session_key(&token, session, nonce),
+        max_width: value["maxWidth"].as_u64().map_or(1600, |width| width.clamp(480, 2560) as u32),
+    })
 }
 
 struct Silent;
@@ -233,6 +264,13 @@ async fn phone_frame(runtime: &Runtime, observer: &dyn Observer, frame: Value) {
         tracing::warn!("frame: unreadable, dropped");
         return;
     };
+    if request.kind == wiqo_contract::frames::REMOTE_SCREEN {
+        match remote_session(runtime, &request, &frame["payload"]) {
+            Some(session) => observer.remote_screen(session),
+            None => tracing::warn!("frame {} (remoteScreen): refused (signature, session or sign-in)", request.id),
+        }
+        return;
+    }
     if wiqo_contract::frames::Frames::get().is_to_desktop(&request.kind) {
         match unsigned(runtime, &request, &frame["payload"]) {
             None => observer.remote(request),

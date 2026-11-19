@@ -47,6 +47,15 @@
         "payloadKind": "approvalsOpen",
         "fields": [],
         "answer": "One approvalRequest frame for every question of a phone's message or a background task that still waits (the same approvalId, expiresAt unchanged, no push). None waits: no frame. A phone asks when it opens (from the approval push or by itself), so a question raised while its app was closed can still be answered."
+      },
+      "remoteScreen": {
+        "payloadKind": "remoteScreen",
+        "fields": [
+          "sessionId",
+          "nonce",
+          "maxWidth"
+        ],
+        "answer": "No answer frame: the desktop joins the session the phone opened (POST /remote/sessions) on GET /remote/socket?session=…&role=host with its device token, and streams. Session key = HMAC-SHA256(pairing token, 'wiqo-remote:v1:'+sessionId+':'+nonce) as hex; every phone input on the socket is '<HMAC-SHA256(key, json) hex>.<json>' with a rising seq 's'. Host → phone: binary frames ['W',1,flags,0, seq u32 BE, width u16 BE, height u16 BE, JPEG…] and text {t:'info'|'err'|'peer'}; phone → host: {s,t:'hello'|'ack'|'move'|'down'|'up'|'click'|'scroll'|'text'|'key'|'quality'|'bye',…}."
       }
     }
   },
