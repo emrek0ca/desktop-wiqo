@@ -862,5 +862,5 @@
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   }
-  window.WiqoChat = { open, compose };
+  window.WiqoChat = { open, compose, inGroup: () => isGroup(), userTurns: () => messages.filter((item) => item.role === "user").length };
 })();
