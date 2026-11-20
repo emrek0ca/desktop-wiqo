@@ -10,9 +10,9 @@
   const icon = (name, size = 14) => window.WiqoIcons.icon(name, size);
   const FEEDS = [["popular", "Senin için"], ["following", "Takip"], ["new", "Yeni"], ["problems", "Problemler"]];
   const PROBLEM_TABS = [["open", "Çözüm bekleyen"], ["foryou", "Sana uygun"], ["new", "Yeni"], ["solved", "Çözülen"], ["needed", "Yaşadıklarım"]];
-  const REPLY_KINDS = { comment: "Yorum", experience: "Deneyim", alternative: "Kullandığım araç", feedback: "Geri bildirim" };
-  const VISIBILITY = [["private", "Sadece ben", "Tariflerimde durur, kimse görmez."], ["link", "Bağlantısı olan", "Bağlantıyı verdiğin kişi açar; adın görünmez."],
-    ["public", "Keşfet'te herkes", "Adınla Keşfet'te görünür; beğenilir, yorumlanır, remix'lenir."]];
+  const REPLY_KINDS = { comment: "Yorum", experience: "Deneyim", alternative: "Kullandığım araç", feedback: "Geri bildirim", suggestion: "Öneri" };
+  const VISIBILITY = [["private", "Sadece ben", "Kayıtlı işlerimde durur, kimse görmez."], ["link", "Bağlantısı olan", "Bağlantıyı verdiğin kişi açar; adın görünmez."],
+    ["public", "Keşfet'te herkes", "Adınla Keşfet'te görünür; başkaları kendine alır, yorumlar, kendi versiyonunu yapar."]];
   const COVERS = { ink: ["#121214", "#47474f"], ocean: ["#1a549e", "#40999f"], forest: ["#145c45", "#59a16b"], sunset: ["#db4f33", "#f7a847"],
     rose: ["#c73366", "#f5849e"], violet: ["#5c38b3", "#9e80eb"], sand: ["#b39466", "#e6d1a8"], slate: ["#404d61", "#8090a3"] };
   // One colour per person (backend PROFILE_COLORS): the circle behind the initial, and the cover when no picture is chosen.
@@ -76,6 +76,33 @@
     return link;
   }
 
+  /**
+   * "Zamanla" (as the phone's): one way to make anything run on its own. The choice becomes the first words of the composer's request (the server reads
+   * Turkish schedules), to be read and sent by the person.
+   */
+  function schedule(prompt, code = null) {
+    const root = R.el("div", "modal");
+    const card = R.el("div", "modal-card");
+    card.append(R.el("h2", "", "Ne zaman çalışsın?"), R.el("p", "muted small", "Saati ve sıklığı yazı kutusunda değiştirebilirsin; gönderince Wiqo kendisi çalıştırır."));
+    for (const [text, lead] of [["Her gün sabah", "Her gün saat 09:00'da şunu yap:"], ["Hafta içi her gün", "Hafta içi her gün saat 09:00'da şunu yap:"],
+      ["Her hafta", "Her pazartesi saat 09:00'da şunu yap:"], ["Bir şey değişince haber ver", "Şunu izle; değişince ya da yeni bir şey çıkınca bana haber ver:"],
+      ["Kendim yazayım", "Bu işi düzenli olarak çalıştır (ne sıklıkla ve saat kaçta olacağını yaz):"]]) {
+      card.append(R.button(text, "secondary", () => { root.remove(); window.WiqoChat.compose(`${lead}\n\n${prompt}`, code, false); }));
+    }
+    const actions = R.el("div", "modal-actions");
+    actions.append(R.el("span", "spacer"), R.button("Vazgeç", "secondary", () => root.remove()));
+    card.append(actions);
+    root.append(card);
+    document.body.append(root);
+  }
+
+  /** The one number a card shows: how many people it worked for (their own verdict), or else how many took it. Never likes. */
+  function trustText(mission) {
+    if (mission.verdicts?.worked) return `${mission.verdicts.worked} kişide işe yaradı`;
+    if (mission.counts.succeeded) return `${mission.counts.succeeded} kişi sonucunu aldı`;
+    return mission.counts.copies ? `${mission.counts.copies} kişi aldı` : "";
+  }
+
   function counts(mission) {
     const c = mission.counts;
     return [c.succeeded && `${c.succeeded} kişi kendi versiyonunu üretti`, c.likes && `${c.likes} beğeni`, c.comments && `${c.comments} yorum`, c.copies && `${c.copies} kez kullanıldı`, c.remixes && `${c.remixes} remix`].filter(Boolean).join(" · ");
@@ -86,7 +113,6 @@
   /** The middle of the page: one of the rail's tabs. */
   function showTab(tab) {
     state.tab = tab;
-    $("discover-title").textContent = { feed: "Akış", search: "Ara", notices: "Gelen kutusu", mine: "Profil" }[tab];
     for (const name of ["feed", "search", "mine", "notices"]) $(`discover-${name}`).hidden = name !== tab;
     for (const button of document.querySelectorAll(".rail-item")) button.classList.toggle("active", button.dataset.tab === tab);
     showError("");
@@ -118,7 +144,7 @@
     const category = label(state.categories, mission.category);
     if (category) meta.append(R.el("span", "", category));
     if (mission.origin) meta.append(R.el("span", "", `remix: ${mission.origin.name}`));
-    const numbers = counts(mission);
+    const numbers = trustText(mission);
     if (numbers) meta.append(R.el("span", "", numbers));
     card.append(meta);
     card.onclick = () => openMission(mission.code);
@@ -134,7 +160,7 @@
       who.type = "button";
       const names = R.el("div");
       names.append(R.el("div", "w-title", mission.author.displayName || `@${mission.author.username}`),
-        R.el("div", "muted small", [`@${mission.author.username}`, label(state.categories, mission.category), mission.origin ? `remix: ${mission.origin.name}` : ""].filter(Boolean).join(" · ")));
+        R.el("div", "muted small", [`@${mission.author.username}`, label(state.categories, mission.category), mission.origin ? `kaynak: ${mission.origin.name}` : ""].filter(Boolean).join(" · ")));
       who.append(avatar(mission.author), names);
       who.onclick = () => openProfile(mission.author.username);
       head.append(who);
@@ -152,16 +178,6 @@
     if (mission.description) body.append(R.el("p", "muted post-text", mission.description));
     body.onclick = () => openMission(mission.code);
     const actions = R.el("div", "post-actions");
-    const likeButton = R.button("", `post-action ${mission.liked ? "liked" : ""}`.trim(), async () => {
-      try {
-        const done = await call(mission.liked ? "DELETE" : "POST", `missions/${mission.code}/like`);
-        mission.liked = done.liked;
-        mission.counts.likes = done.likes;
-        node.replaceWith(post(mission));
-      } catch (error) { showError(error.message); }
-    });
-    likeButton.title = mission.liked ? "Beğenini geri al" : "Beğen";
-    likeButton.append(icon("heart", 16), document.createTextNode(String(mission.counts.likes)));
     const commentButton = R.button("", "post-action", () => openMission(mission.code));
     commentButton.title = "Yorumlar";
     commentButton.append(icon("bubble.left", 16), document.createTextNode(String(mission.counts.comments)));
@@ -178,21 +194,28 @@
     });
     saveButton.title = mission.saved ? "Kaydedilenlerden çıkar" : "Kaydet";
     saveButton.append(icon(mission.saved ? "bookmark.fill" : "bookmark", 16));
-    const runButton = R.button("Dene", "primary small", () => openMission(mission.code));
-    actions.append(likeButton, commentButton, saveButton, linkButton, R.el("span", "spacer"), runButton);
+    const runButton = R.button("Kendine al", "primary small", () => openMission(mission.code));
+    // One number people can trust instead of likes: how many it worked for, or else how many took it.
+    const trust = trustText(mission);
+    actions.append(commentButton, saveButton, linkButton, ...(trust ? [R.el("span", "muted small", trust)] : []), R.el("span", "spacer"), runButton);
     node.append(body, actions);
-    const used = [mission.counts.copies && `${mission.counts.copies} kez kullanıldı`, mission.counts.remixes && `${mission.counts.remixes} remix`].filter(Boolean).join(" · ");
-    if (used) node.append(R.el("div", "muted small post-foot", used));
     return node;
   }
 
+  /** Search sits on top of the feed (the rail has no tab of its own for it). */
+  function searchPill() {
+    const pill = R.button("", "search discover-search discover-search-pill", () => { search(); setTimeout(() => $("discover-search-input")?.focus(), 0); });
+    pill.append(icon("magnifyingglass", 13), R.el("span", "muted", "İş, problem ya da kişi ara"));
+    return pill;
+  }
+
   function renderFeed() {
-    $("discover-feeds").replaceChildren(...FEEDS.map(([id, text]) => R.button(text, `chip ${state.feed === id ? "on" : ""}`, () => { state.feed = id; load(); })));
+    $("discover-feeds").replaceChildren(searchPill(), ...FEEDS.map(([id, text]) => R.button(text, `chip ${state.feed === id ? "on" : ""}`, () => { state.feed = id; load(); })));
     $("discover-list").replaceChildren(...state.missions.map(post));
     $("discover-empty").hidden = state.missions.length > 0;
     $("discover-empty").textContent = state.feed === "following"
       ? "Takip ettiğin kimse henüz bir şey paylaşmadı. Ara sekmesinden insanları bulup takip edebilirsin."
-      : "Henüz paylaşılan Mission yok. Yeni Mission ile ilkini sen paylaş.";
+      : "Henüz paylaşılan iş yok. Bitirdiğin bir işi paylaş, ilk sen ol.";
     $("discover-more").hidden = !state.next;
   }
 
@@ -235,9 +258,19 @@
     const peopleBox = $("discover-people");
     peopleBox.replaceChildren(...(people.length ? [R.el("h4", "", state.q ? "Kişiler" : "Takip etmeye değer kişiler"), ...people.slice(0, state.q ? 8 : 5).map(personRow)] : []));
     peopleBox.hidden = people.length === 0;
+    // Problems that match the words: one search finds work, needs and people.
+    let problemsBox = $("discover-problems");
+    if (!problemsBox) {
+      problemsBox = R.el("div");
+      problemsBox.id = "discover-problems";
+      $("discover-results-title").before(problemsBox);
+    }
+    let posts = [];
+    if (state.q.length >= 2) { try { posts = (await call("GET", `missions/problems/feed?${new URLSearchParams({ tab: "new", q: state.q })}`)).posts.slice(0, 4); } catch { /* Missions still show */ } }
+    problemsBox.replaceChildren(...(posts.length ? [R.el("h4", "", "Problemler"), ...posts.map(problemPost)] : []));
     $("discover-results-title").hidden = state.results.length === 0;
     $("discover-results").replaceChildren(...state.results.map(missionCard));
-    $("discover-results-empty").hidden = state.results.length > 0;
+    $("discover-results-empty").hidden = state.results.length > 0 || posts.length > 0;
   }
 
   // ----- problems and ideas (rova-backend social/problems.ts) -----
@@ -246,7 +279,7 @@
   function postCounts(item) {
     const c = item.counts;
     return [c.needs && (item.kind === "problem" ? `${c.needs} kişi yaşıyor` : `${c.needs} kişi kullanırdı`), c.echoes && `${c.echoes} benzer paylaşım`, c.experiences && `${c.experiences} deneyim`,
-      item.kind === "problem" && c.ideas && `${c.ideas} fikir`, c.solutions && `${c.solutions} çözüm`, c.worked && `${c.worked} kişide işe yaradı`].filter(Boolean).join(" · ");
+      item.kind === "problem" && c.ideas && `${c.ideas} öneri`, c.solutions && `${c.solutions} çözüm`, c.worked && `${c.worked} kişide işe yaradı`].filter(Boolean).join(" · ");
   }
 
   async function toggleNeed(item) {
@@ -303,7 +336,7 @@
       if (!more) state.posts = [];
       showError(error.message);
     }
-    $("discover-feeds").replaceChildren(...FEEDS.map(([id, text]) => R.button(text, `chip ${state.feed === id ? "on" : ""}`, () => { state.feed = id; load(); })),
+    $("discover-feeds").replaceChildren(searchPill(), ...FEEDS.map(([id, text]) => R.button(text, `chip ${state.feed === id ? "on" : ""}`, () => { state.feed = id; load(); })),
       R.el("span", "spacer"), R.button("Problem paylaş", "primary small", () => writePost()));
     const tabs = R.el("div", "mission-actions");
     tabs.append(...PROBLEM_TABS.map(([id, text]) => R.button(text, `chip ${state.problemTab === id ? "on" : ""}`, () => { state.problemTab = id; loadProblems(); })));
@@ -456,7 +489,6 @@
     if (!item.mine) chips.append(R.button(needLabel(item), item.needed ? "primary small" : "secondary small", async () => {
       try { await toggleNeed(item); again(); } catch (error) { say(error.message); }
     }));
-    if (isProblem) chips.append(R.button("Fikir ekle", "secondary small", () => writePost(item.code, () => again())));
     chips.append(R.button("Bağlantıyı kopyala", "secondary small", async () => {
       try { await navigator.clipboard.writeText(item.url); toast("Bağlantı kopyalandı."); } catch { /* clipboard off */ }
     }));
@@ -484,7 +516,7 @@
     })] : [];
     const solutions = list(`Çözümler (${detail.solutions.length})`, detail.solutions, openMission, (mission) => [mission.author ? `@${mission.author.username}` : "",
       mission.verdicts?.worked ? `${mission.verdicts.worked} kişide işe yaradı` : "", mission.verdicts?.partly ? `${mission.verdicts.partly} kısmen` : "", mission.verdicts?.failed ? `${mission.verdicts.failed} işe yaramadı` : ""].filter(Boolean).join(" · "));
-    const ideas = list(`Fikirler (${detail.ideas.length})`, detail.ideas, openProblem, postCounts);
+    const ideas = list(`Eski fikirler (${detail.ideas.length})`, detail.ideas, openProblem, postCounts);
     const similar = list("Benzer problemler", detail.similar, openProblem, postCounts);
 
     const insightBox = R.el("div");
@@ -518,7 +550,7 @@
     showInsight(detail.insight);
 
     const talk = R.el("div");
-    const kinds = isProblem ? ["comment", "experience", "alternative"] : ["comment", "feedback", "alternative"];
+    const kinds = isProblem ? ["comment", "experience", "alternative", "suggestion"] : ["comment", "feedback", "alternative"];
     let kind = "comment";
     const kindChips = R.el("div", "mission-actions");
     const drawKinds = () => kindChips.replaceChildren(...kinds.map((id) => R.button(REPLY_KINDS[id], `chip ${kind === id ? "on" : ""}`, () => { kind = id; drawKinds(); })));
@@ -526,7 +558,7 @@
     const input = R.el("textarea");
     input.rows = 2;
     input.maxLength = 1000;
-    input.placeholder = isProblem ? "Sen de yaşıyor musun? Nasıl idare ettiğini ya da denediğin aracı yaz." : "Bu fikir işine yarar mı? Neyi değiştirirdin?";
+    input.placeholder = isProblem ? "Sen de yaşıyor musun? Deneyimini, kullandığın aracı ya da nasıl çözülebileceğini yaz." : "Bu fikir işine yarar mı? Neyi değiştirirdin?";
     const send = R.button("Gönder", "primary small", async () => {
       if (!input.value.trim()) return;
       try { await call("POST", `missions/problems/${item.code}/replies`, { kind, body: input.value.trim() }); again(); } catch (error) { say(error.message); }
@@ -581,12 +613,12 @@
     head.append(icon(mission.icon || "sparkle", 20), R.el("h2", "", mission.name));
     const byline = R.el("div", "mission-meta muted small");
     if (mission.origin) {
-      byline.append(R.el("span", "", "remix:"));
+      byline.append(R.el("span", "", "kaynak:"));
       byline.append(R.button(mission.origin.name, "link small", () => openMission(mission.origin.code)));
       if (mission.origin.updatedSince) byline.append(R.el("span", "", "kaynak güncellendi"));
     }
     if (mission.solves) byline.append(R.el("span", "", "Çözdüğü:"), R.button(mission.solves.title, "link small", () => openProblem(mission.solves.code)));
-    if (mission.visibility === "public" && counts(mission)) byline.append(R.el("span", "", counts(mission)));
+    if (mission.visibility === "public" && trustText(mission)) byline.append(R.el("span", "", trustText(mission)));
     if (mission.hidden) byline.append(R.el("span", "error", "Bildirimler nedeniyle Keşfet'te gizlendi"));
     let following = false;
     if (mission.author && !mission.mine) {
@@ -610,24 +642,26 @@
     }
 
     const actions = R.el("div", "mission-actions");
-    actions.append(R.button("Dene · kendi Wiqo'mda çalıştır", "primary", () => run(mission)));
+    actions.append(R.button("Kendine al", "primary", () => run(mission)));
     const chips = R.el("div", "mission-actions");
+    const saveButton = R.button(mission.saved ? "Kaydedildi" : "Kaydet", "secondary small", async () => {
+      try { mission.saved = (await call(mission.saved ? "DELETE" : "POST", `missions/${mission.code}/save`)).saved; saveButton.textContent = mission.saved ? "Kaydedildi" : "Kaydet"; } catch (error) { showError(error.message); }
+    });
+    chips.append(saveButton);
+    chips.append(R.button("Zamanla", "secondary small", async () => {
+      try { schedule((await call("POST", `missions/${mission.code}/copy`)).recipe.prompt, mission.mine ? null : mission.code); } catch (error) { showError(error.message); }
+    }));
+    chips.append(R.button("Kendi versiyonunu paylaş", "secondary small", () => publish({ mode: "remix", mission })));
     if (mission.visibility === "public") {
-      const likeButton = R.button(mission.liked ? "Beğendin" : "Beğen", "secondary small", async () => {
+      const likeButton = R.button(mission.liked ? "Beğendin" : "Beğen", "link small", async () => {
         try {
           const done = await call(mission.liked ? "DELETE" : "POST", `missions/${mission.code}/like`);
           mission.liked = done.liked;
-          mission.counts.likes = done.likes;
           likeButton.textContent = mission.liked ? "Beğendin" : "Beğen";
         } catch (error) { showError(error.message); }
       });
       chips.append(likeButton);
     }
-    const saveButton = R.button(mission.saved ? "Kaydedildi" : "Kaydet", "secondary small", async () => {
-      try { mission.saved = (await call(mission.saved ? "DELETE" : "POST", `missions/${mission.code}/save`)).saved; saveButton.textContent = mission.saved ? "Kaydedildi" : "Kaydet"; } catch (error) { showError(error.message); }
-    });
-    chips.append(saveButton);
-    chips.append(R.button("Remix", "secondary small", () => publish({ mode: "remix", mission })));
     chips.append(R.button("Bağlantıyı kopyala", "secondary small", async () => {
       try { await navigator.clipboard.writeText(mission.url); toast("Bağlantı kopyalandı."); } catch { /* clipboard off */ }
     }));
@@ -658,7 +692,7 @@
     if (mission.visibility === "public") {
       try {
         const remixes = (await call("GET", `missions/${mission.code}/remixes`)).missions;
-        if (remixes.length) host.append(R.el("h4", "", "Remix'ler"), (() => { const grid = R.el("div", "mission-grid"); grid.append(...remixes.slice(0, 6).map(missionCard)); return grid; })());
+        if (remixes.length) host.append(R.el("h4", "", "Ondan yapılan versiyonlar"), (() => { const grid = R.el("div", "mission-grid"); grid.append(...remixes.slice(0, 6).map(missionCard)); return grid; })());
       } catch { /* the page is complete without them */ }
       host.append(await commentsBlock(mission));
     }
@@ -725,14 +759,14 @@
     if (!yes) return;
     try {
       await call("DELETE", `missions/${mission.id}`);
-      toast("Mission silindi.");
+      toast("Paylaşım silindi.");
       $("discover-side").hidden = true;
       openMine();
     } catch (error) { showError(error.message); }
   }
 
   async function reportMission(mission) {
-    const reason = await ask("Bu Mission'ı neden bildiriyorsun?", "Örn. zararlı bir istek, kişisel bilgi, spam");
+    const reason = await ask("Bu paylaşımı neden bildiriyorsun?", "Örn. zararlı bir istek, kişisel bilgi, spam");
     if (reason === null) return;
     try {
       await call("POST", `missions/${mission.code}/report`, { reason });
@@ -897,7 +931,7 @@
       actions.append(R.button(profile.following ? "Takipte" : "Takip et", profile.following ? "secondary small" : "primary small", async () => {
         try { await call(profile.following ? "DELETE" : "POST", `missions/users/${profile.username}/follow`); again(); } catch (error) { showError(error.message); }
       }), R.button("Engelle", "link small", async () => {
-        if (!(await window.WiqoDialog.confirm({ title: `@${profile.username} engellensin mi?`, message: "Birbirinizin Mission'larını, yorumlarını görmezsiniz; takip biter.", confirm: "Engelle", danger: true }))) return;
+        if (!(await window.WiqoDialog.confirm({ title: `@${profile.username} engellensin mi?`, message: "Birbirinizin paylaşımlarını, yorumlarını görmezsiniz; takip biter.", confirm: "Engelle", danger: true }))) return;
         try { await call("POST", `missions/users/${profile.username}/block`); $("discover-side").hidden = true; load(); } catch (error) { showError(error.message); }
       }));
     }
@@ -919,7 +953,7 @@
       return cell;
     };
     stats.append(stat(c.followers, "Takipçi", () => showPeople(host, username, "followers", () => again())), stat(c.following, "Takip", () => showPeople(host, username, "following", () => again())),
-      stat(c.missions, "Mission"), stat(c.likes, "Beğeni"), stat(c.uses, "Deneme"));
+      stat(c.missions, "İş"), stat(c.likes, "Beğeni"), stat(c.uses, "Alan"));
     const tabs = R.el("div", "profile-tabs");
     for (const [id, text] of PROFILE_TABS) {
       if (id === "saved" && !profile.mine) continue;
@@ -934,8 +968,8 @@
       return node;
     };
     list.append(...answer.missions.map(card));
-    const empty = { remixes: own ? "Henüz bir Mission'ı remix'lemedin. Birinin Mission'ında Remix'e bas." : "Henüz remix yok.", liked: "Henüz beğenilen Mission yok.",
-      saved: "Kaydettiğin Mission'lar burada durur; yalnızca sen görürsün.", missions: own ? "Henüz paylaştığın bir Mission yok. Yeni Mission'a bas." : "Henüz paylaşılan Mission yok." }[tab];
+    const empty = { remixes: own ? "Henüz başkasının işinden bir versiyon yapmadın." : "Henüz versiyon yok.", liked: "Henüz beğenilen iş yok.",
+      saved: "Kaydettiğin işler burada durur; yalnızca sen görürsün.", missions: own ? "Henüz paylaştığın bir iş yok. Wiqo'da paylaş'a bas." : "Henüz paylaşılan iş yok." }[tab];
     // The people this person makes things with (public remixes only): who built on their work, and whose work they built on.
     const makers = R.el("div", "profile-circle");
     call("GET", `missions/users/${encodeURIComponent(username)}/circle`).then((found) => {
@@ -1199,53 +1233,164 @@
     state.covers = answer.covers || state.covers;
     if (answer.profile.username) { await renderProfile(host, answer.profile.username); return; }
     const card = R.el("div", "card profile-form");
-    card.append(R.el("h3", "", "Keşfet profilin"), R.el("p", "muted small", "Keşfet'te Mission paylaşmak ve yorum yazmak için bir kullanıcı adı gerekir."),
+    card.append(R.el("h3", "", "Keşfet profilin"), R.el("p", "muted small", "Keşfet'te paylaşmak ve yorum yazmak için bir kullanıcı adı gerekir."),
       R.button("Profili düzenle", "primary small", editInSettings));
     host.replaceChildren(card);
   }
 
+  const NOTICE_FILTERS = [["all", "Tümü"], ["unread", "Okunmamış"], ["activity", "Etkileşimler"], ["people", "Kişiler"], ["problems", "Problemler"]];
+  const NOTICE_SYMBOLS = { like: "heart", comment: "bubble.left", reply: "bubble.left", post_reply: "bubble.left", follow: "person.crop.circle", copy: "doc.on.doc",
+    remix: "arrow.clockwise", published: "sparkles", succeeded: "checkmark.circle.fill", need: "person.2", idea: "sparkle", solution: "wand.and.stars", verdict: "checkmark" };
+  const inbox = { filter: "all", notices: [], next: null };
+
+  /**
+   * Gelen kutusu: what waits for the person's yes on this computer first (answered right here), then what people did on Keşfet, newest first in time
+   * sections, many people doing the same on one day as one row. Filters narrow it; each row reads, unreads or deletes itself; the head clears read or
+   * everything.
+   */
   async function openNotices() {
     window.showSection("discover");
     showTab("notices");
     const host = $("discover-notices");
+    const group = ["activity", "people", "problems"].includes(inbox.filter) ? inbox.filter : "";
     try {
-      const answer = await call("GET", "missions/notifications");
-      const rows = R.el("ul", "list");
-      for (const notice of answer.notices) {
-        const row = R.el("li", notice.read ? "" : "unread");
-        const main = R.button(notice.text, "recipe-main notice", () => {
-          if (notice.mission) openMission(notice.mission.code);
-          else if (notice.post) openProblem(notice.post.code);
-          else if (notice.actor.username) openProfile(notice.actor.username);
-        });
-        row.append(main, R.el("span", "muted small", new Date(`${notice.createdAt}Z`).toLocaleDateString("tr-TR")));
-        rows.append(row);
-      }
-      const card = R.el("div", "card");
-      card.append(rows);
-      // Gelen kutusu: what waits for the person's yes on this computer first (answered right here), then what people did on Keşfet.
+      const answer = await call("GET", `missions/notifications${group ? `?group=${group}` : ""}`);
+      inbox.notices = answer.notices;
+      inbox.next = answer.next ?? null;
       const waiting = await invoke("pending_approvals").catch(() => []);
-      const parts = [];
-      if (waiting.length) {
-        const list = R.el("ul", "list");
-        for (const question of waiting) {
-          const row = R.el("li", "unread");
-          const yes = R.button("Onayla", "primary small", async () => { await invoke("answer_approval", { id: question.id, allow: true }); row.remove(); });
-          const no = R.button("Reddet", "secondary small", async () => { await invoke("answer_approval", { id: question.id, allow: false }); row.remove(); });
-          row.append(R.el("span", "recipe-main notice", question.detail || question.kind), yes, no);
-          list.append(row);
-        }
-        const box = R.el("div", "card");
-        box.append(list);
-        parts.push(R.el("h3", "settings-head", "Seni bekleyenler"), box);
-      }
-      if (answer.notices.length) parts.push(R.el("h3", "settings-head", "Keşfet"), card);
-      host.replaceChildren(...(parts.length ? parts : [R.el("p", "muted small", "Gelen kutun boş.")]));
-      if (answer.unread) await call("POST", "missions/notifications/read");
+      drawNotices(host, waiting);
+      if (answer.unread && !group) await call("POST", "missions/notifications/read");
       refreshUnread();
     } catch (error) {
       host.replaceChildren(R.el("p", "error small", error.message));
     }
+  }
+
+  function drawNotices(host, waiting = []) {
+    const ids = (notice) => notice.ids || [notice.id];
+    const redraw = () => drawNotices(host, waiting);
+    const head = R.el("div", "notice-head");
+    const filters = R.el("div", "chips");
+    const unread = inbox.notices.filter((notice) => !notice.read).length;
+    filters.append(...NOTICE_FILTERS.map(([id, text]) => R.button(id === "unread" && unread ? `${text} ${unread}` : text, `chip ${inbox.filter === id ? "on" : ""}`, () => {
+      const reload = id !== "unread" && ["activity", "people", "problems", "all"].includes(id) && id !== inbox.filter;
+      inbox.filter = id;
+      if (reload || (id === "all")) openNotices(); else redraw();
+    })));
+    const tools = R.el("div", "mission-actions");
+    tools.append(
+      R.button("Tümünü okundu say", "link small", async () => {
+        const list = inbox.notices.filter((notice) => !notice.read).flatMap(ids);
+        if (!list.length) return;
+        inbox.notices.forEach((notice) => { notice.read = true; });
+        redraw();
+        try { await call("POST", "missions/notifications/read", { ids: list }); } catch (error) { showError(error.message); }
+      }),
+      R.button("Okunanları temizle", "link small", async () => {
+        try { await call("POST", "missions/notifications/delete", { which: "read" }); inbox.notices = inbox.notices.filter((notice) => !notice.read); redraw(); } catch (error) { showError(error.message); }
+      }),
+      R.button("Tümünü temizle", "link small danger-text", async () => {
+        if (!window.confirm("Keşfet bildirimlerinin hepsi silinsin mi? İşlerin ve paylaşımların olduğu gibi kalır.")) return;
+        try { await call("POST", "missions/notifications/delete", { which: "all" }); inbox.notices = []; redraw(); } catch (error) { showError(error.message); }
+      }));
+    head.append(filters, R.el("span", "spacer"), tools);
+    const parts = [head];
+
+    if (waiting.length && inbox.filter === "all") {
+      const list = R.el("ul", "list");
+      for (const question of waiting) {
+        const row = R.el("li", "unread");
+        const yes = R.button("Onayla", "primary small", async () => { await invoke("answer_approval", { id: question.id, allow: true }); row.remove(); });
+        const no = R.button("Reddet", "secondary small", async () => { await invoke("answer_approval", { id: question.id, allow: false }); row.remove(); });
+        row.append(R.el("span", "recipe-main notice", question.detail || question.kind), yes, no);
+        list.append(row);
+      }
+      const box = R.el("div", "card");
+      box.append(list);
+      parts.push(R.el("h3", "settings-head", "Seni bekleyenler"), box);
+    }
+
+    const visible = inbox.notices.filter((notice) => inbox.filter !== "unread" || !notice.read);
+    const now = Date.now();
+    const today = new Date().toDateString();
+    const sectionOf = (notice) => {
+      if (!notice.read && inbox.filter !== "unread") return "Yeni";
+      const at = new Date(`${notice.createdAt.replace(" ", "T")}Z`);
+      if (at.toDateString() === today) return "Bugün";
+      return now - at.getTime() < 7 * 86_400_000 ? "Bu hafta" : "Daha önce";
+    };
+    for (const title of ["Yeni", "Bugün", "Bu hafta", "Daha önce"]) {
+      const items = visible.filter((notice) => sectionOf(notice) === title);
+      if (!items.length) continue;
+      const list = R.el("ul", "list notice-list");
+      for (const notice of items) {
+        const row = R.el("li", notice.read ? "" : "unread");
+        const face = R.el("button", "notice-face");
+        face.type = "button";
+        face.append(notice.actor.username ? avatar({ username: notice.actor.username, displayName: notice.actor.displayName, avatar: notice.actor.avatar }, "big") : R.el("span", "avatar big", "?"));
+        const badge = R.el("span", "notice-badge");
+        badge.append(icon(NOTICE_SYMBOLS[notice.kind] || "bell", 10));
+        face.append(badge);
+        face.onclick = () => { if (notice.actor.username) openProfile(notice.actor.username); };
+        const main = R.el("button", "recipe-main notice notice-main");
+        main.type = "button";
+        const words = R.el("div");
+        words.append(R.el("div", "", notice.text));
+        if (notice.preview) words.append(R.el("div", "muted small", `“${notice.preview}”`));
+        words.append(R.el("div", "muted small", new Date(`${notice.createdAt.replace(" ", "T")}Z`).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })));
+        main.append(words);
+        main.onclick = async () => {
+          if (!notice.read) { notice.read = true; row.className = ""; call("POST", "missions/notifications/read", { ids: ids(notice) }).catch(() => undefined); }
+          if (notice.mission) openMission(notice.mission.code);
+          else if (notice.post) openProblem(notice.post.code);
+          else if (notice.actor.username) openProfile(notice.actor.username);
+        };
+        const actions = R.el("span", "notice-actions");
+        if (notice.kind === "follow" && !notice.others && notice.actor.username) {
+          actions.append(R.button(notice.actor.following ? "Takipte" : "Takip et", notice.actor.following ? "secondary small" : "primary small", async () => {
+            const on = !notice.actor.following;
+            try { await call(on ? "POST" : "DELETE", `missions/users/${encodeURIComponent(notice.actor.username)}/follow`); notice.actor.following = on; redraw(); } catch (error) { showError(error.message); }
+          }));
+        }
+        const toggle = R.button("", "icon-button", async () => {
+          notice.read = !notice.read;
+          redraw();
+          try { await call("POST", notice.read ? "missions/notifications/read" : "missions/notifications/unread", { ids: ids(notice) }); } catch (error) { showError(error.message); }
+        });
+        toggle.title = notice.read ? "Okunmadı yap" : "Okundu say";
+        toggle.append(icon(notice.read ? "circle" : "checkmark", 14));
+        const remove = R.button("", "icon-button", async () => {
+          inbox.notices = inbox.notices.filter((item) => item.id !== notice.id);
+          redraw();
+          try { await call("POST", "missions/notifications/delete", { ids: ids(notice) }); } catch (error) { showError(error.message); }
+        });
+        remove.title = "Sil";
+        remove.append(icon("trash", 14));
+        actions.append(toggle, remove);
+        row.append(face, main, actions);
+        list.append(row);
+      }
+      const card = R.el("div", "card");
+      card.append(list);
+      parts.push(R.el("h3", "settings-head", title), card);
+    }
+    if (inbox.next && inbox.filter !== "unread") {
+      parts.push(R.button("Daha eskiler", "secondary small", async () => {
+        const group = ["activity", "people", "problems"].includes(inbox.filter) ? `&group=${inbox.filter}` : "";
+        try {
+          const answer = await call("GET", `missions/notifications?before=${inbox.next}${group}`);
+          const known = new Set(inbox.notices.map((notice) => notice.id));
+          inbox.notices.push(...answer.notices.filter((notice) => !known.has(notice.id)));
+          inbox.next = answer.next ?? null;
+          redraw();
+        } catch (error) { showError(error.message); }
+      }));
+    }
+    if (parts.length === 1) {
+      parts.push(R.el("p", "muted small", { unread: "Okunmamış bir şey yok.", activity: "İşlerine gelen beğeni, yorum ve değerlendirmeler burada görünür.",
+        people: "Seni takip edenler ve takip ettiklerinin paylaşımları burada görünür.", problems: "Problemlerine gelen destek, fikir ve çözümler burada görünür." }[inbox.filter] || "Gelen kutun boş."));
+    }
+    host.replaceChildren(...parts);
   }
 
   async function refreshUnread() {
@@ -1287,7 +1432,7 @@
     };
     const [tasks, recipes] = await Promise.all([finishedTasks().catch(() => []), invoke("skills_list").then((value) => value.skills || value.recipes || []).catch(() => [])]);
     if (tasks.length) list.append(R.el("h3", "", "Tamamlanan görevler"), ...tasks.map((task) => row(task.title, snippet(task.result), () => publish({ mode: "task", request: task.request, result: task.result }))));
-    if (recipes.length) list.append(R.el("h3", "", "Tariflerin"), ...recipes.slice(0, 10).map((recipe) => row(recipe.name, snippet(recipe.prompt), () => publish({ mode: "recipe", recipe }))));
+    if (recipes.length) list.append(R.el("h3", "", "Kayıtlı işlerin"), ...recipes.slice(0, 10).map((recipe) => row(recipe.name, snippet(recipe.prompt), () => publish({ mode: "recipe", recipe }))));
     status.textContent = tasks.length || recipes.length ? "" : "Paylaşılacak bir iş yok. Wiqo'ya bir iş yaptır; bitince buradan paylaşırsın.";
   }
 
@@ -1317,7 +1462,7 @@
     findingsBox.replaceChildren();
     findingsBox.hidden = true;
     $("mission-error").hidden = true;
-    $("mission-dialog-title").textContent = { task: "Wiqo'da paylaş", recipe: "Tarifi paylaş", edit: "Mission'ı düzenle", remix: "Remix yap" }[source.mode];
+    $("mission-dialog-title").textContent = { task: "Wiqo'da paylaş", recipe: "İşi paylaş", edit: "Paylaşımı düzenle", remix: "Kendi versiyonunu paylaş" }[source.mode];
     if (!state.categories.length || !state.needs.length) {
       try {
         const me = await call("GET", "missions/me");
@@ -1419,7 +1564,7 @@
         if (mission.url) {
           try { await navigator.clipboard.writeText(mission.url); } catch { /* clipboard off */ }
         }
-        toast(visibility === "public" ? "Keşfet'te yayında; bağlantısı kopyalandı." : visibility === "link" ? "Bağlantı kopyalandı." : "Tariflerine kaydedildi; kimse görmez.");
+        toast(visibility === "public" ? "Keşfet'te yayında; bağlantısı kopyalandı." : visibility === "link" ? "Bağlantı kopyalandı." : "Kayıtlı işlerine kaydedildi; kimse görmez.");
         window.dispatchEvent(new CustomEvent("wiqo-recipes-changed"));
         if (mission.code) openMission(mission.code);
       } catch (error) {

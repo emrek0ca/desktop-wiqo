@@ -1079,3 +1079,15 @@ button.profile-stat:hover strong { text-decoration: underline; }
 .profile-circle { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .profile-circle-row { display: flex; gap: 12px; overflow-x: auto; }
 .profile-circle-person { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 92px; border: 0; background: none; cursor: pointer; padding: 4px; }
+
+/* Gelen kutusu: a face with what happened on it, the words, and the row's own actions. */
+.notice-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.notice-list li { align-items: flex-start; }
+.notice-list li.unread { background: var(--fill); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+.notice-face { position: relative; flex: none; padding: 0; background: none; border: 0; cursor: pointer; }
+.notice-badge { position: absolute; right: -4px; bottom: -4px; width: 18px; height: 18px; border-radius: 50%; background: var(--ink); color: var(--ink-on); display: grid; place-items: center; border: 2px solid var(--canvas); }
+.notice-main { align-items: flex-start; }
+.notice-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.notice-actions .icon-button { opacity: 0.45; }
+.notice-list li:hover .notice-actions .icon-button { opacity: 1; }
+.discover-search-pill { flex-basis: 100%; justify-content: flex-start; gap: 8px; cursor: text; margin-bottom: 4px; }
