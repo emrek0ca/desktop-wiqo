@@ -378,6 +378,13 @@ fn handle_link(handle: &AppHandle, link: &str) {
         let _ = handle.emit("recipe-link", code);
         return;
     }
+    // A shared problem or idea (rova-backend social/problems.ts `/p/CODE` → "Wiqo'da aç"): the window opens on it.
+    if let Some(code) = link.strip_prefix("wiqo://problem/") {
+        show_window(handle);
+        let code: String = code.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
+        let _ = handle.emit("problem-link", code);
+        return;
+    }
     if !link.starts_with("wiqo://oauth-callback") {
         return;
     }
