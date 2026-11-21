@@ -763,13 +763,25 @@ async fn run_stoppable(engine: &Engine, step: &Value, card_approved: bool, send_
 }
 
 impl Work {
+    /// What the run did, in a sentence: how many steps went through, how many did not, and the last one. The log itself (commands, paths) stays out of the
+    /// person's reading; the steps are on the task card.
     fn done_so_far(&self) -> String {
-        if self.log.is_empty() {
-            return "Henüz bir adım tamamlanmadı.".into();
-        }
-        let last: Vec<&str> = self.log.iter().rev().take(8).rev().map(String::as_str).collect();
-        format!("Son adımlar:\n{}", last.join("\n"))
+        steps_in_words(&self.log)
     }
+}
+
+/// "✓ Komut: pytest -q" / "✗ Dosya oku: a.txt (bulunamadı)": the step's words without the mark and without the reason in brackets.
+fn steps_in_words(log: &[String]) -> String {
+    let done = log.iter().filter(|line| line.starts_with('✓')).count();
+    let failed = log.iter().filter(|line| line.starts_with('✗')).count();
+    let Some(last) = log.last() else {
+        return "Henüz bir adım tamamlanmadı.".into();
+    };
+    let words = last.trim_start_matches(['✓', '✗', ' ']);
+    let words = words.split(" (").next().unwrap_or(words);
+    let words: String = words.chars().take(90).collect();
+    let counts = if failed == 0 { format!("{done} adım tamamlandı") } else { format!("{done} adım tamamlandı, {failed} adım başarısız") };
+    format!("{counts}. Son adım: {words}.")
 }
 
 /// Why a model call ended without an answer.
@@ -1818,6 +1830,16 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_stop_says_how_far_the_run_got_not_which_commands_it_ran() {
+        use super::steps_in_words;
+        assert_eq!(steps_in_words(&[]), "Henüz bir adım tamamlanmadı.");
+        let log = vec!["✓ Komut: ls".to_string(), "✗ Dosya oku: a.txt (bulunamadı)".to_string(), "✓ Komut: pytest -q".to_string()];
+        assert_eq!(steps_in_words(&log), "2 adım tamamlandı, 1 adım başarısız. Son adım: Komut: pytest -q.");
+        let said = steps_in_words(&["✗ Komut: rm -rf x (izin yok)".to_string()]);
+        assert!(!said.contains("izin yok"));
+    }
+
     use super::*;
 
     /// What every model call of a run carries before the conversation itself: the tool list and the fixed notes. Measured on the live service this
