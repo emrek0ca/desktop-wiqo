@@ -44,27 +44,27 @@ struct Asked {
 /// "Chrome'da ne açık" needs Chrome's Automation permission, and a person cannot be expected to find that page in System Settings. Only the ones installed
 /// on this computer are asked about (`automation_apps`).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const AUTOMATION_ALL: &[(&str, &str)] = &[
-    ("com.apple.systemevents", "Sistem Olayları"),
-    ("com.apple.finder", "Finder"),
-    ("com.apple.mail", "Mail"),
-    ("com.apple.MobileSMS", "Mesajlar"),
-    ("com.apple.Notes", "Notlar"),
-    ("com.apple.iCal", "Takvim"),
-    ("com.apple.reminders", "Anımsatıcılar"),
-    ("com.google.Chrome", "Google Chrome"),
-    ("com.apple.Safari", "Safari"),
-    ("com.microsoft.edgemac", "Microsoft Edge"),
-    ("com.brave.Browser", "Brave"),
-    ("company.thebrowser.Browser", "Arc"),
-    ("com.apple.Music", "Müzik"),
-    ("com.spotify.client", "Spotify"),
+const AUTOMATION_ALL: &[(&str, &str, &str)] = &[
+    ("com.apple.systemevents", "Sistem Olayları", "System Events.app"),
+    ("com.apple.finder", "Finder", "Finder.app"),
+    ("com.apple.mail", "Mail", "Mail.app"),
+    ("com.apple.MobileSMS", "Mesajlar", "Messages.app"),
+    ("com.apple.Notes", "Notlar", "Notes.app"),
+    ("com.apple.iCal", "Takvim", "Calendar.app"),
+    ("com.apple.reminders", "Anımsatıcılar", "Reminders.app"),
+    ("com.google.Chrome", "Google Chrome", "Google Chrome.app"),
+    ("com.apple.Safari", "Safari", "Safari.app"),
+    ("com.microsoft.edgemac", "Microsoft Edge", "Microsoft Edge.app"),
+    ("com.brave.Browser", "Brave", "Brave Browser.app"),
+    ("company.thebrowser.Browser", "Arc", "Arc.app"),
+    ("com.apple.Music", "Müzik", "Music.app"),
+    ("com.spotify.client", "Spotify", "Spotify.app"),
 ];
 
 /// The apps above that are installed here, found once (an app installed later is picked up at the next start).
 fn automation_apps() -> &'static [(&'static str, &'static str)] {
     static FOUND: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
-    FOUND.get_or_init(|| AUTOMATION_ALL.iter().copied().filter(|(bundle, _)| sys::installed(bundle)).collect())
+    FOUND.get_or_init(|| AUTOMATION_ALL.iter().filter(|(_, _, file)| sys::installed(file)).map(|(bundle, name, _)| (*bundle, *name)).collect())
 }
 
 /// Which permission an operation's error code points at, so the window can open on it.
@@ -128,10 +128,11 @@ impl Permissions {
             .iter()
             .filter(|state| **state == Some(true))
             .count();
-        let automation_state = if granted == apps.len() {
-            State::Granted
-        } else if automation.contains(&Some(false)) {
+        // Not a setup step: macOS asks per app, the first time a script drives it, and Wiqo no longer opens apps to make it ask. Denied if any answer was no.
+        let automation_state = if automation.contains(&Some(false)) {
             State::Denied
+        } else if granted > 0 {
+            State::Granted
         } else {
             State::NotDetermined
         };
@@ -166,10 +167,10 @@ impl Permissions {
             Permission {
                 id: "automation",
                 title: "Uygulamaları kontrol (Otomasyon)",
-                why: "Mesaj, e-posta, not, takvim ve hatırlatıcı işleri için. Her uygulama için macOS bir kez sorar.",
+                why: "Wiqo bir uygulamayı ilk kez kontrol ederken macOS bir kez sorar; \"İzin Ver\" yeter. Wiqo uygulamaları izin için kendiliğinden açmaz.",
                 state: automation_state,
-                optional: false,
-                detail: Some(format!("{granted}/{} uygulama", apps.len())),
+                optional: true,
+                detail: Some(format!("{granted}/{} uygulama · gerektikçe sorulur", apps.len())),
                 needs_restart: false,
             },
             Permission {
@@ -285,13 +286,6 @@ impl Permissions {
     /// Asks for one permission: the system dialog when macOS still can show one, otherwise the right page of System Settings. Blocks while a
     /// dialog is open (call it off the UI thread).
     pub fn request(&self, id: &str) {
-        let current = self
-            .list()
-            .into_iter()
-            .find(|permission| permission.id == id);
-        let undecided = current
-            .as_ref()
-            .is_some_and(|permission| permission.state == State::NotDetermined);
         match id {
             "screen" => {
                 let mut asked = self.asked();
@@ -316,22 +310,25 @@ impl Permissions {
                 }
             }
             "automation" => {
+                // Only apps that are already running are asked about, and none is opened for it (opening a dozen apps to make macOS ask was the worst of
+                // this): macOS shows its own dialog for each, once. Any other app is asked the first time a script drives it (`ask_automation_for`).
                 let mut asked = self.asked();
                 let mut refused = false;
                 for (bundle, _) in automation_apps() {
-                    if asked.automation.get(*bundle) == Some(&true)
-                        && sys::automation(bundle, false) != Some(false)
-                    {
+                    if asked.automation.get(*bundle) == Some(&true) && sys::automation(bundle, false) != Some(false) {
                         continue;
                     }
-                    let answer = sys::request_automation(bundle);
+                    if !sys::is_running(bundle) {
+                        continue;
+                    }
+                    let answer = sys::automation(bundle, true);
                     if let Some(answer) = answer {
                         asked.automation.insert(bundle.to_string(), answer);
                         refused |= !answer;
                     }
                     self.save(&asked);
                 }
-                if refused || !undecided {
+                if refused {
                     sys::open_settings("Privacy_Automation");
                 }
             }
@@ -500,7 +497,7 @@ mod sys {
         }
     }
 
-    fn running(bundle: &str) -> bool {
+    pub fn is_running(bundle: &str) -> bool {
         Command::new("/usr/bin/osascript")
             .args(["-e", &format!("application id \"{bundle}\" is running")])
             .output()
@@ -508,13 +505,19 @@ mod sys {
             .unwrap_or(false)
     }
 
-    /// Whether this app is installed here (LaunchServices, not Spotlight: indexing may be off).
-    pub fn installed(bundle: &str) -> bool {
-        Command::new("/usr/bin/osascript")
-            .args(["-e", &format!("POSIX path of (path to application id \"{bundle}\")")])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+    /// Whether an app is installed here, by its file name in the folders apps live in. Not by asking AppleScript for its path: for an app that is not there
+    /// it opens a "Where is ...?" dialog and waits (a test run showed one for five minutes), and not by Spotlight, which may be off.
+    pub fn installed(file: &str) -> bool {
+        let home = dirs::home_dir().unwrap_or_default();
+        let folders = [
+            std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Library/CoreServices"),
+            home.join("Applications"),
+        ];
+        folders.iter().any(|folder| folder.join(file).exists())
     }
 
     /// The bundle id of an app by the name a script uses for it ("Google Chrome").
@@ -527,12 +530,12 @@ mod sys {
 
     /// Opens the app in the background if needed (macOS asks only about a running app), then asks.
     pub fn request_automation(bundle: &str) -> Option<bool> {
-        if !running(bundle) {
+        if !is_running(bundle) {
             let _ = Command::new("/usr/bin/open")
                 .args(["-g", "-j", "-b", bundle])
                 .status();
             let deadline = Instant::now() + Duration::from_secs(8);
-            while !running(bundle) && Instant::now() < deadline {
+            while !is_running(bundle) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(250));
             }
         }
@@ -612,6 +615,9 @@ mod sys {
     }
     pub fn open_settings(_anchor: &str) {}
     pub fn installed(_bundle: &str) -> bool {
+        false
+    }
+    pub fn is_running(_bundle: &str) -> bool {
         false
     }
     pub fn bundle_of(_name: &str) -> Option<String> {

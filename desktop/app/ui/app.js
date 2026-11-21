@@ -467,8 +467,10 @@ async function grantAll() {
   try {
     fullAccessOn = await invoke("set_full_access", { on: true });
     window.dispatchEvent(new CustomEvent("wiqo-access", { detail: fullAccessOn }));
+    // The ones the everyday tasks need, in order. The optional ones (Konum, Tam Disk Erişimi, Otomasyon) are not asked here: each would open a dialog or a Settings
+    // page the person did not ask for; Otomasyon is asked per app the first time a script needs it.
     for (const permission of permissionList) {
-      if (permission.state === "granted") continue;
+      if (permission.state === "granted" || permission.optional) continue;
       permissionList = await invoke("request_permission", { id: permission.id });
     }
   } catch (error) {
