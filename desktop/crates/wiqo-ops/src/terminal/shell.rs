@@ -476,6 +476,19 @@ fn shared_exports(script: &str) -> String {
         .join("\n")
 }
 
+/// PowerShell 7 (`pwsh`) when it is installed, Windows PowerShell 5.1 otherwise. 7 has `&&`, `||`, UTF-8 by default and the newer cmdlets, so the
+/// Unix-style chains a model writes work as written; 5.1 is on every Windows and stays the fallback.
+pub fn windows_powershell() -> &'static str {
+    static FOUND: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    FOUND.get_or_init(|| {
+        let on_path = std::env::var_os("PATH")
+            .map(|path| std::env::split_paths(&path).any(|dir| dir.join("pwsh.exe").is_file() || dir.join("pwsh").is_file()))
+            .unwrap_or(false);
+        let installed = std::env::var_os("ProgramFiles").is_some_and(|dir| PathBuf::from(dir).join("PowerShell").join("7").join("pwsh.exe").is_file());
+        if on_path || installed { "pwsh" } else { "powershell" }
+    })
+}
+
 /// Runs one command of a session. `shell` is "zsh"/"bash"/"default" on macOS and Linux, "powershell"/"cmd" on Windows.
 pub fn run_tracked(
     command: &str,
@@ -592,7 +605,7 @@ fn run_windows(
         ]);
         cmd
     } else {
-        let mut powershell = crate::process::command("powershell");
+        let mut powershell = crate::process::command(windows_powershell());
         let script = format!(
             "[Console]::OutputEncoding=[Text.Encoding]::UTF8; {command}\n$__wiqo_rc = if ($LASTEXITCODE) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}; Write-Output \"`n{CWD_MARKER}$((Get-Location).Path)\"; exit $__wiqo_rc"
         );

@@ -234,25 +234,89 @@ fn disk_lines() -> Vec<String> {
     lines
 }
 
-/// The busiest processes by CPU, sampled twice so the numbers mean something.
-fn process_lines(limit: usize) -> Vec<String> {
+/// One process as the list shows it: CPU in percent of one core (a busy process on a 10-core Mac can read up to 1000, as in Activity Monitor and `ps`).
+#[derive(Debug, Clone, PartialEq)]
+struct ProcessRow {
+    pid: u32,
+    cpu: f32,
+    memory_percent: f32,
+    name: String,
+}
+
+/// The rows busiest first: by CPU, then by memory, then by PID so equal rows keep a stable order.
+fn rank(mut rows: Vec<ProcessRow>, limit: usize) -> Vec<ProcessRow> {
+    rows.sort_by(|a, b| {
+        b.cpu
+            .total_cmp(&a.cpu)
+            .then(b.memory_percent.total_cmp(&a.memory_percent))
+            .then(a.pid.cmp(&b.pid))
+    });
+    rows.truncate(limit);
+    rows
+}
+
+/// sysinfo reads a process's CPU as the change since its previous refresh. On this Mac the first two refreshes of a new `System` both gave 0.0 for every
+/// process (the third was right), so the list is the third sample, a short pause apart.
+fn sample_processes() -> Vec<ProcessRow> {
     let mut system = sysinfo::System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    system.refresh_cpu_all();
+    for _ in 0..3 {
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL + Duration::from_millis(150));
+    }
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system.refresh_memory();
     let total_memory = system.total_memory().max(1) as f64;
-    let mut processes: Vec<_> = system.processes().values().collect();
-    processes.sort_by(|a, b| b.cpu_usage().total_cmp(&a.cpu_usage()));
+    system
+        .processes()
+        .values()
+        .map(|process| ProcessRow {
+            pid: process.pid().as_u32(),
+            cpu: process.cpu_usage(),
+            memory_percent: (process.memory() as f64 / total_memory * 100.0) as f32,
+            name: process.name().to_string_lossy().to_string(),
+        })
+        .collect()
+}
+
+/// What `ps` says (macOS and Linux): the same columns, used when every sampled CPU is exactly 0.0, which a running computer never has.
+#[cfg(unix)]
+fn ps_processes() -> Vec<ProcessRow> {
+    let mut command = std::process::Command::new("ps");
+    command.args(["-Aco", "pid=,pcpu=,pmem=,comm="]);
+    let Some(output) = run_with_timeout(command, Duration::from_secs(5)) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let pid = parts.next()?.parse().ok()?;
+            let cpu = parts.next()?.replace(',', ".").parse().ok()?;
+            let memory_percent = parts.next()?.replace(',', ".").parse().ok()?;
+            let name = parts.collect::<Vec<_>>().join(" ");
+            (!name.is_empty()).then_some(ProcessRow { pid, cpu, memory_percent, name })
+        })
+        .collect()
+}
+
+#[cfg(not(unix))]
+fn ps_processes() -> Vec<ProcessRow> {
+    Vec::new()
+}
+
+/// The busiest processes by CPU, as lines: PID, %CPU (of one core), %MEM, name.
+fn process_lines(limit: usize) -> Vec<String> {
+    let mut rows = sample_processes();
+    if !rows.iter().any(|row| row.cpu > 0.0) {
+        let from_ps = ps_processes();
+        if from_ps.iter().any(|row| row.cpu > 0.0) {
+            rows = from_ps;
+        }
+    }
     let mut lines = vec!["PID  %CPU  %MEM  AD".to_string()];
-    lines.extend(processes.iter().take(limit).map(|process| {
-        format!(
-            "{}  {:.1}  {:.1}  {}",
-            process.pid(),
-            process.cpu_usage(),
-            process.memory() as f64 / total_memory * 100.0,
-            process.name().to_string_lossy()
-        )
+    lines.extend(rank(rows, limit).iter().map(|row| {
+        format!("{}  {:.1}  {:.1}  {}", row.pid, row.cpu, row.memory_percent, row.name)
     }));
     lines
 }
@@ -610,6 +674,40 @@ mod tests {
         }
         assert!(text("systemInfo").contains("İşlemci:"));
         assert!(text("disks").contains("GB toplam"));
+    }
+
+    #[test]
+    fn ranking_puts_the_busiest_first_then_the_biggest_in_memory() {
+        let row = |pid, cpu, memory_percent: f32| ProcessRow { pid, cpu, memory_percent, name: format!("p{pid}") };
+        let ranked = rank(vec![row(1, 0.0, 9.0), row(2, 40.0, 0.1), row(3, 0.0, 12.0), row(4, 75.5, 0.0), row(5, 40.0, 3.0)], 4);
+        assert_eq!(ranked.iter().map(|r| r.pid).collect::<Vec<_>>(), vec![4, 5, 2, 3]);
+    }
+
+    #[test]
+    fn a_process_that_burns_cpu_reads_as_busy_and_leads_the_list() {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let busy = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut x = 0u64;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    std::hint::black_box(x);
+                }
+            })
+        };
+        let lines = process_lines(10);
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        busy.join().unwrap();
+        let mine = std::process::id().to_string();
+        let ours = lines
+            .iter()
+            .find(|line| line.split_whitespace().next() == Some(mine.as_str()))
+            .unwrap_or_else(|| panic!("the busy test process is not in the top 10: {lines:#?}"));
+        let cpu: f32 = ours.split_whitespace().nth(1).unwrap().parse().unwrap();
+        assert!(cpu > 30.0, "a spinning thread should read as busy, got {cpu}: {lines:#?}");
+        let first: f32 = lines[1].split_whitespace().nth(1).unwrap().parse().unwrap();
+        assert!(first > 0.0, "the busiest process must not read 0.0");
     }
 
     #[test]

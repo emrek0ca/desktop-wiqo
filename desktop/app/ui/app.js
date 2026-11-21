@@ -524,7 +524,7 @@ async function showPairing(pop) {
   phonesPopPairing = true;
   pop.replaceChildren();
   phonesPopLine(pop, "h3", "", "Telefonunu bağla");
-  phonesPopLine(pop, "p", "muted small", "Telefondaki Wiqo'da PC'ye bağlan'ı aç ve bu kodu okut. Kod 10 dakika geçerli.");
+  phonesPopLine(pop, "p", "muted small", "Telefondaki Wiqo'da PC'ye bağlan'ı aç ve bu kodu okut ya da kodu elle gir. Kod 10 dakika geçerli, bir kez kullanılır.");
   const qr = phonesPopLine(pop, "div", "qr", "");
   qr.innerHTML = `<div class="spinner"></div>`;
   const error = phonesPopLine(pop, "p", "error small", "");
@@ -532,6 +532,13 @@ async function showPairing(pop) {
   try {
     const offer = await invoke("start_pairing");
     qr.innerHTML = offer.qrSvg;
+    // For a phone that cannot scan (no camera, a dark room, the QR too small): the same code as text. Copy it here, paste it on the phone under
+    // "Kodu elle gir" (Universal Clipboard brings an iPhone's copy over by itself).
+    const copy = phonesPopLine(pop, "button", "link small", "Kodu kopyala (kamera yoksa)");
+    copy.onclick = async () => {
+      try { await navigator.clipboard.writeText(offer.code); copy.textContent = "Kopyalandı · telefonda “Kodu elle gir”e yapıştır"; }
+      catch { copy.textContent = "Kopyalanamadı"; }
+    };
   } catch (failure) {
     qr.innerHTML = "";
     error.textContent = `Kod oluşturulamadı: ${failure}`;
@@ -567,6 +574,9 @@ function renderPhonesPop() {
     };
     pop.append(row);
   }
+  // A second phone (or one that was reset) is added from here: the QR and the copyable code, without removing the phone that is linked.
+  const add = phonesPopLine(pop, "button", "link small", "Telefon ekle");
+  add.onclick = () => showPairing(pop);
 }
 
 function togglePhonesPop(anchor) {

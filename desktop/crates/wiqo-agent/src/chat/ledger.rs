@@ -28,6 +28,10 @@ pub(super) struct Ledger {
     /// How often the run was turned back for missing checks (at most twice), and whether for missing bad-request probes (once).
     nudges: usize,
     edge_nudged: bool,
+    /// Folders the request names to be created ("wiqo-test adında bir klasör"): files written elsewhere go back once, so a file is not left beside
+    /// the folder and called "inside" it.
+    expected_folders: Vec<String>,
+    placement_nudged: bool,
 }
 
 fn check_command() -> &'static Regex {
@@ -63,6 +67,56 @@ fn runs_changed_file(command: &str, changed: &[String]) -> bool {
         && changed.iter().filter_map(|path| path.rsplit('/').next()).filter(|name| name.contains('.')).any(|name| command.contains(name))
 }
 
+/// A call to an API, not a page: a method other than GET, a body or form, or a path that is not the page, its scripts or its assets. A dev server
+/// answering for its page (`curl localhost:5173`, `/src/main.jsx`) is checked by the answer being 200 and right, not by bad requests: asking a
+/// static app for a 422 sent a counter app into an API analysis.
+fn api_like_curl(command: &str) -> bool {
+    static PATTERN: OnceLock<(Regex, Regex)> = OnceLock::new();
+    let (flags, url) = PATTERN.get_or_init(|| {
+        (
+            Regex::new(r"(^|\s)(-X\s*\S+|--request\b|-d\b|--data\S*|--json\b|-F\b|--form\b|-T\b|--upload-file\b)").expect("flags"),
+            Regex::new(r#"(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(/[^\s'"?#]*)?"#).expect("url"),
+        )
+    });
+    if flags.is_match(command) {
+        return true;
+    }
+    let Some(path) = url.captures(command).and_then(|found| found.get(1)).map(|path| path.as_str()) else { return false };
+    let page = path == "/" || path.starts_with("/@") || path.starts_with("/src/") || path.starts_with("/assets/") || path.starts_with("/node_modules/") || path.starts_with("/static/")
+        || path.rsplit('/').next().is_some_and(|name| [".html", ".js", ".mjs", ".css", ".svg", ".png", ".jpg", ".ico", ".map", ".txt", ".woff2"].iter().any(|ext| name.ends_with(ext)));
+    !page
+}
+
+/// Folders the request asks to create by name: "wiqo-test adında bir klasör", "a folder named notes". Only the explicit forms, so a folder that is
+/// merely mentioned ("indirilenler klasöründeki dosyalar") never turns a run back.
+fn folders_named(goal: &str) -> Vec<String> {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    let pattern = PATTERN.get_or_init(|| {
+        Regex::new(r"(?i)([\p{L}\p{N}._-]+)\s+(?:adında|adlı|isimli|isminde)\s+(?:bir\s+)?klas[öo]r|folder\s+(?:named|called)\s+([\p{L}\p{N}._-]+)|(?:named|called)\s+([\p{L}\p{N}._-]+)\s+folder").expect("folders")
+    });
+    let mut found: Vec<String> = Vec::new();
+    for caps in pattern.captures_iter(goal) {
+        if let Some(name) = (1..=3).find_map(|index| caps.get(index)).map(|name| name.as_str().trim_matches(|c| c == '.' || c == '-').to_string()) {
+            if name.chars().count() >= 2 && !found.contains(&name) {
+                found.push(name);
+            }
+        }
+    }
+    found
+}
+
+/// Whether a path the run wrote is there now (`~` is the home folder); a relative path cannot be judged here and counts as there.
+fn is_there(path: &str) -> bool {
+    let full = match path.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir().map(|home| home.join(rest)),
+        None => Some(std::path::PathBuf::from(path)),
+    };
+    match full {
+        Some(full) if full.is_absolute() => full.exists(),
+        _ => true,
+    }
+}
+
 fn exit_code(output: &str) -> Option<i64> {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     let pattern = PATTERN.get_or_init(|| Regex::new(r#"exitCode\\?"\s*:\s*(-?\d+)"#).expect("exit pattern"));
@@ -80,6 +134,11 @@ fn short(command: &str) -> String {
 }
 
 impl Ledger {
+    /// The request's own words: folders it names to be created are expected to hold what the run writes.
+    pub(super) fn expect_from(&mut self, goal: &str) {
+        self.expected_folders = folders_named(goal);
+    }
+
     /// One finished tool call: `ok` is the call's own status; a command's exit code decides whether a check passed.
     pub(super) fn record(&mut self, name: &str, args: &Value, ok: bool, output: &str, job: Option<&str>) {
         let text = |key: &str| args[key].as_str().unwrap_or("").to_string();
@@ -103,8 +162,11 @@ impl Ledger {
                 if command.contains("curl") && local_server().is_match(&command) {
                     // A deliberate bad request answered with a 4xx is a passing probe even when `curl -f` exits 22; a 5xx never is.
                     let client_error = got_client_error(output);
-                    self.probes += 1;
-                    self.bad_probe |= client_error;
+                    // Only calls to an API count towards "tried it with good requests only": a page answering 200 is its own check.
+                    if api_like_curl(&command) {
+                        self.probes += 1;
+                        self.bad_probe |= client_error;
+                    }
                     let server_error = Regex::new(r"HTTP/[\d.]+ 5\d\d\b").is_ok_and(|pattern| pattern.is_match(output));
                     let reached = ok && (exit_code(output).is_none_or(|code| code == 0) || (client_error && exit_code(output) == Some(22)));
                     self.checked(label, reached && !server_error);
@@ -178,6 +240,14 @@ impl Ledger {
             why.push_str(" Ortam gerçekten yoksa (araç kurulu değil, veritabanı yok) çalıştırmadan bitir ve yanıtında neyin doğrulanmadığını açıkça yaz; çalışıyor deme.");
             return Some(why);
         }
+        if !self.placement_nudged && !self.changed.is_empty() {
+            let missing: Vec<&String> = self.expected_folders.iter().filter(|folder| !self.changed.iter().any(|path| path.split('/').any(|part| part == folder.as_str()))).collect();
+            if let Some(folder) = missing.first() {
+                self.placement_nudged = true;
+                let written: Vec<&str> = self.changed.iter().take(4).map(String::as_str).collect();
+                return Some(format!("İstekte \"{folder}\" adında bir klasör geçiyor ama yazdığın dosyalar bu klasörün içinde değil ({}). Dosyayı istenen klasörün içine yaz ya da taşı, sonra `ls -la <tam yol>` ile gör; yanıtında dosyanın tam yolunu yaz. Klasör içinde olmayan bir dosyaya \"{folder} içinde\" deme.", written.join(", ")));
+            }
+        }
         if self.probes > 0 && !self.bad_probe && !self.edge_nudged && !self.unchecked_changes() {
             self.edge_nudged = true;
             return Some("Sunucuyu yalnız başarılı isteklerle denedin. Bitirmeden en az şunları dene ve durum kodunu gör (curl -s -o /dev/null -w '%{http_code}'): bozuk JSON gövdesi, eksik ya da yalnız boşluktan oluşan zorunlu alan, yanlış tipte değer, olmayan bir id. Sunucu çökmemeli, 400/404/422 gibi anlamlı bir kod dönmeli; çökerse ya da 500/200 dönerse düzelt ve yeniden dene.".to_string());
@@ -192,7 +262,8 @@ impl Ledger {
         }
         let mut lines = vec!["DOĞRULAMA".to_string()];
         if !self.changed.is_empty() {
-            let shown: Vec<&str> = self.changed.iter().take(8).map(String::as_str).collect();
+            // The paths are the ones the tools wrote, looked at again now: a file that is not at its path is said so, not listed as done.
+            let shown: Vec<String> = self.changed.iter().take(8).map(|path| if is_there(path) { path.clone() } else { format!("{path} (bulunamadı)") }).collect();
             lines.push(format!("Yapıldı: {} dosya değişti — {}{}", self.changed.len(), shown.join(", "), if self.changed.len() > 8 { ", …" } else { "" }));
         }
         // Only the latest result of each check, and only checks run after the last change prove the current code.
@@ -261,6 +332,50 @@ mod tests {
         assert!(ledger.turn_back().is_none(), "two turn-backs at most");
         ledger.record("shell", &json!({ "command": "python3 report.py sales.csv" }), true, r#"{"output":"{\"exitCode\":0}"}"#, None);
         assert!(!ledger.unchecked_changes(), "running the script it wrote is a check");
+    }
+
+    #[test]
+    fn a_page_on_a_dev_server_is_checked_by_its_answer_not_by_bad_requests() {
+        let mut ledger = Ledger::default();
+        ledger.record("write_file", &json!({ "path": "/p/src/App.jsx" }), true, "", None);
+        for command in ["curl -s -o /dev/null -w '%{http_code}' http://localhost:5173", "curl -s localhost:5173/", "curl -s http://localhost:5173/src/main.jsx"] {
+            ledger.record("shell", &json!({ "command": command }), true, r#"{"output":"{\"exitCode\":0,\"stdout\":\"200\"}"}"#, None);
+        }
+        assert!(!ledger.unchecked_changes(), "the page answering is a check");
+        assert!(ledger.turn_back().is_none(), "no bad-request nudge for a static page");
+        assert!(api_like_curl("curl -s localhost:3000/notes"));
+        assert!(api_like_curl("curl -X POST localhost:3000/"));
+        assert!(api_like_curl("curl -d '{}' http://127.0.0.1:8000"));
+        assert!(!api_like_curl("curl -s localhost:5173"));
+        assert!(!api_like_curl("curl -s localhost:5173/index.html"));
+    }
+
+    #[test]
+    fn a_file_written_beside_the_folder_the_request_names_goes_back_once() {
+        assert_eq!(folders_named("Masaüstünde wiqo-test adında bir klasör oluştur ve içine merhaba.txt yaz"), vec!["wiqo-test".to_string()]);
+        assert_eq!(folders_named("create a folder named notes and put a.txt in it"), vec!["notes".to_string()]);
+        assert!(folders_named("indirilenler klasöründeki dosyaları listele").is_empty(), "a folder only mentioned is not expected");
+
+        let mut ledger = Ledger::default();
+        ledger.expect_from("Masaüstünde wiqo-test adında bir klasör oluştur ve içine merhaba.txt yaz");
+        ledger.record("write_file", &json!({ "path": "/Users/a/Desktop/merhaba.txt" }), true, "", None);
+        ledger.record("shell", &json!({ "command": "cat merhaba.txt && ls" }), true, "", None);
+        let why = ledger.turn_back().expect("written beside the folder");
+        assert!(why.contains("wiqo-test") && why.contains("/Users/a/Desktop/merhaba.txt"), "{why}");
+        assert!(ledger.turn_back().is_none(), "once");
+
+        let mut ledger = Ledger::default();
+        ledger.expect_from("wiqo-test adında bir klasör oluştur ve içine merhaba.txt yaz");
+        ledger.record("write_file", &json!({ "path": "/Users/a/Desktop/wiqo-test/merhaba.txt" }), true, "", None);
+        assert!(ledger.turn_back().is_some_and(|why| why.contains("hiçbir şey çalıştırmadın")), "in the folder: only the unchecked-change nudge");
+    }
+
+    #[test]
+    fn the_report_says_when_a_written_file_is_not_at_its_path() {
+        let mut ledger = Ledger::default();
+        ledger.record("write_file", &json!({ "path": "/definitely/not/here/merhaba.txt" }), true, "", None);
+        let report = ledger.report().unwrap();
+        assert!(report.contains("/definitely/not/here/merhaba.txt (bulunamadı)"), "{report}");
     }
 
     #[test]

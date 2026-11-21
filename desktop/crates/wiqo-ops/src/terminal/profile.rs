@@ -113,7 +113,7 @@ fn os() -> String {
 
 pub fn profile() -> Value {
     let shell = if cfg!(windows) {
-        "powershell".to_string()
+        shell::windows_powershell().to_string()
     } else {
         shell::default_shell()
             .rsplit('/')

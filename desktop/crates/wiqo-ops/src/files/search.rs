@@ -240,8 +240,10 @@ fn group_score(name: &str, path: &str, tokens: &[String]) -> f64 {
         .file_stem()
         .map(|stem| stem.to_string_lossy().to_string())
         .unwrap_or_else(|| name.to_string());
-    let folded = fold(&stem);
-    let query = fold(&tokens.join(" "));
+    // "wiqo test" must find the folder "wiqo-test" or "wiqo_test": separators in a name read as spaces.
+    let separators = |text: String| text.replace(['-', '_', '.'], " ");
+    let folded = separators(fold(&stem));
+    let query = separators(fold(&tokens.join(" ")));
     let mut total = if folded == query {
         6.0
     } else if folded.starts_with(&query) {
