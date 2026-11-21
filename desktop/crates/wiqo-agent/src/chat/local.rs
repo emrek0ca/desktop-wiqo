@@ -784,6 +784,30 @@ fn steps_in_words(log: &[String]) -> String {
     format!("{counts}. Son adım: {words}.")
 }
 
+/// Neighbouring `delta` events become one (at most 3 500 characters each, under the server's bound); everything else stays as it is, in order.
+fn join_pieces(events: Vec<Value>) -> Vec<Value> {
+    let mut joined: Vec<Value> = Vec::with_capacity(events.len());
+    for event in events {
+        if event["type"] == "delta" {
+            if let Some(last) = joined.last_mut().filter(|last| last["type"] == "delta") {
+                let together = format!("{}{}", text_of(&last["text"]), text_of(&event["text"]));
+                if together.chars().count() <= 3_500 {
+                    last["text"] = json!(together);
+                    continue;
+                }
+            }
+        }
+        joined.push(event);
+    }
+    joined
+}
+
+/// What a model call shows while it is written: a piece of the answer, or the pieces so far taken back (a tool call followed them, or the call started over).
+enum Live {
+    Text(String),
+    Reset,
+}
+
 /// Why a model call ended without an answer.
 enum ModelStop {
     /// The person stopped the task (here or from another device).
@@ -854,6 +878,9 @@ impl Chat {
                     Err(_) => break,
                 }
             }
+            // The pieces of an answer arrive many times a second and the phone that asked has them already (the relay): the server gets the run of pieces in
+            // one event, for the person's other devices.
+            let batch = join_pieces(batch);
             // The newest token: a run of hours can outlive the one it started with.
             let bearer = self.token().unwrap_or_else(|_| token.to_string());
             let _ = self
@@ -1139,7 +1166,11 @@ impl Chat {
             let think = |label: &str, state: &str| say(json!({ "type": "activity", "activity": { "id": think_id, "phase": "plan", "label": label, "state": state } }));
             think(think_label, "running");
             let waiting = |words: String| think(&words, "running");
-            let answer = match self.model_call(token, run_id, &work.messages, &work.tools, stop, &waiting).await {
+            let live = |event: Live| match event {
+                Live::Text(piece) => say(json!({ "type": "delta", "text": piece })),
+                Live::Reset => say(json!({ "type": "reset" })),
+            };
+            let answer = match self.model_call(token, run_id, &work.messages, &work.tools, stop, &waiting, &live).await {
                 Ok(answer) => answer,
                 Err(ModelStop::Cancelled) => {
                     think("Durduruldu", "failed");
@@ -1422,7 +1453,7 @@ impl Chat {
             json!({ "role": "user", "content": format!("KULLANICININ İSTEĞİ:\n{}\n\nÇALIŞMA KAYDI:\n{}", clip(&work.goal, 4_000), transcript(&work.messages[1..start])) }),
         ];
         let quiet = |_: String| {};
-        let summary = match self.model_call(token, run_id, &ask, &json!([]), stop, &quiet).await {
+        let summary = match self.model_call(token, run_id, &ask, &json!([]), stop, &quiet, &|_: Live| {}).await {
             Ok(answer) if !text_of(&answer["content"]).trim().is_empty() => clip(&text_of(&answer["content"]), 12_000),
             _ => format!("(Model özet yazamadı; adımların listesi)\n{}", work.log.iter().rev().take(80).rev().cloned().collect::<Vec<_>>().join("\n")),
         };
@@ -1442,8 +1473,9 @@ impl Chat {
 
     /// One model call through the server's gateway. A model that is busy and a server that is out of reach are waited for (about twelve minutes in
     /// all, said to the person); what waiting cannot change ends the call with its reason.
-    async fn model_call(&self, token: &str, run_id: &str, messages: &[Value], tools: &Value, stop: &Stop, waiting: &impl Fn(String)) -> Result<Value, ModelStop> {
-        let body = json!({ "runId": run_id, "messages": messages, "tools": tools });
+    async fn model_call(&self, token: &str, run_id: &str, messages: &[Value], tools: &Value, stop: &Stop, waiting: &impl Fn(String), live: &impl Fn(Live)) -> Result<Value, ModelStop> {
+        // The answer comes back as it is written (`stream`): the pieces go on to the phone at once; the call is still one call with one result.
+        let body = json!({ "runId": run_id, "messages": messages, "tools": tools, "stream": true });
         let mut last = String::from("yanıt yok");
         let mut refused = 0usize;
         for attempt in 0..=MODEL_WAITS.len() {
@@ -1469,8 +1501,27 @@ impl Chat {
                     continue;
                 }
             };
-            let status = response.status().as_u16();
-            let value: Value = response.json().await.unwrap_or(Value::Null);
+            let mut status = response.status().as_u16();
+            let streamed = (200..300).contains(&status) && response.headers().get("content-type").and_then(|kind| kind.to_str().ok()).is_some_and(|kind| kind.contains("event-stream"));
+            let value: Value = if streamed {
+                match self.read_model_stream(response, stop, live).await {
+                    Ok(Ok(message)) => return Ok(message),
+                    // The server refused after it had started (a retry that failed, a busy model): decided like any refusal below.
+                    Ok(Err(error)) => {
+                        status = error["error"]["status"].as_u64().unwrap_or(502) as u16;
+                        error
+                    }
+                    Err(ModelStop::Cancelled) => return Err(ModelStop::Cancelled),
+                    // The line dropped in the middle of the answer: what was shown is taken back and the call is made again.
+                    Err(_) => {
+                        live(Live::Reset);
+                        last = "bağlantı koptu".into();
+                        continue;
+                    }
+                }
+            } else {
+                response.json().await.unwrap_or(Value::Null)
+            };
             if (200..300).contains(&status) {
                 return Ok(value["message"].clone());
             }
@@ -1500,6 +1551,35 @@ impl Chat {
             last = message;
         }
         Err(ModelStop::Failed(last))
+    }
+
+    /// The gateway's event stream for one model call: `{delta}` pieces go to `live`, `{reset}` takes them back, `{done, message}` is the answer and `{error}` a
+    /// refusal after the stream had started. Err when the line ends or breaks before an end.
+    async fn read_model_stream(&self, response: reqwest::Response, stop: &Stop, live: &impl Fn(Live)) -> Result<Result<Value, Value>, ModelStop> {
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        loop {
+            let chunk = tokio::select! {
+                chunk = stream.next() => chunk,
+                _ = stop.asked() => return Err(ModelStop::Cancelled),
+            };
+            let Some(Ok(bytes)) = chunk else { return Err(ModelStop::Failed("akış kesildi".into())) };
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(end) = buffer.find("\n\n") {
+                let frame: String = buffer.drain(..end + 2).collect();
+                let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) else { continue };
+                let Ok(event) = serde_json::from_str::<Value>(data) else { continue };
+                if let Some(piece) = event["delta"].as_str() {
+                    live(Live::Text(piece.to_string()));
+                } else if event["reset"] == true {
+                    live(Live::Reset);
+                } else if event["done"] == true {
+                    return Ok(Ok(event["message"].clone()));
+                } else if event["error"].is_object() {
+                    return Ok(Err(json!({ "error": event["error"].clone() })));
+                }
+            }
+        }
     }
 
     /// A web search or one page, through the server's web layer.
@@ -1830,6 +1910,19 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pieces_of_an_answer_reach_the_server_as_one_event() {
+        use super::join_pieces;
+        use serde_json::json;
+        let events = vec![json!({ "type": "delta", "text": "Test" }), json!({ "type": "delta", "text": "ler geçti." }), json!({ "type": "step_update", "step": {} }), json!({ "type": "delta", "text": "Bitti" })];
+        let joined = join_pieces(events);
+        assert_eq!(joined.len(), 3);
+        assert_eq!(joined[0]["text"], "Testler geçti.");
+        assert_eq!(joined[2]["text"], "Bitti");
+        let long = vec![json!({ "type": "delta", "text": "a".repeat(3_000) }), json!({ "type": "delta", "text": "b".repeat(1_000) })];
+        assert_eq!(join_pieces(long).len(), 2);
+    }
+
     #[test]
     fn a_stop_says_how_far_the_run_got_not_which_commands_it_ran() {
         use super::steps_in_words;
