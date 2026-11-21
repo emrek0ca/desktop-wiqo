@@ -1,0 +1,37 @@
+{
+  "v": 1,
+  "id": "agent_task:12",
+  "kind": "task",
+  "state": "failed",
+  "role": "general",
+  "title": "Pazar raporu",
+  "surface": "background",
+  "at": "2026-11-06T09:00:00.000Z",
+  "stateVersion": 7,
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Kaynakları topla",
+      "state": "done",
+      "role": "general",
+      "brief": "3 kaynak bulundu.",
+      "seconds": 41
+    },
+    {
+      "id": "s2",
+      "title": "Raporu yaz",
+      "state": "failed",
+      "role": "general"
+    }
+  ],
+  "progress": {
+    "done": 1,
+    "total": 2
+  },
+  "error": "Görev 2 saat boyunca yeni bir adım tamamlayamadığı için süre doldu; tamamlanan adımlar korundu.",
+  "conversationId": "sample",
+  "ref": {
+    "type": "agent_task",
+    "id": "12"
+  }
+}

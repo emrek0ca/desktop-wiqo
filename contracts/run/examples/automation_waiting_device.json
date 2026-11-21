@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "id": "automation_run:12",
+  "kind": "automation",
+  "state": "waiting_device",
+  "role": "execution",
+  "title": "PC sabah kontrolü",
+  "surface": "schedule",
+  "at": "2026-11-06T09:00:00.000Z",
+  "stateVersion": 7,
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Sistem durumunu oku",
+      "state": "pending",
+      "target": "pc"
+    }
+  ],
+  "progress": {
+    "done": 0,
+    "total": 1
+  },
+  "waiting": {
+    "reason": "device"
+  },
+  "ref": {
+    "type": "automation_run",
+    "id": "12"
+  }
+}

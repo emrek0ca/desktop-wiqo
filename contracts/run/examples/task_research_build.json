@@ -1,0 +1,46 @@
+{
+  "v": 1,
+  "id": "agent_task:12",
+  "kind": "task",
+  "state": "running",
+  "role": "general",
+  "title": "Kahve Durağı sitesi",
+  "surface": "background",
+  "at": "2026-11-06T09:00:00.000Z",
+  "stateVersion": 7,
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Kahve Durağı'nı araştır",
+      "state": "done",
+      "role": "general",
+      "brief": "YAPIM ÖZETİ: Kahve Durağı\n- Ne yapıyor: Kadıköy'de üçüncü dalga kahve dükkânı [https://example.com/kahve-duragi]",
+      "seconds": 52,
+      "artifacts": [
+        {
+          "id": "00000000-0000-4000-8000-0000000000b1",
+          "filename": "yapim-ozeti-Kahve-Duragi.json",
+          "mimeType": "application/json",
+          "purpose": "build_brief"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "title": "Tek sayfalık site yap",
+      "state": "running",
+      "role": "developer",
+      "builds": "web"
+    }
+  ],
+  "progress": {
+    "done": 1,
+    "total": 2
+  },
+  "detail": "Yapım özetinden siteyi yazıyorum…",
+  "conversationId": "sample",
+  "ref": {
+    "type": "agent_task",
+    "id": "12"
+  }
+}
