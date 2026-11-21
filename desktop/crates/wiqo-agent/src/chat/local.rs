@@ -1088,7 +1088,7 @@ impl Chat {
         work.messages.push(json!({ "role": "assistant", "content": reply }));
         self.save_session(conversation, &work, false);
         let reply = work.vault.open(&reply);
-        emit(json!({ "type": "done", "reply": reply, "localRun": run_id, "privateKept": work.vault.len() }));
+        emit(super::progress::done(&reply, &run_id, work.vault.len()));
         // Delivered in the background: the turn ends for the person now, and a server that is out of reach gets the answer when it is back.
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
         tokio::spawn(deliver(self.http.clone(), self.server.clone(), bearer, run_id, reply, std::mem::take(&mut work.sent)));

@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 /// How much of the end of a step's output is told. The server keeps at most this much too.
 const OUTPUT_TAIL: usize = 2_000;
@@ -44,9 +45,26 @@ pub fn touched(paths: Vec<PathBuf>) -> Vec<Touched> {
     paths.into_iter().map(|path| Touched { existed: path.exists(), path }).collect()
 }
 
+/// An id that is not "local-<uuid>" still maps to the same UUID every time (FNV-1a over 128 bits, with the version and variant bits of a v4).
+fn stable_uuid(text: &str) -> Uuid {
+    let mut hash: u128 = 0x6c62272e07bb014262b821756295c58d;
+    for byte in text.bytes() {
+        hash ^= byte as u128;
+        hash = hash.wrapping_mul(0x0000000001000000000000000000013b);
+    }
+    Uuid::from_u128((hash & !(0xf << 76) | (0x4 << 76)) & !(0x3 << 62) | (0x2 << 62))
+}
+
+/// The fields every client requires of a step (the phone's `ExecutionStepUpdate`): a UUID id (the one inside "local-<uuid>", so the server keeps it as it is),
+/// the desktop's own id beside it, and the kind and the two flags. The same step always gets the same id.
+fn base(id: &str, summary: &str, status: &str, tool: &str) -> Value {
+    let uuid = Uuid::parse_str(id.trim_start_matches("local-")).unwrap_or_else(|_| stable_uuid(id));
+    json!({ "id": uuid.to_string(), "localId": id, "kind": "device", "requiresConfirmation": false, "requiresUserPresence": false, "summary": summary, "status": status, "tool": tool })
+}
+
 /// The step has started.
 pub fn running(id: &str, summary: &str, tool: &str, args: &Value, seal: &mut dyn FnMut(&str) -> String) -> Value {
-    let mut step = json!({ "id": id, "summary": summary, "status": "running", "tool": tool });
+    let mut step = base(id, summary, "running", tool);
     if tool == "shell" {
         let command = text(&args["command"]);
         if !command.is_empty() {
@@ -122,7 +140,8 @@ pub fn finished(
     touched: &[Touched],
     seal: &mut dyn FnMut(&str) -> String,
 ) -> Value {
-    let mut step = json!({ "id": id, "summary": summary, "status": if ok { "succeeded" } else { "failed" }, "tool": tool, "durationMs": took_ms as u64 });
+    let mut step = base(id, summary, if ok { "succeeded" } else { "failed" }, tool);
+    step["durationMs"] = json!(took_ms as u64);
     if tool == "shell" {
         let command = text(&args["command"]);
         if !command.is_empty() {
@@ -152,6 +171,15 @@ pub fn finished(
     json!({ "type": "step_update", "step": step })
 }
 
+/// The end of a run, in the shape of the server's own `done` (reply, steps, executionState, artifacts, backendConfirmations, executionTarget) plus what only
+/// this computer knows. The phone decodes it like any other turn's end; a `done` without `steps` did not decode.
+pub fn done(reply: &str, run_id: &str, private_kept: usize) -> Value {
+    json!({
+        "type": "done", "reply": reply, "steps": [], "executionState": "complete_backend", "artifacts": [], "backendConfirmations": [],
+        "executionTarget": "device", "localRun": run_id, "privateKept": private_kept
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,15 +196,33 @@ mod tests {
 
     /// The example is the shape the phones read (the server added the UUID id and the fields every client requires); what this computer says must equal it field for field.
     fn same_fields(told: &Value, expected: &Value) {
-        for key in ["summary", "status", "tool", "command", "workdir", "exitCode", "durationMs", "output", "message", "files"] {
+        for key in ["id", "localId", "kind", "requiresConfirmation", "requiresUserPresence", "summary", "status", "tool", "command", "workdir", "exitCode", "durationMs", "output", "message", "files"] {
             assert_eq!(told["step"][key], expected["step"][key], "{key}");
         }
     }
 
     #[test]
+    fn the_end_of_a_run_is_the_servers_done_with_the_local_run_added() {
+        let expected: Value = serde_json::from_str(include_str!("../../../../../contracts/agent-events/examples/done.json")).expect("example is JSON");
+        assert_eq!(done("Testler geçiyor.", "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", 0), expected);
+    }
+
+    #[test]
+    fn a_step_leaves_with_a_uuid_id_and_every_field_the_phone_requires() {
+        let mut seal = |text: &str| text.to_string();
+        let told = running("local-6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", "x", "shell", &json!({ "command": "ls" }), &mut seal);
+        assert_eq!(told["step"]["id"], "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10");
+        assert_eq!(told["step"]["localId"], "local-6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10");
+        assert_eq!(told["step"]["kind"], "device");
+        assert_eq!(told["step"]["requiresConfirmation"], false);
+        assert_eq!(told["step"]["requiresUserPresence"], false);
+        assert!(Uuid::parse_str(told["step"]["id"].as_str().unwrap_or_default()).is_ok());
+    }
+
+    #[test]
     fn a_running_step_says_what_it_runs_and_where() {
         let mut seal = |text: &str| text.to_string();
-        let told = running("local-1", "Testleri çalıştır", "shell", &json!({ "command": "pytest -q", "workdir": "~/Desktop/deneme/proje" }), &mut seal);
+        let told = running("local-6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", "Testleri çalıştır", "shell", &json!({ "command": "pytest -q", "workdir": "~/Desktop/deneme/proje" }), &mut seal);
         same_fields(&told, &example("step_running"));
     }
 
@@ -185,7 +231,7 @@ mod tests {
         let mut seal = |text: &str| text.to_string();
         let output = json!({ "kind": "terminalResult", "stdout": "FAILED test_hesap.py::test_toplam - assert 5 == 6\n1 failed, 3 passed in 0.31s", "exitCode": 1 }).to_string();
         let args = json!({ "command": "pytest -q", "workdir": "~/Desktop/deneme/proje" });
-        let told = finished("local-1", "Testleri çalıştır", "shell", &args, false, "Komut 1 koduyla bitti.", &output, 2_400, &[], &mut seal);
+        let told = finished("local-6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", "Testleri çalıştır", "shell", &args, false, "Komut 1 koduyla bitti.", &output, 2_400, &[], &mut seal);
         same_fields(&told, &example("step_failed"));
     }
 

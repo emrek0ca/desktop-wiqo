@@ -1,7 +1,7 @@
 {
   "type": "step_update",
   "step": {
-    "id": "3eb663c4-08cf-56a9-a47c-737fb9706637",
+    "id": "0b9f6e52-3c1d-4c8e-8a77-52d4d3a1c9aa",
     "kind": "device",
     "summary": "hesap.py düzeltildi",
     "requiresConfirmation": false,
