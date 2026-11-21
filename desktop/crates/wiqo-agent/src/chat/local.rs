@@ -1252,7 +1252,12 @@ impl Chat {
                 }
                 let words = label(&name, args.as_ref().unwrap_or(&Value::Null));
                 let step_id = format!("local-{}", Uuid::new_v4());
-                say(json!({ "type": "step_update", "step": { "id": step_id, "summary": words, "status": "running" } }));
+                // Told to the other devices with what it is (the tool, the command, the folder) and, below, how it ended; the commands carry stand-ins for private values.
+                let no_args = Value::Null;
+                let told_args = args.as_ref().unwrap_or(&no_args);
+                let touched = super::progress::touched(file_targets(&name, told_args));
+                let started = Instant::now();
+                say(super::progress::running(&step_id, &words, &name, told_args, &mut |text: &str| work.vault.seal(text)));
                 let key = format!("{name}:{raw}");
                 let tried = failed_calls.get(&key).copied().unwrap_or(0);
                 let mut outcome = match &args {
@@ -1271,6 +1276,8 @@ impl Chat {
                     Some(args) if name == "accounts" => self.accounts_tool(run_id, token, args, approve).await,
                     Some(args) => self.local_tool(engine, &name, args, &mut work.reach, approve, stop).await,
                 };
+                // What this call printed, before the notes below are added for the model.
+                let printed = outcome.output.clone();
                 if let Some(args) = &args {
                     work.ledger.record(&name, args, outcome.ok, &outcome.output, outcome.job.as_deref());
                 }
@@ -1325,11 +1332,7 @@ impl Chat {
                         work.reach.servers.retain(|(_, job)| *job != id);
                     }
                 }
-                let mut step = json!({ "id": step_id, "summary": words, "status": if outcome.ok { "completed" } else { "failed" } });
-                if !outcome.ok && !outcome.brief.is_empty() {
-                    step["message"] = json!(outcome.brief);
-                }
-                say(json!({ "type": "step_update", "step": step }));
+                say(super::progress::finished(&step_id, &words, &name, told_args, outcome.ok, &outcome.brief, &printed, started.elapsed().as_millis(), &touched, &mut |text: &str| work.vault.seal(text)));
                 work.log.push(format!("{} {words}{}", if outcome.ok { "✓" } else { "✗" }, if outcome.ok { String::new() } else { format!(" ({})", outcome.brief) }));
                 // What the tool read goes to the model with its private values swapped for stand-ins (vault.rs).
                 let sealed = work.vault.seal(&outcome.output);

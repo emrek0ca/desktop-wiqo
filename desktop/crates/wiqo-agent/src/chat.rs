@@ -21,6 +21,7 @@ use crate::Event;
 
 mod ledger;
 mod local;
+mod progress;
 mod repo;
 mod vault;
 

@@ -709,7 +709,7 @@
         const index = reply.steps.findIndex((step) => step.id === data.step.id);
         if (index >= 0) reply.steps[index] = { ...reply.steps[index], ...data.step };
         else reply.steps.push(data.step);
-        const state = data.step.status === "running" ? "running" : data.step.status === "completed" ? "done" : "failed";
+        const state = data.step.status === "running" ? "running" : (data.step.status === "completed" || data.step.status === "succeeded") ? "done" : "failed";
         apply(reply.trace, { id: `pc:${data.step.id}`, phase: "device", label: data.step.summary || "PC adımı", state });
         break;
       }
