@@ -596,10 +596,10 @@ fn reaches_out(command: &str) -> bool {
         || (has("docker") && has("push"))
 }
 
-/// `osascript` that macOS refused (-1743 "not authorized to send Apple events", -10004 "privilege violation"): not a mistake in the command but a switch only the person
-/// can turn on. Seen when the model answered "Chrome'da ne açık" with a page of general advice and named Terminal, which is not the app that asks. The model is told
-/// what the refusal is, which app holds the permission (Wiqo) and which setting, so its answer is two sentences and right.
-fn automation_note(command: &str, output: &str) -> Option<String> {
+/// The app an `osascript` call was refused for by macOS (-1743 "not authorized to send Apple events", -10004 "privilege violation"), by the name the script used.
+/// Not a mistake in the command but a switch only the person can turn on. Seen when the model answered "Chrome'da ne açık" with a page of general advice and
+/// named Terminal, which is not the app that asks.
+fn denied_app(command: &str, output: &str) -> Option<String> {
     if cfg!(windows) || !command.contains("osascript") {
         return None;
     }
@@ -609,10 +609,22 @@ fn automation_note(command: &str, output: &str) -> Option<String> {
     }
     static TARGET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let target = TARGET.get_or_init(|| regex::Regex::new(r#"application\s+"([^"]{1,60})""#).expect("pattern"));
-    let app = target.captures(command).map(|found| found[1].to_string()).unwrap_or_else(|| "ilgili uygulama".into());
-    Some(format!(
-        "NOT: macOS bu komuta izin vermedi. Komutta hata yok; kullanıcının açması gereken bir macOS izni: Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon bölümünde **Wiqo** altında \"{app}\" kutusu açık olmalı (izni isteyen uygulama Wiqo'dur, Terminal değil). Kullanıcıya bunu iki cümleyle söyle, uzun anlatma; aynı işi başka bir yolla deneme, aynı izin gerekir. İstersen ayarı bu bilgisayarda açan komutu çalıştır: open \"x-apple.systempreferences:com.apple.preference.security?Privacy_Automation\""
-    ))
+    Some(target.captures(command).map(|found| found[1].to_string()).unwrap_or_default())
+}
+
+/// What the model is told after the permission was asked for (`ask_automation_for`): the answer decides whether to run the script again or to say what is left.
+fn automation_note(app: &str, answer: &crate::permissions::AutomationAnswer) -> String {
+    use crate::permissions::AutomationAnswer::*;
+    let name = if app.is_empty() { "ilgili uygulama" } else { app };
+    match answer {
+        Granted => format!("NOT: macOS izin penceresi bu bilgisayarda gösterildi ve kullanıcı \"{name}\" için Wiqo'ya izin verdi. Aynı komutu şimdi yeniden çalıştır."),
+        Refused => format!(
+            "NOT: macOS \"{name}\" için Wiqo'ya izin vermiyor (kullanıcı reddetmiş ya da kapalı). Komutta hata yok. Bu bilgisayarda Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon sayfasını açtım. Kullanıcıya iki cümleyle söyle: Wiqo altında \"{name}\" kutusunu açsın, sonra \"devam et\" desin. Terminal'den söz etme, uzun anlatma, aynı işi başka yolla deneme."
+        ),
+        Unknown => format!(
+            "NOT: macOS bu komuta izin vermedi. Komutta hata yok; kullanıcının açması gereken bir macOS izni: Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon bölümünde **Wiqo** altında \"{name}\" kutusu açık olmalı (izni isteyen uygulama Wiqo'dur, Terminal değil). Kullanıcıya bunu iki cümleyle söyle; aynı işi başka yolla deneme."
+        ),
+    }
 }
 
 /// A Windows command that names no path outside its working folder: no drive letter, UNC path, home, environment variable or parent folder.
@@ -1341,8 +1353,16 @@ impl Chat {
                 // What this call printed, before the notes below are added for the model.
                 let printed = outcome.output.clone();
                 if name == "shell" {
-                    if let Some(note) = automation_note(&text_of(&told_args["command"]), &outcome.output) {
-                        outcome.output = format!("{}\n\n{note}", outcome.output);
+                    if let Some(app) = denied_app(&text_of(&told_args["command"]), &outcome.output) {
+                        // macOS refused the script: the permission is asked for right here (its own dialog on this computer, or the Settings page when it
+                        // was refused before), so the person taps once on the computer instead of finding a page in System Settings. A dialog waits for
+                        // its answer for two minutes at most.
+                        say(json!({ "type": "activity", "activity": { "id": "local-permission", "phase": "tool", "label": format!("macOS izni isteniyor: {}", if app.is_empty() { "uygulama" } else { app.as_str() }), "state": "running" } }));
+                        let asked = app.clone();
+                        let answer = tokio::time::timeout(Duration::from_secs(120), tokio::task::spawn_blocking(move || crate::permissions::ask_automation_for(&asked))).await;
+                        let answer = answer.ok().and_then(Result::ok).unwrap_or(crate::permissions::AutomationAnswer::Unknown);
+                        say(json!({ "type": "activity", "activity": { "id": "local-permission", "phase": "tool", "label": "macOS izni soruldu", "state": "done" } }));
+                        outcome.output = format!("{}\n\n{}", outcome.output, automation_note(&app, &answer));
                     }
                 }
                 if let Some(args) = &args {
@@ -1935,14 +1955,18 @@ impl Chat {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_refused_apple_event_is_told_to_the_model_as_a_permission_for_wiqo() {
-        use super::automation_note;
+    fn a_refused_apple_event_names_the_app_and_the_answer_decides_what_the_model_is_told() {
+        use super::{automation_note, denied_app};
+        use crate::permissions::AutomationAnswer::*;
         let command = r#"osascript -e 'tell application "Google Chrome" to get URL of tabs of windows'"#;
-        let note = automation_note(command, "execution error: Google Chrome bir hatayla karşılaştı: Ayrıcalık ihlali oluştu. (-10004)").expect("a note");
-        assert!(note.contains("Wiqo") && note.contains("Google Chrome") && note.contains("Otomasyon"));
-        assert!(automation_note(command, "execution error: Not authorized to send Apple events to Google Chrome. (-1743)").is_some());
-        assert!(automation_note(command, "https://example.com").is_none());
-        assert!(automation_note("ls -la", "(-10004)").is_none());
+        assert_eq!(denied_app(command, "execution error: Google Chrome bir hatayla karşılaştı: Ayrıcalık ihlali oluştu. (-10004)").as_deref(), Some("Google Chrome"));
+        assert!(denied_app(command, "execution error: Not authorized to send Apple events to Google Chrome. (-1743)").is_some());
+        assert!(denied_app(command, "https://example.com").is_none());
+        assert!(denied_app("ls -la", "(-10004)").is_none());
+        assert!(automation_note("Google Chrome", &Granted).contains("yeniden çalıştır"));
+        let refused = automation_note("Google Chrome", &Refused);
+        assert!(refused.contains("Otomasyon") && refused.contains("devam et") && !refused.contains("yeniden çalıştır"));
+        assert!(automation_note("Google Chrome", &Unknown).contains("**Wiqo**"));
     }
 
     #[test]

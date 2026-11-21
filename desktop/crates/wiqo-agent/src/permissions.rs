@@ -40,9 +40,11 @@ struct Asked {
     screen_asked: bool,
 }
 
-/// The apps Wiqo drives with AppleScript (bundle id, name).
+/// The apps Wiqo drives with AppleScript (bundle id, name). The agent runs `osascript` against any of them, so the browsers and the media players are here too:
+/// "Chrome'da ne açık" needs Chrome's Automation permission, and a person cannot be expected to find that page in System Settings. Only the ones installed
+/// on this computer are asked about (`automation_apps`).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const AUTOMATION: [(&str, &str); 7] = [
+const AUTOMATION_ALL: &[(&str, &str)] = &[
     ("com.apple.systemevents", "Sistem Olayları"),
     ("com.apple.finder", "Finder"),
     ("com.apple.mail", "Mail"),
@@ -50,7 +52,20 @@ const AUTOMATION: [(&str, &str); 7] = [
     ("com.apple.Notes", "Notlar"),
     ("com.apple.iCal", "Takvim"),
     ("com.apple.reminders", "Anımsatıcılar"),
+    ("com.google.Chrome", "Google Chrome"),
+    ("com.apple.Safari", "Safari"),
+    ("com.microsoft.edgemac", "Microsoft Edge"),
+    ("com.brave.Browser", "Brave"),
+    ("company.thebrowser.Browser", "Arc"),
+    ("com.apple.Music", "Müzik"),
+    ("com.spotify.client", "Spotify"),
 ];
+
+/// The apps above that are installed here, found once (an app installed later is picked up at the next start).
+fn automation_apps() -> &'static [(&'static str, &'static str)] {
+    static FOUND: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
+    FOUND.get_or_init(|| AUTOMATION_ALL.iter().copied().filter(|(bundle, _)| sys::installed(bundle)).collect())
+}
 
 /// Which permission an operation's error code points at, so the window can open on it.
 pub fn for_error(code: &str) -> Option<&'static str> {
@@ -102,7 +117,8 @@ impl Permissions {
         }
         let asked = self.asked();
         let screen = sys::screen();
-        let automation: Vec<Option<bool>> = AUTOMATION
+        let apps = automation_apps();
+        let automation: Vec<Option<bool>> = apps
             .iter()
             .map(|(bundle, _)| {
                 sys::automation(bundle, false).or_else(|| asked.automation.get(*bundle).copied())
@@ -112,7 +128,7 @@ impl Permissions {
             .iter()
             .filter(|state| **state == Some(true))
             .count();
-        let automation_state = if granted == AUTOMATION.len() {
+        let automation_state = if granted == apps.len() {
             State::Granted
         } else if automation.contains(&Some(false)) {
             State::Denied
@@ -153,7 +169,7 @@ impl Permissions {
                 why: "Mesaj, e-posta, not, takvim ve hatırlatıcı işleri için. Her uygulama için macOS bir kez sorar.",
                 state: automation_state,
                 optional: false,
-                detail: Some(format!("{granted}/{} uygulama", AUTOMATION.len())),
+                detail: Some(format!("{granted}/{} uygulama", apps.len())),
                 needs_restart: false,
             },
             Permission {
@@ -302,8 +318,8 @@ impl Permissions {
             "automation" => {
                 let mut asked = self.asked();
                 let mut refused = false;
-                for (bundle, _) in AUTOMATION {
-                    if asked.automation.get(bundle) == Some(&true)
+                for (bundle, _) in automation_apps() {
+                    if asked.automation.get(*bundle) == Some(&true)
                         && sys::automation(bundle, false) != Some(false)
                     {
                         continue;
@@ -332,6 +348,32 @@ impl Permissions {
             "files" => sys::open_settings("Privacy_AllFiles"),
             _ => {}
         }
+    }
+}
+
+/// How macOS answered when a script was refused for one app.
+#[derive(Debug, PartialEq)]
+pub enum AutomationAnswer {
+    /// The person allowed it just now (the system dialog), so the same script can run again.
+    Granted,
+    /// Refused, now or before: macOS never asks twice, so the Automation page of System Settings is opened for the person.
+    Refused,
+    /// The app is unknown here, or macOS could not tell.
+    Unknown,
+}
+
+/// A script that drives `app` (its name as the script wrote it) was refused by macOS: asks for exactly that permission now. When macOS can still show its
+/// dialog it does and waits for the answer ("İzin Ver"); when the person refused before, the right Settings page is opened. Blocks while a dialog is open
+/// (call it off the async threads).
+pub fn ask_automation_for(app: &str) -> AutomationAnswer {
+    let Some(bundle) = sys::bundle_of(app) else { return AutomationAnswer::Unknown };
+    match sys::request_automation(&bundle) {
+        Some(true) => AutomationAnswer::Granted,
+        Some(false) => {
+            sys::open_settings("Privacy_Automation");
+            AutomationAnswer::Refused
+        }
+        None => AutomationAnswer::Unknown,
     }
 }
 
@@ -466,6 +508,23 @@ mod sys {
             .unwrap_or(false)
     }
 
+    /// Whether this app is installed here (LaunchServices, not Spotlight: indexing may be off).
+    pub fn installed(bundle: &str) -> bool {
+        Command::new("/usr/bin/osascript")
+            .args(["-e", &format!("POSIX path of (path to application id \"{bundle}\")")])
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    /// The bundle id of an app by the name a script uses for it ("Google Chrome").
+    pub fn bundle_of(name: &str) -> Option<String> {
+        let safe: String = name.chars().filter(|c| *c != '"' && *c != '\\').collect();
+        let out = Command::new("/usr/bin/osascript").args(["-e", &format!("id of application \"{safe}\"")]).output().ok()?;
+        let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !id.is_empty()).then_some(id)
+    }
+
     /// Opens the app in the background if needed (macOS asks only about a running app), then asks.
     pub fn request_automation(bundle: &str) -> Option<bool> {
         if !running(bundle) {
@@ -552,6 +611,12 @@ mod sys {
         true
     }
     pub fn open_settings(_anchor: &str) {}
+    pub fn installed(_bundle: &str) -> bool {
+        false
+    }
+    pub fn bundle_of(_name: &str) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]
