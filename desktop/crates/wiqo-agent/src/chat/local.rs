@@ -596,6 +596,25 @@ fn reaches_out(command: &str) -> bool {
         || (has("docker") && has("push"))
 }
 
+/// `osascript` that macOS refused (-1743 "not authorized to send Apple events", -10004 "privilege violation"): not a mistake in the command but a switch only the person
+/// can turn on. Seen when the model answered "Chrome'da ne açık" with a page of general advice and named Terminal, which is not the app that asks. The model is told
+/// what the refusal is, which app holds the permission (Wiqo) and which setting, so its answer is two sentences and right.
+fn automation_note(command: &str, output: &str) -> Option<String> {
+    if cfg!(windows) || !command.contains("osascript") {
+        return None;
+    }
+    let lower = output.to_lowercase();
+    if !(lower.contains("-1743") || lower.contains("-10004") || lower.contains("not authorized to send apple events") || lower.contains("ayrıcalık ihlali")) {
+        return None;
+    }
+    static TARGET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let target = TARGET.get_or_init(|| regex::Regex::new(r#"application\s+"([^"]{1,60})""#).expect("pattern"));
+    let app = target.captures(command).map(|found| found[1].to_string()).unwrap_or_else(|| "ilgili uygulama".into());
+    Some(format!(
+        "NOT: macOS bu komuta izin vermedi. Komutta hata yok; kullanıcının açması gereken bir macOS izni: Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon bölümünde **Wiqo** altında \"{app}\" kutusu açık olmalı (izni isteyen uygulama Wiqo'dur, Terminal değil). Kullanıcıya bunu iki cümleyle söyle, uzun anlatma; aynı işi başka bir yolla deneme, aynı izin gerekir. İstersen ayarı bu bilgisayarda açan komutu çalıştır: open \"x-apple.systempreferences:com.apple.preference.security?Privacy_Automation\""
+    ))
+}
+
 /// A Windows command that names no path outside its working folder: no drive letter, UNC path, home, environment variable or parent folder.
 fn stays_in_folder(command: &str) -> bool {
     static OUTSIDE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -1321,6 +1340,11 @@ impl Chat {
                 };
                 // What this call printed, before the notes below are added for the model.
                 let printed = outcome.output.clone();
+                if name == "shell" {
+                    if let Some(note) = automation_note(&text_of(&told_args["command"]), &outcome.output) {
+                        outcome.output = format!("{}\n\n{note}", outcome.output);
+                    }
+                }
                 if let Some(args) = &args {
                     work.ledger.record(&name, args, outcome.ok, &outcome.output, outcome.job.as_deref());
                 }
@@ -1910,6 +1934,17 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_refused_apple_event_is_told_to_the_model_as_a_permission_for_wiqo() {
+        use super::automation_note;
+        let command = r#"osascript -e 'tell application "Google Chrome" to get URL of tabs of windows'"#;
+        let note = automation_note(command, "execution error: Google Chrome bir hatayla karşılaştı: Ayrıcalık ihlali oluştu. (-10004)").expect("a note");
+        assert!(note.contains("Wiqo") && note.contains("Google Chrome") && note.contains("Otomasyon"));
+        assert!(automation_note(command, "execution error: Not authorized to send Apple events to Google Chrome. (-1743)").is_some());
+        assert!(automation_note(command, "https://example.com").is_none());
+        assert!(automation_note("ls -la", "(-10004)").is_none());
+    }
+
     #[test]
     fn pieces_of_an_answer_reach_the_server_as_one_event() {
         use super::join_pieces;
