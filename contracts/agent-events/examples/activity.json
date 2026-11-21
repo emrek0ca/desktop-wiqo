@@ -1,0 +1,10 @@
+{
+  "type": "activity",
+  "activity": {
+    "id": "local-activity-1",
+    "phase": "tool",
+    "label": "Testleri çalıştırıyorum",
+    "state": "running",
+    "persona": "developer"
+  }
+}
