@@ -817,25 +817,26 @@ listen("wiqo", async (message) => {
   await refresh();
 });
 
-// The small update button in the top bar: shown when a newer release is found; one click downloads, installs and restarts.
+// The small update button in the top bar: a round icon, shown when a newer release is found; one click downloads, installs and restarts.
 function showUpdate(version) {
   if (!version) return;
-  $("update-label").textContent = `Güncelle · ${version}`;
+  $("update-mini").title = `Wiqo ${version} hazır: yüklemek için tıkla`;
   $("update-mini").hidden = false;
 }
 listen("update-available", (message) => showUpdate(message.payload));
 invoke("pending_update").then(showUpdate).catch(() => {});
 $("update-mini").onclick = async () => {
   const button = $("update-mini");
-  const label = $("update-label");
-  const before = label.textContent;
+  const title = button.title;
   button.disabled = true;
-  label.textContent = "Yükleniyor…";
+  button.classList.add("busy");
+  button.title = "Yükleniyor…";
   try {
     await invoke("install_update");
   } catch {
-    label.textContent = "Güncellenemedi, tekrar dene";
-    setTimeout(() => { label.textContent = before; button.disabled = false; }, 4000);
+    button.title = "Güncellenemedi; tekrar denemek için tıkla";
+    button.classList.remove("busy");
+    setTimeout(() => { button.title = title; button.disabled = false; }, 4000);
   }
 };
 
