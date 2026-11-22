@@ -225,6 +225,21 @@
       who.append(avatar(mission.author), names);
       who.onclick = () => openProfile(mission.author.username);
       head.append(who);
+      // "Bana gösterme": the Mission leaves this person's feeds and its author counts a little less in "Senin için" (server: social/ranking.ts).
+      if (!mission.mine && mission.code) {
+        const more = R.button("", "icon-button post-more", async () => {
+          const yes = await window.WiqoDialog.confirm({ title: "Bu paylaşım bir daha gösterilmesin mi?", message: "Akışından kalkar; bu kişinin diğer paylaşımları da biraz daha az çıkar.", confirm: "Gösterme" });
+          if (!yes) return;
+          try {
+            await call("POST", `missions/${mission.code}/hide`);
+            node.remove();
+            toast("Bir daha gösterilmeyecek.");
+          } catch (error) { showError(error.message); }
+        });
+        more.title = "Bana gösterme";
+        more.append(icon("ellipsis", 16));
+        head.append(more);
+      }
       node.append(head);
     }
     const body = R.el("button", "post-body");
@@ -252,12 +267,32 @@
     });
     saveButton.title = mission.saved ? "Kaydedilenlerden çıkar" : "Kaydet";
     saveButton.append(icon(mission.saved ? "bookmark.fill" : "bookmark", 16));
+    const hideButton = R.button("", "post-action", async () => {
+      try {
+        await call("POST", `missions/${mission.code}/hide`);
+        node.replaceWith(hiddenNote(mission, node));
+      } catch (error) { showError(error.message); }
+    });
+    hideButton.title = "Bana gösterme";
+    hideButton.append(icon("eye.slash", 16));
     const runButton = R.button("Kendine al", "primary small", () => openMission(mission.code));
     // One number people can trust instead of likes: how many it worked for, or else how many took it.
     const trust = trustText(mission);
-    actions.append(commentButton, saveButton, ...(mission.url ? [linkButton] : []), ...(trust ? [R.el("span", "muted small", trust)] : []), R.el("span", "spacer"), runButton);
+    actions.append(commentButton, saveButton, ...(mission.url ? [linkButton] : []), ...(mission.mine ? [] : [hideButton]), ...(trust ? [R.el("span", "muted small", trust)] : []), R.el("span", "spacer"), runButton);
     node.append(body, actions);
     return node;
+  }
+
+  /** A hidden post leaves one quiet line in its place, with the way back. */
+  function hiddenNote(mission, original) {
+    const note = R.el("div", "post-hidden");
+    note.append(R.el("span", "muted small", "Bu paylaşımı artık görmeyeceksin."), R.button("Geri al", "link small", async () => {
+      try {
+        await call("DELETE", `missions/${mission.code}/hide`);
+        note.replaceWith(original);
+      } catch (error) { showError(error.message); }
+    }));
+    return note;
   }
 
   /** Search sits on top of the feed (the rail has no tab of its own for it). */

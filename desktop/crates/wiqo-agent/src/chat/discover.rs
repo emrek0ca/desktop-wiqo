@@ -117,6 +117,9 @@ pub(super) fn contract(method: &str, path: &str) -> Option<Contract> {
         (Method::POST | Method::DELETE, ["missions", code, "like"]) if is_code(code) => {
             ("DiscoverLike", None)
         }
+        (Method::POST | Method::DELETE, ["missions", code, "hide"]) if is_code(code) => {
+            ("DiscoverOk", None)
+        }
         (Method::POST | Method::DELETE, ["missions", code, "save"]) if is_code(code) => {
             ("DiscoverSaved", None)
         }
@@ -124,6 +127,9 @@ pub(super) fn contract(method: &str, path: &str) -> Option<Contract> {
             ("DiscoverVerdictResponse", Some("DiscoverVerdictWrite"))
         }
         (Method::POST, ["missions", code, "copy"]) if is_code(code) => ("DiscoverCopy", None),
+        (Method::POST | Method::DELETE, ["missions", code, "hide"]) if is_code(code) => {
+            ("DiscoverOk", None)
+        }
         (Method::POST, ["missions", code, "report"]) if is_code(code) => {
             ("DiscoverOk", Some("DiscoverReportWrite"))
         }
