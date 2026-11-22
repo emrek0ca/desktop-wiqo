@@ -63,8 +63,11 @@ fn got_client_error(output: &str) -> bool {
 fn runs_changed_file(command: &str, changed: &[String]) -> bool {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     let interpreter = PATTERN.get_or_init(|| Regex::new(r"(?i)(^|[\s;&|(])(python3?|node|deno|bun|tsx|ts-node|ruby|bash|sh|php|go\s+run|uv\s+run)\s").expect("interpreter pattern"));
+    // A script the run wrote into a scratch folder (/tmp, the system's temp folders) is its own test harness, usually a copy of part of the work: running it says
+    // nothing about the files the person asked for (a copy of the functions passed while the real file did not even parse).
+    let scratch = |path: &str| path.starts_with("/tmp/") || path.starts_with("/private/tmp/") || path.starts_with("/var/folders/") || path.contains("/T/");
     interpreter.is_match(command)
-        && changed.iter().filter_map(|path| path.rsplit('/').next()).filter(|name| name.contains('.')).any(|name| command.contains(name))
+        && changed.iter().filter(|path| !scratch(path)).filter_map(|path| path.rsplit('/').next()).filter(|name| name.contains('.')).any(|name| command.contains(name))
 }
 
 /// A call to an API, not a page: a method other than GET, a body or form, or a path that is not the page, its scripts or its assets. A dev server
@@ -201,6 +204,12 @@ impl Ledger {
         }
     }
 
+    /// A file the run just wrote does not parse (its own language's syntax check said so): a failed check after the change, so the report says it and a "done" cannot stand over it.
+    pub(super) fn syntax_failed(&mut self, path: &str) {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        self.checked(format!("{name}: sözdizimi hatalı"), false);
+    }
+
     fn change(&mut self, path: String) {
         self.edits += 1;
         // Probes before this change say nothing about the new code.
@@ -313,6 +322,13 @@ mod tests {
         assert!(ledger.report().unwrap().contains("Doğrulandı: npm test"));
         ledger.record("shell", &json!({ "command": "ls -la" }), true, "", None);
         assert_eq!(ledger.checks.len(), 3, "listing a folder is not a check");
+    }
+
+    #[test]
+    fn a_scratch_script_does_not_check_the_work_but_the_real_file_run_does() {
+        let changed = vec!["/tmp/matrix_test.js".to_string(), "/Users/x/Desktop/matris/script.js".to_string()];
+        assert!(!super::runs_changed_file("node /tmp/matrix_test.js", &changed));
+        assert!(super::runs_changed_file("node /Users/x/Desktop/matris/script.js", &changed));
     }
 
     #[test]

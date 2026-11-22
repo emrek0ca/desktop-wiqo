@@ -626,6 +626,16 @@ fn automation_note(app: &str, answer: &crate::permissions::AutomationAnswer) -> 
     }
 }
 
+/// The start of a piece just appended to a file is in the file twice: the same part was written again (a script that ended with a second, cut-off copy of its own
+/// start). Only a start long enough to be a part, not a line like "}" that repeats on its own.
+fn repeated_head(path: &Path, appended: &str) -> bool {
+    let head: String = appended.trim_start().chars().take(120).collect();
+    if head.trim().chars().count() < 40 {
+        return false;
+    }
+    std::fs::read_to_string(path).is_ok_and(|text| text.matches(head.as_str()).count() >= 2)
+}
+
 /// A Windows command that names no path outside its working folder: no drive letter, UNC path, home, environment variable or parent folder.
 fn stays_in_folder(command: &str) -> bool {
     static OUTSIDE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -1476,6 +1486,24 @@ impl Chat {
                 if let Some(args) = &args {
                     work.ledger.record(&name, args, outcome.ok, &outcome.output, outcome.job.as_deref());
                 }
+                // A file just written is checked for its syntax at once (see syntax.rs), and an appended piece that repeats the start of what is already there is said:
+                // both are what a person's editor shows the moment it happens, not a surprise at the end.
+                if outcome.ok && matches!(name.as_str(), "write_file" | "edit_file" | "apply_patch") {
+                    for path in file_targets(&name, told_args) {
+                        let checked = path.clone();
+                        if let Ok(Some(error)) = tokio::task::spawn_blocking(move || super::syntax::error_of(&checked)).await {
+                            outcome.output = format!("{}\n\nSÖZDİZİMİ HATASI ({}):\n{error}\nDosya bu hâliyle çalışmaz: önce bunu düzelt, sonra devam et.", outcome.output, path.display());
+                            work.ledger.syntax_failed(&path.to_string_lossy());
+                        }
+                    }
+                    if name == "write_file" && told_args["append"] == true {
+                        if let Some(path) = file_targets(&name, told_args).into_iter().next() {
+                            if repeated_head(&path, &text_of(&told_args["content"])) {
+                                outcome.output = format!("{}\n\nUYARI: eklediğin metnin başı dosyada iki kez var; aynı bölümü yeniden eklemiş olabilirsin. `grep -n` ile ve `wc -l` ile bak, fazlalığı sil.", outcome.output);
+                            }
+                        }
+                    }
+                }
                 // The first touch of a project brings what it is and how it is worked on, once per run.
                 if let Some(root) = args.as_ref().and_then(|args| touched_folder(&name, args)).and_then(|folder| project_root(&folder)) {
                     if !work.reach.briefed.contains(&root) {
@@ -2076,6 +2104,20 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_appended_piece_that_repeats_the_start_of_the_file_is_noticed() {
+        use super::repeated_head;
+        let dir = std::env::temp_dir().join(format!("wiqo-repeat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("folder");
+        let file = dir.join("script.js");
+        let head = "let matrix = null; // 3-dimensional array\nlet dims = null;   // [x, y, z]\n\nfunction parseDims(str) {\n";
+        std::fs::write(&file, format!("{head}  return 1;\n}}\n{head}")).expect("file");
+        assert!(repeated_head(&file, head));
+        std::fs::write(&file, format!("{head}  return 1;\n}}\n")).expect("file");
+        assert!(!repeated_head(&file, head), "once is how it should be");
+        assert!(!repeated_head(&file, "}\n"), "a short piece repeats on its own");
+    }
+
     #[test]
     fn an_event_stream_handed_over_as_text_still_gives_its_answer() {
         use super::sse_outcome;
