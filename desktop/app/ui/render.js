@@ -57,14 +57,14 @@
 
   function toneOf(status) {
     const value = String(status || "").toLowerCase();
-    if (/(complete|done|success|ok|active|aktif|tamam|verified|on)/.test(value)) return "success";
-    if (/(fail|error|denied|cancel|hata|iptal)/.test(value)) return "danger";
-    if (/(run|pending|wait|progress|bekle|çalış)/.test(value)) return "warning";
+    if (/(complete|done|succe|ok|active|aktif|tamam|verified|on)/.test(value)) return "success";
+    if (/(fail|error|denied|blocked|cancel|hata|iptal)/.test(value)) return "danger";
+    if (/(run|pending|ready|dispatch|wait|progress|bekle|çalış)/.test(value)) return "warning";
     return "neutral";
   }
 
   const STATUS_LABELS = {
-    completed: "Tamamlandı", running: "Çalışıyor", pending: "Bekliyor", failed: "Başarısız", denied: "Reddedildi", skipped: "Atlandı",
+    completed: "Tamamlandı", succeeded: "Tamamlandı", ready: "Hazır", dispatching: "Gönderiliyor", blocked: "Engellendi", running: "Çalışıyor", pending: "Bekliyor", failed: "Başarısız", denied: "Reddedildi", skipped: "Atlandı",
     cancelled: "Durduruldu", waiting: "Bekliyor", active: "Aktif", paused: "Duraklatıldı", unknown: "Belirsiz",
     verified: "Tamamlandı", waiting_device: "PC bekleniyor", awaiting_confirmation: "Onay bekliyor",
   };

@@ -171,6 +171,23 @@ pub fn finished(
     json!({ "type": "step_update", "step": step })
 }
 
+/// A step the server planned (chat.rs runs it on this computer), told in the same shape. Its `id` is already a UUID (the server's), its words are the server's
+/// `summary`; the PC's own status words (`completed`, `denied`) are the phone's (`succeeded`, `denied`).
+pub fn planned(step: &Value, status: &str, message: Option<&str>, summary: Option<&str>) -> Value {
+    let id = text(&step["id"]);
+    let words = summary.filter(|words| !words.is_empty()).unwrap_or_else(|| text(&step["summary"]));
+    let mut told = base(id, words, match status { "completed" => "succeeded", other => other }, "");
+    if let Some(object) = told.as_object_mut() {
+        object.remove("tool");
+        object.insert("requiresConfirmation".into(), json!(step["requiresConfirmation"] == true));
+        object.insert("requiresUserPresence".into(), json!(step["requiresUserPresence"] == true));
+    }
+    if let Some(message) = message.filter(|message| !message.is_empty()) {
+        told["message"] = json!(head(message, 400));
+    }
+    json!({ "type": "step_update", "step": told })
+}
+
 /// The end of a run, in the shape of the server's own `done` (reply, steps, executionState, artifacts, backendConfirmations, executionTarget) plus what only
 /// this computer knows. The phone decodes it like any other turn's end; a `done` without `steps` did not decode.
 pub fn done(reply: &str, run_id: &str, private_kept: usize) -> Value {
@@ -182,6 +199,24 @@ pub fn done(reply: &str, run_id: &str, private_kept: usize) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_planned_step_is_told_in_the_same_shape_as_the_agents() {
+        use super::planned;
+        use serde_json::json;
+        let step = json!({ "id": "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", "summary": "Dosyayı kopyala", "requiresConfirmation": true });
+        let told = planned(&step, "completed", None, None);
+        assert_eq!(told["step"]["status"], "succeeded");
+        assert_eq!(told["step"]["id"], "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10");
+        assert_eq!(told["step"]["kind"], "device");
+        assert_eq!(told["step"]["requiresConfirmation"], true);
+        assert_eq!(told["step"]["requiresUserPresence"], false);
+        assert!(told["step"].get("tool").is_none());
+        let refused = planned(&step, "denied", Some("Onay verilmedi."), Some("Dosyayı kopyala · 40%"));
+        assert_eq!(refused["step"]["status"], "denied");
+        assert_eq!(refused["step"]["message"], "Onay verilmedi.");
+        assert_eq!(refused["step"]["summary"], "Dosyayı kopyala · 40%");
+    }
+
     use super::*;
 
     fn example(name: &str) -> Value {

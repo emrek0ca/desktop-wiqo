@@ -1318,9 +1318,7 @@ impl Chat {
                     results.push(json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": "Kullanıcı görevi durdurdu; bu adım çalıştırılmadı.", "errorCode": "PERMISSION_DENIED" }));
                     break;
                 }
-                emit(
-                    json!({ "type": "step_update", "step": { "id": step["id"], "summary": step["summary"], "status": "running" } }),
-                );
+                emit(progress::planned(step, "running", None, None));
                 let summary = step["summary"].as_str().unwrap_or("").to_string();
                 let kind = step["type"].as_str().unwrap_or("").to_string();
                 // "Önce prova": a batch says what it would do before the yes is asked, so the question lists the files and where each goes.
@@ -1349,9 +1347,7 @@ impl Chat {
                         refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
                     };
                 }
-                emit(
-                    json!({ "type": "step_update", "step": { "id": step["id"], "summary": step["summary"], "status": result["status"], "message": result["message"] } }),
-                );
+                emit(progress::planned(step, result["status"].as_str().unwrap_or("failed"), result["message"].as_str(), None));
                 uncertain = result["sideEffectUncertain"] == true;
                 let ok = result["status"] == "completed";
                 results.push(result);
@@ -1776,7 +1772,7 @@ async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value),
                 let Some(progress) = id.and_then(wiqo_core::engine::progress_of) else { continue };
                 let words = progress.words();
                 if words != shown {
-                    emit(json!({ "type": "step_update", "step": { "id": step["id"], "summary": format!("{summary} · {words}"), "status": "running" } }));
+                    emit(progress::planned(step, "running", None, Some(&format!("{summary} · {words}"))));
                     shown = words;
                 }
             }
