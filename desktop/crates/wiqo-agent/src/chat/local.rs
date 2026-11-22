@@ -678,6 +678,15 @@ fn git_summary(checkpoints: &[(PathBuf, Option<String>)]) -> String {
     if lines.is_empty() { String::new() } else { format!("\nGit değişiklik özeti ({}):\n{}", root.display(), lines.join("\n")) }
 }
 
+/// Whether the request builds or changes something and is long enough to be worth a card (a question, a count, a lookup is not).
+fn wants_intent_card(goal: &str) -> bool {
+    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let builds = PATTERN.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(yap\w*|oluştur\w*|geliştir\w*|düzelt\w*|ekle\w*|kur\w*|yaz\w*|çevir\w*|düzenle\w*|taşı\w*|değiştir\w*|sil\w*|build|create|make|fix|add|implement|refactor|write|migrate|convert|rename)\b").expect("build pattern")
+    });
+    goal.split_whitespace().count() >= 8 && builds.is_match(goal)
+}
+
 /// The port a server command names (`http.server 8000`, `--port 3000`, `-p 5173`, `PORT=4000`), if it names one.
 fn server_port(command: &str) -> Option<u16> {
     static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -904,6 +913,11 @@ fn project_brief(root: &Path, notes: Option<String>, remembered: Option<(String,
     }
     if !memory_text.is_empty() {
         parts.push(memory_text);
+    }
+    // The map of the project, at the first touch: the tree, the languages, the entry points. Five to ten calls of looking around, said once.
+    let map = super::repo::repo_map(root, None, None);
+    if !map.trim().is_empty() {
+        parts.push(format!("PROJE HARİTASI (özet; ayrıntı için repo_map / repo_find):\n{}", map.chars().take(2_200).collect::<String>()));
     }
     if !checks.is_empty() {
         parts.push(format!("Doğrulama (her değişiklikten sonra çalıştır, hataları dosya:satır olarak oku, yeşil olana kadar döngüyü sürdür):\n{}", checks.iter().map(|command| format!("  {command}")).collect::<Vec<_>>().join("\n")));
@@ -1141,18 +1155,6 @@ async fn browser_check_tool(args: &Value) -> ToolOutcome {
         }
         Err(message) => refused(&message),
     }
-}
-
-/// `repo_find`: read-only, like `repo_map`; the windows are read and ranked off the async threads.
-async fn repo_find_tool(args: &Value) -> ToolOutcome {
-    let root = expand(&text_of(&args["path"]));
-    if !root.is_absolute() || !plain(&root) || !root.is_dir() {
-        return refused("path var olan bir proje klasörünün tam yolu olmalı.");
-    }
-    let query = text_of(&args["query"]);
-    let root = project_root(&std::fs::canonicalize(&root).unwrap_or(root.clone())).unwrap_or(root);
-    let text = tokio::task::spawn_blocking(move || super::repo::repo_find(&root, &query)).await.unwrap_or_else(|_| "Arama yapılamadı.".into());
-    ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
 }
 
 fn refused(message: &str) -> ToolOutcome {
@@ -1426,7 +1428,27 @@ impl Chat {
         // What was said in the chat since (answers the server gave, not this computer): "az önce yazdığını dosyaya kaydet" needs them.
         let unknown = said_since(&work.messages, &mut work.held, history);
         work.messages.extend(unknown);
-        work.messages.push(json!({ "role": "user", "content": if goal.trim() == text.trim() { text.to_string() } else { format!("{text}\n\n{goal}") } }));
+        let asked = if goal.trim() == text.trim() { text.to_string() } else { format!("{text}\n\n{goal}") };
+        // The request written down as a card before any work (what is wanted, what will be handed over, what "done" is checked by, the limits, a reading chosen for
+        // an ambiguous phrase): one call without tools, for work that builds or changes something. The card rides with the request through every compaction.
+        let intent = if handoff["resumes"] != true && wants_intent_card(goal) {
+            emit(json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anlıyorum", "state": "running" } }));
+            let card = self.intent_card(token, &run_id, goal, stop).await;
+            emit(json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anladım", "state": "done" } }));
+            card
+        } else {
+            None
+        };
+        if let Some((card, limits)) = &intent {
+            for limit in limits {
+                if !work.pins.contains(limit) {
+                    work.pins.push(limit.clone());
+                }
+            }
+            work.messages.push(json!({ "role": "user", "content": format!("{asked}\n\n{card}") }));
+        } else {
+            work.messages.push(json!({ "role": "user", "content": asked }));
+        }
         emit(json!({ "type": "reset" }));
 
         let (steps, received) = tokio::sync::mpsc::unbounded_channel::<Value>();
@@ -1674,7 +1696,7 @@ impl Chat {
                     Some(args) if name == "browser_check" => browser_check_tool(args).await,
                     Some(args) if name == "project_notes" => self.write_notes(args),
                     Some(args) if name == "repo_map" => repo_map_tool(args).await,
-                    Some(args) if name == "repo_find" => repo_find_tool(args).await,
+                    Some(args) if name == "repo_find" => self.repo_find_tool(args).await,
                     Some(args) if name == "api" => self.api_tool(run_id, token, args, approve).await,
                     Some(args) if name == "accounts" => self.accounts_tool(run_id, token, args, approve).await,
                     Some(args) => {
@@ -2158,6 +2180,51 @@ impl Chat {
         refused("Hesap isteği tamamlanamadı.")
     }
 
+    /// `repo_find`: read-only, like `repo_map`; the windows are read and ranked off the async threads, the files earlier runs touched ranked a little higher.
+    async fn repo_find_tool(&self, args: &Value) -> ToolOutcome {
+        let root = expand(&text_of(&args["path"]));
+        if !root.is_absolute() || !plain(&root) || !root.is_dir() {
+            return refused("path var olan bir proje klasörünün tam yolu olmalı.");
+        }
+        let query = text_of(&args["query"]);
+        let root = project_root(&std::fs::canonicalize(&root).unwrap_or(root.clone())).unwrap_or(root);
+        let hot: std::collections::HashSet<String> = self.memory(&root).map(|memory| memory.hot_files(12).into_iter().collect()).unwrap_or_default();
+        let text = tokio::task::spawn_blocking(move || super::repo::repo_find(&root, &query, &hot)).await.unwrap_or_else(|_| "Arama yapılamadı.".into());
+        ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
+    }
+
+    /// One call without tools: the request as a card (understood, handed over, how "done" is checked, limits, the reading chosen for an ambiguous phrase). The card text and the
+    /// limits in it; None when the model gives nothing usable (the work then starts from the request alone, as before).
+    async fn intent_card(&self, token: &str, run_id: &str, goal: &str, stop: &Stop) -> Option<(String, Vec<String>)> {
+        let ask = vec![
+            json!({ "role": "system", "content": "Bir bilgisayar ajanının, kullanıcının isteğiyle işe başlamadan önce isteği kısa bir kart olarak yazıya dökmesine yardım ediyorsun. Yalnızca geçerli JSON döndür: {\"anladim\": \"tek cümle\", \"teslim\": \"ne teslim edilecek (dosya, uygulama, rapor, değişiklik)\", \"kabul\": [\"bitti sayılacak 2-4 somut, denenebilir ölçüt (çalıştırılınca ne görülür)\"], \"sinirlar\": [\"kullanıcının açıkça koyduğu kısıtlar, kendi sözleriyle\"], \"belirsiz\": \"iki türlü okunabilen bir ifade varsa seçtiğin daha kullanışlı yorum, yoksa boş\"}. Kullanıcının sözlerinin dışına çıkma, kendin kısıt uydurma. İfade iki türlü okunabiliyorsa (örneğin web sitesinde '3 boyutlu' = görsel 3B) kullanıcıya daha çok yarayacak, daha zengin yorumu seç. Kabul ölçütleri sayfa, betik ya da komutla gerçekten denenebilir olsun." }),
+            json!({ "role": "user", "content": goal.chars().take(4_000).collect::<String>() }),
+        ];
+        let answer = self.model_call(token, run_id, &ask, &json!([]), stop, &|_: String| {}, &|_: Live| {}).await.ok()?;
+        let content = text_of(&answer["content"]);
+        let (from, to) = (content.find('{')?, content.rfind('}')?);
+        let card: Value = serde_json::from_str(content.get(from..=to)?).ok()?;
+        let list = |key: &str| -> Vec<String> { card[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(|item| item.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|item| !item.is_empty()).take(5).collect() };
+        let (understood, handed) = (text_of(&card["anladim"]), text_of(&card["teslim"]));
+        if understood.trim().is_empty() && handed.trim().is_empty() {
+            return None;
+        }
+        let (accept, limits, unclear) = (list("kabul"), list("sinirlar"), text_of(&card["belirsiz"]));
+        let mut lines = vec!["NİYET KARTI (işe başlamadan yazılan anlayış; bununla çalış, sapman gerekirse nedenini söyle):".to_string()];
+        lines.push(format!("Anladığım: {}", understood.trim()));
+        lines.push(format!("Teslim edeceğim: {}", handed.trim()));
+        if !accept.is_empty() {
+            lines.push(format!("Bitti sayacağım ölçütler (yazmadan önce nasıl deneyeceğini bil, yazdıktan sonra dene):\n{}", accept.iter().enumerate().map(|(index, item)| format!("  {}. {item}", index + 1)).collect::<Vec<_>>().join("\n")));
+        }
+        if !limits.is_empty() {
+            lines.push(format!("Sınırlar: {}", limits.join("; ")));
+        }
+        if !unclear.trim().is_empty() {
+            lines.push(format!("Belirsiz olan ve seçtiğim yorum (yanıtının başında söyle): {}", unclear.trim()));
+        }
+        Some((lines.join("\n"), limits))
+    }
+
     /// The project's memory (runs, proven commands, rules, notes), on this computer and outside the project (memory.rs).
     fn memory(&self, root: &Path) -> Option<super::memory::Memory> {
         super::memory::Memory::of(self.file.parent()?, root)
@@ -2417,6 +2484,16 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_requests_that_build_or_change_something_get_an_intent_card() {
+        use super::wants_intent_card;
+        assert!(wants_intent_card("Masaüstünde matris adında klasör oluştur ve 3 boyutlu matris işlemleri yapabileceğim bir websitesi yap"));
+        assert!(wants_intent_card("Projedeki testleri düzelt ve test dosyalarına dokunma lütfen"));
+        assert!(!wants_intent_card("Chrome'da ne açık"));
+        assert!(!wants_intent_card("downloads klasöründe kaç dosya var ve en büyüğü hangisi"));
+        assert!(!wants_intent_card("düzelt"));
+    }
+
     #[test]
     fn a_file_read_again_or_changed_since_loses_its_old_text_and_other_results_stay() {
         use super::dedupe_reads;

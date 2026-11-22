@@ -130,6 +130,19 @@ impl Memory {
         found.into_iter().map(|(_, _, label)| label).take(SHOWN_COMMANDS).collect()
     }
 
+    /// The files this project's runs touched most (relative to the project), most first: where the work tends to be.
+    pub fn hot_files(&self, most: usize) -> Vec<String> {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for run in self.runs() {
+            for file in run["files"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                *counts.entry(file.to_string()).or_insert(0) += 1;
+            }
+        }
+        let mut ranked: Vec<(usize, String)> = counts.into_iter().map(|(file, count)| (count, file)).collect();
+        ranked.sort_by(|a, b| b.cmp(a));
+        ranked.into_iter().map(|(_, file)| file).take(most).collect()
+    }
+
     /// Adds what the person said to do or not do, once each (the same words are not written twice); the ones that were new.
     pub fn add_rules(&self, rules: &[String]) -> Vec<String> {
         if rules.is_empty() {
@@ -183,6 +196,10 @@ impl Memory {
                 })
                 .collect();
             parts.push(format!("BU PROJEDE ÖNCEKİ ÇALIŞMALAR (bir ipucu: bugün yeniden doğrula):\n{}", lines.join("\n")));
+        }
+        let hot = self.hot_files(8);
+        if !hot.is_empty() {
+            parts.push(format!("BU PROJEDE EN ÇOK DOKUNULAN DOSYALAR (önceki çalışmalardan): {}", hot.join(", ")));
         }
         let proven = self.proven_commands();
         if !proven.is_empty() {

@@ -632,7 +632,7 @@ fn find_index(root: &Path) -> std::sync::Arc<FindIndex> {
 }
 
 /// The windows most about `query`, best first: `path:from–to` and the line of the window that matches most.
-pub fn repo_find(root: &Path, query: &str) -> String {
+pub fn repo_find(root: &Path, query: &str, hot: &HashSet<String>) -> String {
     let wanted: Vec<String> = {
         let mut seen: HashSet<String> = HashSet::new();
         words(query).into_iter().filter(|word| seen.insert(word.clone())).collect()
@@ -657,6 +657,10 @@ pub fn repo_find(root: &Path, query: &str) -> String {
             score += idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * window.length as f64 / index.average));
         }
         if score > 0.0 {
+            // Where earlier work in this project happened is likelier to be where this one is.
+            if hot.contains(&index.files[window.file]) {
+                score *= 1.25;
+            }
             scored.push((score, position));
         }
     }
@@ -695,10 +699,10 @@ mod find_tests {
         std::fs::write(root.join("src/fiyat.py"), "def indirimOrani(adet):\n    if adet >= 100:\n        return 0.30\n\ndef kuponDus(ara, kupon):\n    # kupon bir tutardir\n    return ara - kupon\n").expect("file");
         std::fs::write(root.join("src/liste.py"), "def sirala(items):\n    return sorted(items)\n").expect("file");
         std::fs::write(root.join("README.md"), "Bu proje fiyat hesaplar.\n").expect("file");
-        let found = repo_find(&root, "kupon indirim tutarı nerede düşülüyor");
+        let found = repo_find(&root, "kupon indirim tutarı nerede düşülüyor", &HashSet::new());
         assert!(found.lines().nth(1).is_some_and(|line| line.starts_with("src/fiyat.py")), "{found}");
-        assert!(repo_find(&root, "indirim orani").contains("src/fiyat.py"), "camelCase names are found by their words");
-        assert!(repo_find(&root, "zzzzqqq").contains("bulunamadı"));
+        assert!(repo_find(&root, "indirim orani", &HashSet::new()).contains("src/fiyat.py"), "camelCase names are found by their words");
+        assert!(repo_find(&root, "zzzzqqq", &HashSet::new()).contains("bulunamadı"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
