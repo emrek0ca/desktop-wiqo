@@ -79,6 +79,8 @@ fn tools() -> Value {
             "parameters": { "type": "object", "properties": { "undo_id": { "type": "string" } }, "required": ["undo_id"] } } },
         { "type": "function", "function": { "name": "web", "description": "İnternette arar (query) ya da bir sayfayı metin olarak okur (url). Hata mesajı, belge, sürüm, örnek kod için.",
             "parameters": { "type": "object", "properties": { "query": { "type": "string" }, "url": { "type": "string" } } } } },
+        { "type": "function", "function": { "name": "browser_check", "description": "Bir web sayfasını gerçek (başsız) Chrome/Edge'de açar, kullanır ve neyin bozuk olduğunu söyler: konsol hataları, başarısız istekler (404...), sayfanın çıkardığı alert/prompt metinleri ve verdiğin adımların sonucu. Sayfa ya da betik yazdıysan teslim etmeden önce bununla dene; sözdizimi denetimi ya da başlığı curl ile saymak sayfanın çalıştığını göstermez. url: http://localhost:8000 ya da file:///Users/.../index.html. steps (en çok 25, sırayla; tutmayan adımda durur): {click: css}, {type: css, text}, {wait_ms}, {expect_text}, {expect_selector}, {eval: js ifadesi, doğru/dolu dönmeli}. alert/prompt kendiliğinden kabul edilir. screenshot: kaydedilecek png yolu.",
+            "parameters": { "type": "object", "properties": { "url": { "type": "string" }, "steps": { "type": "array", "items": { "type": "object" } }, "wait_ms": { "type": "integer", "description": "Yüklemeden sonra bekleme, varsayılan 800" }, "screenshot": { "type": "string" } }, "required": ["url"] } } },
         { "type": "function", "function": { "name": "project_notes", "description": "Projenin Wiqo notunu baştan yazar (yalnız bu bilgisayarda): çalıştırma/test komutları, önemli yollar, kararlar; sonraki işte PROJE özetinde gelir. Mevcut notu koruyup tamamını gönder.",
             "parameters": { "type": "object", "properties": { "project": { "type": "string", "description": "Proje klasörü" }, "content": { "type": "string" } }, "required": ["project", "content"] } } },
         { "type": "function", "function": { "name": "search", "description": "Bir klasörde dosya içeriğinde metin ya da regex arar.",
@@ -352,6 +354,7 @@ fn label(name: &str, args: &Value) -> String {
         "apply_patch" => format!("Yama: {}", one("workdir")),
         "undo" => "Geri alıyor".into(),
         "web" => format!("Web: {}", [one("query"), one("url")].into_iter().find(|text| !text.is_empty()).unwrap_or_default()),
+        "browser_check" => format!("Sayfa denemesi: {}", one("url")),
         "project_notes" => format!("Proje notu: {}", one("project")),
         "plan" => "Plan".into(),
         "api" => format!("API: {} {}{}", one("method"), one("name"), one("path")),
@@ -423,6 +426,8 @@ struct Reach {
     /// the ones left at the end are stopped unless the person asked for them to stay (`release_servers`). A counter app was started four times
     /// (ports 5173-5176) and all four were left running.
     servers: Vec<(String, String)>,
+    /// Ports a server this run started listens on when it was started detached (`nohup ... &`, `http.server 8000 &`), so it is stopped with the run too.
+    ports: Vec<u16>,
     /// Each file as the agent last read or wrote it (a fingerprint of its bytes): a change is refused when the file moved on since then, so the
     /// person's own edits made while the run works are never written over.
     seen: std::collections::HashMap<PathBuf, u64>,
@@ -560,6 +565,61 @@ fn starts_server(command: &str) -> bool {
                 .expect("server pattern")
         })
         .is_match(command)
+}
+
+/// No emoji in what the person reads (they were the model's habit, not the person's wish); the tick and cross marks and arrows stay, they carry meaning.
+fn strip_emoji(text: &str) -> String {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| {
+            let code = *c as u32;
+            let keeps = matches!(code, 0x2713 | 0x2714 | 0x2717 | 0x2718 | 0x2190..=0x21FF);
+            keeps || !(matches!(code, 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0xFE0F | 0x200D))
+        })
+        .collect();
+    cleaned.lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
+}
+
+/// What changed in the git project(s) this run worked in, as git says it (`diff --stat` and the new files): the same lines a developer reads before a commit.
+fn git_summary(checkpoints: &[(PathBuf, Option<String>)]) -> String {
+    let Some((root, _)) = checkpoints.first() else { return String::new() };
+    let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(root).args(args).stdin(std::process::Stdio::null()).output().ok().filter(|out| out.status.success()).map(|out| String::from_utf8_lossy(&out.stdout).to_string());
+    let stat = git(&["diff", "--stat", "HEAD"]).unwrap_or_default();
+    let new_files = git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    if !stat.trim().is_empty() {
+        lines.push(stat.trim_end().to_string());
+    }
+    let fresh: Vec<&str> = new_files.lines().take(8).collect();
+    if !fresh.is_empty() {
+        lines.push(format!("Yeni dosyalar: {}{}", fresh.join(", "), if new_files.lines().count() > 8 { ", …" } else { "" }));
+    }
+    if lines.is_empty() { String::new() } else { format!("\nGit değişiklik özeti ({}):\n{}", root.display(), lines.join("\n")) }
+}
+
+/// The port a server command names (`http.server 8000`, `--port 3000`, `-p 5173`, `PORT=4000`), if it names one.
+fn server_port(command: &str) -> Option<u16> {
+    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let pattern = PATTERN.get_or_init(|| regex::Regex::new(r"(?i)(?:http\.server|--port|-p|-P|PORT=)[\s=]*(\d{2,5})\b").expect("port pattern"));
+    pattern.captures(command).and_then(|found| found[1].parse().ok())
+}
+
+/// Stops what listens on these ports (the servers this run started and did not stop): the processes' ids from lsof, then a plain stop. How many ports had one.
+fn stop_listening(ports: &[u16]) -> usize {
+    if cfg!(windows) {
+        return 0;
+    }
+    let mut stopped = 0;
+    for port in ports {
+        let Ok(out) = std::process::Command::new("lsof").args(["-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"]).output() else { continue };
+        let pids: Vec<String> = String::from_utf8_lossy(&out.stdout).split_whitespace().map(str::to_string).collect();
+        if pids.is_empty() {
+            continue;
+        }
+        let _ = std::process::Command::new("kill").args(&pids).status();
+        stopped += 1;
+    }
+    stopped
 }
 
 /// Whether the request wants a server left running ("çalıştır", "adresini söyle", "aç"): then it stays and the answer says so; otherwise the
@@ -952,6 +1012,18 @@ async fn repo_map_tool(args: &Value) -> ToolOutcome {
     ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
 }
 
+/// `browser_check`: read-only (it opens a page and uses it in a throwaway browser profile); the report is the result.
+async fn browser_check_tool(args: &Value) -> ToolOutcome {
+    match super::page::check(args).await {
+        Ok(report) => {
+            let ok = report["ok"] == true;
+            let brief = report["summary"].as_str().unwrap_or("").to_string();
+            ToolOutcome { ok, output: report.to_string(), brief, job: None }
+        }
+        Err(message) => refused(&message),
+    }
+}
+
 fn refused(message: &str) -> ToolOutcome {
     ToolOutcome { ok: false, output: json!({ "status": "failed", "message": message }).to_string(), brief: message.chars().take(160).collect(), job: None }
 }
@@ -1235,7 +1307,7 @@ impl Chat {
         // The model's words keep the stand-ins in this run's record; the person reads the real values (this computer puts them back).
         work.messages.push(json!({ "role": "assistant", "content": reply }));
         self.save_session(conversation, &work, false);
-        let reply = work.vault.open(&reply);
+        let reply = strip_emoji(&work.vault.open(&reply));
         emit(super::progress::done(&reply, &run_id, work.vault.len()));
         // Delivered in the background: the turn ends for the person now, and a server that is out of reach gets the answer when it is back.
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
@@ -1250,6 +1322,7 @@ impl Chat {
         let stopped = |work: &Work| format!("Durduruldu. {}", work.done_so_far());
         let mut thinking = 0usize;
         let mut note_id = 0usize;
+        let mut digest_seen: (String, usize) = (String::new(), 0);
         let mut gates = 0usize;
         let mut malformed = 0usize;
         let mut too_large = 0usize;
@@ -1362,7 +1435,7 @@ impl Chat {
                 let content = format!("{content}{}", self.release_servers(engine, work).await);
                 // What was changed and what really checked it, from the tool results: the model's own words cannot mark the work verified.
                 let content = match work.ledger.report() {
-                    Some(report) => format!("{content}\n\n{report}"),
+                    Some(report) => format!("{content}\n\n{report}{}", git_summary(&work.reach.checkpoints)),
                     None => content,
                 };
                 // Turned back as often as allowed and the plan is still open: the answer stands, with what it left undone said under it.
@@ -1433,6 +1506,7 @@ impl Chat {
                     }
                     Some(args) if work.pc.names.contains(&name) => self.pc_tool(engine, run_id, token, &mut work.pc, &mut work.sent, &name, args, approve, stop).await,
                     Some(args) if name == "web" => self.web_tool(run_id, token, args).await,
+                    Some(args) if name == "browser_check" => browser_check_tool(args).await,
                     Some(args) if name == "project_notes" => self.write_notes(args),
                     Some(args) if name == "repo_map" => repo_map_tool(args).await,
                     Some(args) if name == "api" => self.api_tool(run_id, token, args, approve).await,
@@ -1466,7 +1540,15 @@ impl Chat {
                     let (text, exit) = super::progress::printed(&outcome.output);
                     if exit.is_none_or(|code| code != 0) {
                         if let Some(errors) = super::digest::errors_of(&text) {
-                            outcome.output = format!("{errors}\n\n{}", outcome.output);
+                            // The same errors again after changes: what was done did not touch the cause. Said once it is a third time, as a note, not a stop.
+                            let same = digest_seen.0 == errors;
+                            digest_seen = (errors.clone(), if same { digest_seen.1 + 1 } else { 1 });
+                            let note = if digest_seen.1 >= 2 {
+                                format!("\nNOT: bu hata özeti üst üste {} kez aynı geldi; yaptığın değişiklikler nedene dokunmadı. Aynı yolda sürme: ilgili satırı ve çevresini oku, bağımlılığı/sürümü/yolu doğrula, ya da yöntemi değiştir.", digest_seen.1)
+                            } else {
+                                String::new()
+                            };
+                            outcome.output = format!("{errors}{note}\n\n{}", outcome.output);
                         }
                     }
                 }
@@ -1537,6 +1619,16 @@ impl Chat {
                         outcome.output = format!("{}\n\nUYARI: Bu çağrı aynı haliyle ikinci kez başarısız oldu. Üçüncü kez aynısını deneme; hatayı oku, nedenini bul, farklı bir yol seç.", outcome.output);
                     }
                 }
+                if outcome.job.is_none() && name == "shell" {
+                    let command = text_of(&told_args["command"]);
+                    if starts_server(&command) {
+                        if let Some(port) = server_port(&command) {
+                            if !work.reach.ports.contains(&port) {
+                                work.reach.ports.push(port);
+                            }
+                        }
+                    }
+                }
                 if let Some(job) = outcome.job.take() {
                     if name == "shell" && args.as_ref().is_some_and(|args| starts_server(&text_of(&args["command"]))) {
                         let folder = args.as_ref().map(|args| text_of(&args["workdir"])).unwrap_or_default();
@@ -1596,8 +1688,16 @@ impl Chat {
     /// At the end of a run: the dev servers it started stay when the request asked to run/open something (one line says so), otherwise they are
     /// stopped (one line says that). Nothing is said when none was started.
     async fn release_servers(&self, engine: &Engine, work: &mut Work) -> String {
-        if work.reach.servers.is_empty() {
+        if work.reach.servers.is_empty() && work.reach.ports.is_empty() {
             return String::new();
+        }
+        if work.reach.servers.is_empty() {
+            if wants_server_kept(&work.goal) {
+                return format!("\n\nSunucu açık bırakıldı (port {}); kapatmamı istersen söyle.", work.reach.ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", "));
+            }
+            let ports = std::mem::take(&mut work.reach.ports);
+            let stopped = tokio::task::spawn_blocking(move || stop_listening(&ports)).await.unwrap_or(0);
+            return if stopped > 0 { "\n\nBaşlattığım sunucuyu işim bitince kapattım.".to_string() } else { String::new() };
         }
         let jobs: Vec<String> = work.reach.servers.iter().map(|(_, job)| job.clone()).collect();
         if wants_server_kept(&work.goal) {
@@ -2104,6 +2204,16 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_server_command_names_its_port_and_emoji_are_taken_out_of_the_answer() {
+        use super::{server_port, strip_emoji};
+        assert_eq!(server_port("cd site && python3 -m http.server 8000 &"), Some(8000));
+        assert_eq!(server_port("npm run dev -- --port 5173"), Some(5173));
+        assert_eq!(server_port("PORT=4000 node server.js"), Some(4000));
+        assert_eq!(server_port("npm start"), None);
+        assert_eq!(strip_emoji("Hazır 🎉 ✅ ve ✔ doğrulandı → tamam  "), "Hazır  ve ✔ doğrulandı → tamam");
+    }
+
     #[test]
     fn an_appended_piece_that_repeats_the_start_of_the_file_is_noticed() {
         use super::repeated_head;

@@ -415,7 +415,7 @@ fn html_page(content: &str) -> String {
 }
 
 /// Chrome or Edge where they install themselves; the first that exists prints the PDF.
-fn installed_browsers() -> Vec<PathBuf> {
+pub fn installed_browsers() -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         found.extend(

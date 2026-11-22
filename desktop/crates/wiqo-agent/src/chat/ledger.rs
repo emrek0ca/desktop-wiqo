@@ -13,11 +13,16 @@ struct Check {
     passed: bool,
     /// How many file changes the run had made when this check ran: a check counts only for the changes before it.
     after: usize,
+    /// The files this check speaks for; None is the whole project (a test run, a build, a type check). Running one script speaks for that script; fetching a
+    /// page from a dev server does not speak for a browser script that nothing parsed.
+    covers: Option<Vec<String>>,
 }
 
 #[derive(Default)]
 pub(super) struct Ledger {
     changed: Vec<String>,
+    /// The edit counter at each file's last change: a check covers a file only when it ran after that.
+    last_edit: HashMap<String, usize>,
     edits: usize,
     checks: Vec<Check>,
     /// Background jobs a check command became (job id → command), so their finish counts too.
@@ -40,6 +45,30 @@ fn check_command() -> &'static Regex {
         Regex::new(r"(?i)\b(test|tests|jest|vitest|mocha|pytest|unittest|tsc|typecheck|type-check|lint|eslint|biome|ruff|mypy|clippy|build|compile|check|vet|migrate|migration|prisma\s+(migrate|db)|knex|alembic|go\s+(test|build|vet)|cargo\s+(test|build|check|clippy)|swift\s+(test|build)|dotnet\s+(test|build)|gradle|mvn|make)\b|curl\s+[^|;&]*(localhost|127\.0\.0\.1)")
             .expect("check pattern")
     })
+}
+
+/// A command that only parses or formats (node --check, bash -n, py_compile, swiftc -parse, php -l, prettier --check): it says a file is well formed, not that it works.
+fn syntax_only(command: &str) -> bool {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN
+        .get_or_init(|| Regex::new(r"(?i)--check\b|\bnode\s+-c\b|py_compile|\bbash\s+-n\b|\bsh\s+-n\b|swiftc\s+-parse|\bphp\s+-l\b").expect("syntax-only pattern"))
+        .is_match(command)
+}
+
+/// A script that runs in a browser from a plain page (no package.json near it): fetching its page proves nothing about it, because nothing parsed it.
+fn static_script(path: &str) -> bool {
+    if !(path.ends_with(".js") || path.ends_with(".mjs")) {
+        return false;
+    }
+    let mut folder = std::path::Path::new(path).parent();
+    for _ in 0..4 {
+        let Some(dir) = folder else { break };
+        if dir.join("package.json").exists() {
+            return false;
+        }
+        folder = dir.parent();
+    }
+    true
 }
 
 /// A test runner that ran nothing ("Ran 0 tests", "collected 0 items", "no tests found"…) exits 0 but proves nothing.
@@ -154,9 +183,10 @@ impl Ledger {
             }
             "shell" => {
                 let command = text("command");
-                if !check_command().is_match(&command) && !runs_changed_file(&command, &self.changed) {
+                if syntax_only(&command) || (!check_command().is_match(&command) && !runs_changed_file(&command, &self.changed)) {
                     return;
                 }
+                let covers = self.coverage_of(&command);
                 if let Some(job) = job {
                     self.jobs.insert(job.to_string(), command);
                     return;
@@ -172,14 +202,14 @@ impl Ledger {
                     }
                     let server_error = Regex::new(r"HTTP/[\d.]+ 5\d\d\b").is_ok_and(|pattern| pattern.is_match(output));
                     let reached = ok && (exit_code(output).is_none_or(|code| code == 0) || (client_error && exit_code(output) == Some(22)));
-                    self.checked(label, reached && !server_error);
+                    self.checked_for(label, reached && !server_error, covers);
                     return;
                 }
                 if ran_no_tests(output) {
                     self.checked(format!("{label} (hiç test çalışmadı)"), false);
                     return;
                 }
-                self.checked(label, ok && exit_code(output).is_none_or(|code| code == 0));
+                self.checked_for(label, ok && exit_code(output).is_none_or(|code| code == 0), covers);
             }
             "job" if args["action"] == "wait" => {
                 let Some(command) = self.jobs.get(&text("job_id")).cloned() else { return };
@@ -189,12 +219,20 @@ impl Ledger {
                 }
                 if let Some(code) = exit_code(output) {
                     self.jobs.remove(&text("job_id"));
+                    let covers = self.coverage_of(&command);
                     if ran_no_tests(output) {
-                        self.checked(format!("{} (hiç test çalışmadı)", short(&command)), false);
+                        self.checked_for(format!("{} (hiç test çalışmadı)", short(&command)), false, covers);
                     } else {
-                        self.checked(short(&command), ok && code == 0);
+                        self.checked_for(short(&command), ok && code == 0, covers);
                     }
                 }
+            }
+            // A page opened in a browser and used: it speaks for the web files of the work (the page, its styles and scripts), when nothing went wrong.
+            "browser_check" => {
+                // `ok` is the report's own: nothing in the console, nothing failed to load, every step held.
+                let passed = ok;
+                let web: Vec<String> = self.changed.iter().filter(|path| [".html", ".htm", ".css", ".js", ".mjs", ".svg", ".json"].iter().any(|ext| path.ends_with(ext))).cloned().collect();
+                self.checked_for(format!("sayfa denemesi: {}", short(&text("url"))), passed, Some(web));
             }
             "api" if args["operation"] == "call" => {
                 let label = format!("{} {}{}", args["method"].as_str().unwrap_or("GET"), text("name"), text("path"));
@@ -207,7 +245,7 @@ impl Ledger {
     /// A file the run just wrote does not parse (its own language's syntax check said so): a failed check after the change, so the report says it and a "done" cannot stand over it.
     pub(super) fn syntax_failed(&mut self, path: &str) {
         let name = path.rsplit('/').next().unwrap_or(path);
-        self.checked(format!("{name}: sözdizimi hatalı"), false);
+        self.checked_for(format!("{name}: sözdizimi hatalı"), false, Some(Vec::new()));
     }
 
     fn change(&mut self, path: String) {
@@ -215,18 +253,57 @@ impl Ledger {
         // Probes before this change say nothing about the new code.
         self.probes = 0;
         self.bad_probe = false;
-        if !path.is_empty() && !self.changed.contains(&path) {
-            self.changed.push(path);
+        if !path.is_empty() {
+            self.last_edit.insert(path.clone(), self.edits);
+            if !self.changed.contains(&path) {
+                self.changed.push(path);
+            }
         }
     }
 
     fn checked(&mut self, label: String, passed: bool) {
-        self.checks.push(Check { label, passed, after: self.edits });
+        self.checked_for(label, passed, None);
+    }
+
+    fn checked_for(&mut self, label: String, passed: bool, covers: Option<Vec<String>>) {
+        self.checks.push(Check { label, passed, after: self.edits, covers });
+    }
+
+    /// What a check command speaks for: running a changed script speaks for that script; a page fetched from a local server for everything but plain browser scripts;
+    /// a test run, build or type check for the whole project.
+    fn coverage_of(&self, command: &str) -> Option<Vec<String>> {
+        if command.contains("curl") && local_server().is_match(command) {
+            return Some(self.changed.iter().filter(|path| !static_script(path)).cloned().collect());
+        }
+        if check_command().is_match(command) {
+            return None;
+        }
+        // A changed script that was run by name (scratch files are its own harness, not the work).
+        let scratch = |path: &str| path.starts_with("/tmp/") || path.starts_with("/private/tmp/") || path.starts_with("/var/folders/");
+        Some(
+            self.changed
+                .iter()
+                .filter(|path| !scratch(path))
+                .filter(|path| path.rsplit('/').next().is_some_and(|name| name.contains('.') && command.contains(name)))
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// The files changed that no passed check after their last change speaks for.
+    pub(super) fn uncovered(&self) -> Vec<&String> {
+        self.changed
+            .iter()
+            .filter(|path| {
+                let last = self.last_edit.get(*path).copied().unwrap_or(0);
+                !self.checks.iter().any(|check| check.passed && check.after >= last && check.covers.as_ref().is_none_or(|files| files.iter().any(|file| file == *path)))
+            })
+            .collect()
     }
 
     /// Files were changed and nothing has checked them since the last change.
     pub(super) fn unchecked_changes(&self) -> bool {
-        self.edits > 0 && self.checks.last().is_none_or(|check| check.after < self.edits || !check.passed)
+        self.edits > 0 && (self.checks.last().is_none_or(|check| check.after < self.edits || !check.passed) || !self.uncovered().is_empty())
     }
 
     /// Why a "done" answer goes back once more, from what the tool results show: nothing ran after the last change (twice at most, the
@@ -245,6 +322,11 @@ impl Ledger {
                 if let Some(script) = script {
                     why.push_str(&format!(" Örneğin {script} dosyasını çalıştır ve çıktısının istenenle aynı olduğuna bak."));
                 }
+            }
+            let uncovered = self.uncovered();
+            if !uncovered.is_empty() {
+                let names: Vec<&str> = uncovered.iter().take(6).map(|path| path.rsplit('/').next().unwrap_or(path.as_str())).collect();
+                why.push_str(&format!(" Şu dosyalar için hiçbir denetim çalışmadı: {}. Bir betiği doğrulamak için kendisini çalıştır ya da içe aktar (başka yere kopyalayıp değil); tarayıcıda çalışan sayfa ve betikler için browser_check kullan; yalnız sözdizimi denetimi (node --check) doğrulama sayılmaz.", names.join(", ")));
             }
             why.push_str(" Ortam gerçekten yoksa (araç kurulu değil, veritabanı yok) çalıştırmadan bitir ve yanıtında neyin doğrulanmadığını açıkça yaz; çalışıyor deme.");
             return Some(why);
@@ -295,6 +377,12 @@ impl Ledger {
         if self.edits > 0 && current.is_empty() {
             lines.push("Doğrulanmadı: son değişiklikten sonra test, derleme ya da API denemesi çalıştırılmadı.".into());
         }
+        // The files no passed check speaks for, whatever else passed: a test run of one part says nothing of a browser script nobody ran.
+        let uncovered = self.uncovered();
+        if !uncovered.is_empty() {
+            let names: Vec<&str> = uncovered.iter().take(6).map(|path| path.rsplit('/').next().unwrap_or(path.as_str())).collect();
+            lines.push(format!("Doğrulanmayan dosyalar (hiçbir denetim bunları kapsamadı): {}", names.join(", ")));
+        }
         Some(lines.join("\n"))
     }
 }
@@ -322,6 +410,28 @@ mod tests {
         assert!(ledger.report().unwrap().contains("Doğrulandı: npm test"));
         ledger.record("shell", &json!({ "command": "ls -la" }), true, "", None);
         assert_eq!(ledger.checks.len(), 3, "listing a folder is not a check");
+    }
+
+    #[test]
+    fn a_browser_script_is_not_verified_by_a_page_answering_a_copy_a_syntax_check_or_a_failed_page_but_by_a_page_that_ran() {
+        let mut ledger = Ledger::default();
+        ledger.record("write_file", &json!({ "path": "/Users/x/Desktop/matris/index.html" }), true, "", None);
+        ledger.record("write_file", &json!({ "path": "/Users/x/Desktop/matris/script.js" }), true, "", None);
+        ledger.record("write_file", &json!({ "path": "/tmp/matrix_test.js" }), true, "", None);
+        // The page answers, a copy of the functions passes, the file parses: none of that speaks for script.js.
+        ledger.record("shell", &json!({ "command": "curl -s http://localhost:8000/ | grep -c Matris" }), true, r#"{"output":"{\"exitCode\":0}"}"#, None);
+        ledger.record("shell", &json!({ "command": "node /tmp/matrix_test.js" }), true, r#"{"output":"{\"exitCode\":0}"}"#, None);
+        ledger.record("shell", &json!({ "command": "node --check /Users/x/Desktop/matris/script.js" }), true, r#"{"output":"{\"exitCode\":0}"}"#, None);
+        assert!(ledger.unchecked_changes());
+        let report = ledger.report().unwrap();
+        assert!(report.contains("Doğrulanmayan dosyalar") && report.contains("script.js"), "{report}");
+        let why = ledger.turn_back().unwrap();
+        assert!(why.contains("script.js") && why.contains("browser_check"), "{why}");
+        // A page that threw does not verify it either; one that ran and held does.
+        ledger.record("browser_check", &json!({ "url": "http://localhost:8000/" }), false, "{\"ok\":false}", None);
+        assert!(ledger.unchecked_changes());
+        ledger.record("browser_check", &json!({ "url": "http://localhost:8000/" }), true, "{\"ok\":true}", None);
+        assert!(!ledger.unchecked_changes(), "{:?}", ledger.uncovered());
     }
 
     #[test]

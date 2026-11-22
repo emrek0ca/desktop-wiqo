@@ -28,6 +28,7 @@ pub use desktop_control::{note_frontmost, set_cursor_sink, stop_all as stop_desk
 pub use files::undo::undo_file;
 /// What a batch of file changes would do, for the question before the person's yes ("Önce prova").
 pub use files::batch_preview;
+pub use files::installed_browsers;
 /// A signed-in page read for a watcher (the server compares it).
 pub use browser::read_watched_page;
 pub use terminal::{full_access, is_read_only, redact_secrets, set_full_access, windows_powershell};
