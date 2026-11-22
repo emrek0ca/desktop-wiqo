@@ -1,6 +1,6 @@
 //! Starting with the computer. On macOS this is a launch agent inside the app bundle (Contents/Library/LaunchAgents), registered through
 //! SMAppService: System Settings and the "background item" notice show it as Wiqo, with Wiqo's icon, and it starts Wiqo hidden in the tray.
-//! (A plain ~/Library/LaunchAgents file shows the signing developer's name instead.) Windows and Linux use the autostart plugin.
+//! (A plain ~/Library/LaunchAgents file shows the signing developer's name instead.) Windows and Linux use the autostart plugin; the Microsoft Store package uses its startup task (package.rs).
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -40,10 +40,16 @@ mod imp {
     use tauri_plugin_autostart::ManagerExt;
 
     pub fn is_enabled(handle: &tauri::AppHandle) -> bool {
+        if crate::package::is_packaged() {
+            return crate::package::startup_enabled();
+        }
         handle.autolaunch().is_enabled().unwrap_or(false)
     }
 
     pub fn set(handle: &tauri::AppHandle, on: bool) -> Result<(), String> {
+        if crate::package::is_packaged() {
+            return crate::package::set_startup(on);
+        }
         let launcher = handle.autolaunch();
         if on {
             launcher.enable()

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Microsoft Store package of Wiqo Desktop. scripts/build-msix.ps1 replaces @VERSION@ and @ARCH@ and packs this next to Wiqo.exe.
+     Identity comes from Partner Center (Product identity); it must match the reserved app exactly or the Store rejects the upload. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 rescap">
+
+  <Identity
+    Name="OsmanEmreKoca.Wiqo"
+    Publisher="CN=C6E419CA-D55B-4095-BF84-0E2BCD3051E5"
+    Version="@VERSION@"
+    ProcessorArchitecture="@ARCH@" />
+
+  <Properties>
+    <DisplayName>Wiqo</DisplayName>
+    <PublisherDisplayName>Osman Emre Koca</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Wiqo, telefonundan verdiğin görevleri bu bilgisayarda yapan asistan.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="tr-TR" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Wiqo" Executable="Wiqo.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Wiqo"
+        Description="Wiqo, telefonundan verdiğin görevleri bu bilgisayarda yapan asistan."
+        BackgroundColor="#FFFFFF"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square71x71Logo="Assets\Square71x71Logo.png" Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- wiqo:// links (sign-in and Discover) reach the running window as a command-line argument. -->
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="wiqo">
+            <uap:DisplayName>Wiqo</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
+        <!-- Start with Windows, hidden in the tray. Off until the person turns it on; the in-app switch asks Windows for it (login_item.rs). -->
+        <uap5:Extension Category="windows.startupTask" Executable="Wiqo.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="WiqoStartup" Enabled="false" DisplayName="Wiqo" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Wiqo drives the person's own computer (files, apps, screen, terminal), so it is a full-trust desktop app. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

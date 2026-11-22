@@ -34,6 +34,9 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSData", "NSDictionary"] }
 objc2-service-management = { version = "0.3", features = ["SMAppService"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["ApplicationModel", "ApplicationModel_Activation", "Foundation"] }
+
 # tauri-plugin-deep-link 2.6 builds rust-ini's ParseOption by its fields; rust-ini 0.21.2 added fields in a patch release, which breaks the
 # Linux build. Held at 0.21.1 until the plugin follows.
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -37,3 +37,11 @@ Set repository variables `WIQO_WINDOWS_SIGNING_ENDPOINT`, `WIQO_WINDOWS_SIGNING_
 
 For a macOS release, run `desktop/scripts/release-mac.sh` with the Developer ID and Apple notary profile configured. It builds and verifies a
 universal notarized DMG and a signed updater archive.
+
+## Microsoft Store (MSIX)
+
+`desktop/scripts/build-msix.ps1 -Target <triple>` packs `Wiqo.exe`, the helper and the browser worker with `desktop/app/windows/msix/AppxManifest.xml`
+(identity from Partner Center: `OsmanEmreKoca.Wiqo`); `bundle-msix.ps1` joins x64 and ARM64 into one `.msixbundle`, which CI uploads as the
+`wiqo-msixbundle` artifact. Upload that file in Partner Center. The package is unsigned (the Store signs it) and its version is
+`<major+1>.<minor>.<patch>.0` (Wiqo 0.1.6 = 1.1.6.0), because the Store rejects a first part of 0. Inside the package the built-in updater is off and
+"start with Windows" uses the package's startup task.

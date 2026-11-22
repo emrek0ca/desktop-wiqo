@@ -12,6 +12,7 @@ use wiqo_agent::{Desktop, Event, PairingOffer, Snapshot};
 
 mod ear;
 mod login_item;
+mod package;
 mod symbols;
 
 /// The login item starts Wiqo with this: straight to the tray, no window.
@@ -1089,7 +1090,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let hidden = std::env::args().any(|arg| arg == HIDDEN_ARG);
+    let hidden = std::env::args().any(|arg| arg == HIDDEN_ARG) || package::started_by_windows();
     tauri::Builder::default()
         // A second launch (the Dock, Spotlight, a login item) brings up the running Wiqo instead of a rival connection under the same device id.
         .plugin(tauri_plugin_single_instance::init(|handle, args, _cwd| {
@@ -1230,7 +1231,10 @@ fn main() {
                     }
                 }
             }
-            keep_updated(app.handle().clone());
+            // The Store updates its own package; the built-in updater would only fail on the read-only install folder.
+            if !package::is_packaged() {
+                keep_updated(app.handle().clone());
+            }
             // First launch: the speech model comes down in the background, so the voice is ready when the person first asks for it.
             app.state::<App>().ear.ensure_model(app.handle().clone());
             app.state::<App>().ear.warm();

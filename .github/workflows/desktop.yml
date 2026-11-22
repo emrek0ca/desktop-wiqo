@@ -133,6 +133,58 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Microsoft Store package (MSIX) for both architectures, joined into one bundle to upload in Partner Center. Unsigned on purpose: the Store signs it.
+  windows-msix:
+    runs-on: windows-latest
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Helper that drives other apps (agent-desktop)
+        shell: bash
+        run: desktop/scripts/build-helper.sh ${{ matrix.target }} desktop/app/binaries
+      - name: Build the package
+        shell: pwsh
+        run: ./desktop/scripts/build-msix.ps1 -Target ${{ matrix.target }} -Out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wiqo-msix-${{ matrix.target }}
+          path: dist/*.msix
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-msix-bundle:
+    needs: windows-msix
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wiqo-msix-*
+          merge-multiple: true
+          path: dist
+      - name: Bundle
+        shell: pwsh
+        run: ./desktop/scripts/bundle-msix.ps1 -Dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wiqo-msixbundle
+          path: dist/*.msixbundle
+          if-no-files-found: error
+          retention-days: 30
+
   # The everyday tools for real on a fresh Windows and Mac (wiqo-agent selftest): files must pass; the steps that need a desktop session (apps,
   # clipboard, screen) run too and are reported, since CI machines do not always have one.
   selftest:
