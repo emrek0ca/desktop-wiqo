@@ -34,6 +34,7 @@ pub type GrantCheck = Arc<dyn Fn(&Grant) -> bool + Send + Sync>;
 fn is_awaited(message: &Value) -> bool {
     match message["type"].as_str() {
         Some("automationStepDone" | "agentStepDone" | "watchObserved") => true,
+        Some("pcJobEvent") => true,
         Some("companionFrame") => matches!(
             message["frame"]["kind"].as_str(),
             Some("turnEnd" | "approvalResolved" | "jobFinished")

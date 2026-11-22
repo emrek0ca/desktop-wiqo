@@ -2,7 +2,7 @@
 //! stream and runs every PC step the answer asks for, whether the message was typed in this window or handed over by a paired phone (then the phone
 //! is the remote screen: every event goes to it as well, and its steps run as that phone's). Results go back to the server until the task is done.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,6 +20,8 @@ use wiqo_core::wire::{CommandStatus, Request};
 use crate::Event;
 
 mod digest;
+mod discover;
+mod discover_media;
 mod ledger;
 mod local;
 mod memory;
@@ -236,6 +238,7 @@ pub enum Asker {
     /// The person typed it in this window. `mission`: the message came from a Mission in Keşfet (someone else's words); the server reads the whole
     /// task as an outsider's instruction.
     Window { mission: Option<String> },
+    AutoResume { prior_run: String, device_token: String },
     /// A paired phone handed its message here (frames.json `remoteMessage`): `request` is the `/copilot/chat` body the phone would have sent itself. It
     /// goes out as it is, written from the phone with the phone's features and language; only what describes the computer is this computer's. Every
     /// event of the answer also goes to `forward`.
@@ -249,7 +252,7 @@ impl Asker {
     /// The request's `clientFeatures` and `locale`, and where the person writes from.
     fn client(&self, context: &Value) -> Value {
         match self {
-            Asker::Window { .. } => {
+            Asker::Window { .. } | Asker::AutoResume { .. } => {
                 let mut client = context.clone();
                 merge(
                     &mut client,
@@ -287,6 +290,7 @@ impl Asker {
         match self {
             Asker::Window { mission: Some(code) } => json!({ "missionCode": code }),
             Asker::Window { mission: None } => json!({}),
+            Asker::AutoResume { .. } => json!({}),
             Asker::Phone { request, .. } => {
                 let mut fields = request.clone();
                 if let Some(object) = fields.as_object_mut() {
@@ -315,8 +319,10 @@ pub struct Chat {
     file: std::path::PathBuf,
     account: Mutex<Option<Account>>,
     http: reqwest::Client,
+    discover_media: discover_media::DiscoverMedia,
     /// The running turns' stops, under each name a turn is known by: its first request's id and its task's id.
     stops: Mutex<HashMap<String, Arc<Stop>>>,
+    local_tasks: Mutex<HashSet<std::path::PathBuf>>,
     account_changed: tokio::sync::Notify,
     verifier: Mutex<Option<String>>,
 }
@@ -349,7 +355,9 @@ impl Chat {
                 .user_agent(concat!("wiqo-desktop/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .unwrap_or_default(),
+            discover_media: discover_media::DiscoverMedia::new(),
             stops: Mutex::new(HashMap::new()),
+            local_tasks: Mutex::new(HashSet::new()),
             account_changed: tokio::sync::Notify::new(),
             verifier: Mutex::new(None),
         }
@@ -370,7 +378,7 @@ impl Chat {
         let goal = handoff["goal"].as_str().unwrap_or("").to_string();
         let stop = Stop::default();
         let conversation = Uuid::new_v4().to_string();
-        self.local_agent(engine, device_id, handoff, &conversation, &json!([]), &goal, token, approve, &stop, &|event: Value| emit(event)).await
+        self.local_agent(engine, device_id, handoff, &conversation, &conversation, &json!([]), &goal, token, approve, &stop, false, &|event: Value| emit(event)).await
     }
 
     fn token(&self) -> Result<String> {
@@ -768,6 +776,9 @@ impl Chat {
     }
 
     pub fn sign_out(&self) -> Result<()> {
+        for stop in self.stops.lock().expect("stops lock").values() {
+            stop.ask();
+        }
         self.store(None, None)
     }
 
@@ -870,41 +881,44 @@ impl Chat {
         .await
     }
 
-    /// Keşfet (rova-backend social/routes.ts): one call under `missions/`. A refusal comes back as `{ "status", "error" }` and not as an error, so
-    /// the window can show what blocked a Mission (its findings) next to the field each one is in.
+    /// Keşfet's JSON routes return structured server refusals so the window can display findings with their fields.
     pub async fn missions(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
         let path = path.trim_start_matches('/');
-        // `profile` is the one profile (name, handle, headline, colour, cover…) Settings edits, and its free cover library; Keşfet reads the same row through `missions/`.
-        let own_profile = (path == "profile" && matches!(method, "GET" | "PUT")) || (path.starts_with("profile/cover-library") && method == "GET");
-        if !(own_profile || path == "missions" || path.starts_with("missions/") || path.starts_with("missions?")) || path.contains("..") {
+        let Some(contract) = discover::contract(method, path) else {
             bail!("Bu Keşfet isteği tanınmıyor.");
-        }
-        let method = match method {
-            "GET" => reqwest::Method::GET,
-            "POST" => reqwest::Method::POST,
-            "PUT" => reqwest::Method::PUT,
-            "PATCH" => reqwest::Method::PATCH,
-            "DELETE" => reqwest::Method::DELETE,
-            _ => bail!("Bu Keşfet isteği tanınmıyor."),
         };
+        if !contract.accepts_request(body.as_ref()) {
+            bail!("Keşfet isteğindeki bilgiler geçersiz.");
+        }
         let token = self.token()?;
-        // A draft and a publish each wait on a model call on the server.
-        let mut request = self.http.request(method, format!("{}/{path}", self.server)).timeout(Duration::from_secs(90)).bearer_auth(&token);
+        let mut request = self.http.request(contract.method.clone(), format!("{}/{path}", self.server)).timeout(contract.timeout()).bearer_auth(&token);
         if let Some(body) = body {
             request = request.json(&body);
         }
         let response = request.send().await.map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
         let status = response.status();
-        let value: Value = response.json().await.unwrap_or(Value::Null);
         if status.as_u16() == 401 {
             let _ = self.store(None, Some(&token));
             bail!("Oturumun sona erdi; yeniden giriş yap.");
         }
+        let data = response.text().await.map_err(|_| anyhow!("Keşfet yanıtı okunamadı."))?;
         if status.is_success() {
-            return Ok(value);
+            if !contract.accepts_response(&data) {
+                bail!("Keşfet sunucusundan uyumsuz yanıt alındı.");
+            }
+            return serde_json::from_str(&data).map_err(|_| anyhow!("Keşfet yanıtı okunamadı."));
         }
-        let error = if value["error"].is_object() { value["error"].clone() } else { json!({ "message": "İstek reddedildi." }) };
+        let error = if matches!(wiqo_contract::schema_generated::decodes("DiscoverError", &data), Ok(true)) {
+            serde_json::from_str::<Value>(&data).ok().and_then(|value| value.get("error").cloned())
+        } else {
+            None
+        }.unwrap_or_else(|| json!({ "message": "İstek reddedildi." }));
         Ok(json!({ "status": status.as_u16(), "error": error }))
+    }
+
+    /// Loads public Discover raster media when the WebView cannot display it cross-origin.
+    pub async fn discover_image(&self, url: &str) -> Result<String> {
+        self.discover_media.image(&self.server, url).await
     }
 
     /// The person's recipes ("Tariflerim", rova-backend agent/skills.ts): their own, recorded and imported, most used first.
@@ -1201,6 +1215,9 @@ impl Chat {
         let names = [request_id.to_ascii_lowercase(), task.to_ascii_lowercase()];
         {
             let mut stops = self.stops.lock().expect("stops lock");
+            if names.iter().any(|name| stops.contains_key(name)) {
+                bail!("Bu görev zaten bu bilgisayarda yürütülüyor.");
+            }
             for name in &names {
                 stops.insert(name.clone(), stop.clone());
             }
@@ -1224,16 +1241,8 @@ impl Chat {
                 &stop,
             )
             .await;
-        // The names are given back only if they are still this turn's: a later turn of the same task has its own stop under the task's id.
-        let mut stops = self.stops.lock().expect("stops lock");
-        for name in &names {
-            if stops
-                .get(name)
-                .is_some_and(|current| Arc::ptr_eq(current, &stop))
-            {
-                stops.remove(name);
-            }
-        }
+        // Drop every alias, including a canonical task id received in a resume handoff.
+        self.stops.lock().expect("stops lock").retain(|_, current| !Arc::ptr_eq(current, &stop));
         outcome
     }
 
@@ -1254,7 +1263,7 @@ impl Chat {
         asker: &Asker,
         approve: &Approve,
         token: &str,
-        stop: &Stop,
+        stop: &Arc<Stop>,
     ) -> Result<()> {
         let emit = |event: Value| {
             if let Asker::Phone { forward, .. } = asker {
@@ -1281,7 +1290,18 @@ impl Chat {
         }
         merge(&mut body, &context);
         emit(json!({ "type": "task", "taskId": task }));
-        let mut answer = self.stream(token, &body, &emit).await?;
+        let auto_resume = match asker {
+            Asker::AutoResume { device_token, .. } => Some(device_token.as_str()),
+            _ => None,
+        };
+        if let Asker::AutoResume { prior_run, .. } = asker {
+            // The legacy chat body is intentionally absent. An older server must refuse this.
+            body = serde_json::to_value(wiqo_contract::schema_generated::LocalRunResumeRequest {
+                resume_local_only: true, resume_local_run_id: prior_run.clone(), request_id,
+                conversation_id: conversation.to_string(), task_id: task.clone(), device_id: device_id.to_string(),
+            })?;
+        }
+        let mut answer = self.stream_with_device(token, &body, auto_resume, &emit).await?;
         let started = std::time::Instant::now();
         let mut stalls = 0usize;
         while started.elapsed() < Duration::from_secs(TASK_MINUTES * 60) {
@@ -1291,7 +1311,25 @@ impl Chat {
             // PC work handed to this computer's own agent (at the first answer, or in a later round, when the model reached for the terminal): the loop
             // runs here from now on.
             if answer["localAgent"].is_object() {
-                return self.local_agent(engine, device_id, &answer["localAgent"], conversation, &history, text, token, approve, stop, &emit).await;
+                let task_id = answer["localAgent"]["taskId"].as_str()
+                    .or_else(|| answer["taskId"].as_str()).unwrap_or(&task);
+                if auto_resume.is_some() && (answer["localAgent"]["resumes"] != true || task_id != task) {
+                    bail!("Otomatik devam için aynı yerel görev doğrulanamadı.");
+                }
+                if task_id != task {
+                    let mut stops = self.stops.lock().expect("stops lock");
+                    let canonical = task_id.to_ascii_lowercase();
+                    if stops.get(&canonical).is_some_and(|other| !Arc::ptr_eq(other, stop)) {
+                        bail!("Bu görev zaten bu bilgisayarda yürütülüyor.");
+                    }
+                    stops.insert(canonical, stop.clone());
+                    drop(stops);
+                    emit(json!({ "type": "task", "taskId": task_id }));
+                }
+                return self.local_agent(engine, device_id, &answer["localAgent"], conversation, task_id, &history, text, token, approve, stop, auto_resume.is_some(), &emit).await;
+            }
+            if auto_resume.is_some() {
+                return Ok(());
             }
             // The server's turn ran out of time with the task not done: a new window of the same task, from its notes (rova-backend continueTask).
             if answer["continueTask"] == true {
@@ -1406,6 +1444,7 @@ impl Chat {
                 continue;
             };
             let token = account.token;
+            let _ = tokio::time::timeout(Duration::from_secs(8), self.flush_local_finishes(&token)).await;
             let request = self
                 .http
                 .get(format!("{}/runs/events", self.server))
@@ -1440,6 +1479,10 @@ impl Chat {
                         while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
                             let line: Vec<u8> = buffer.drain(..=end).collect();
                             if let Some(event) = parse_event_line(&String::from_utf8_lossy(&line)) {
+                                let decoded = serde_json::from_value::<wiqo_contract::schema_generated::RunSyncEvent>(event.clone());
+                                if !matches!(decoded, Ok(wiqo_contract::schema_generated::RunSyncEvent::Snapshot(_) | wiqo_contract::schema_generated::RunSyncEvent::Copilot(_))) {
+                                    continue;
+                                }
                                 delay = 1;
                                 let _ = events.send(Event::RunSync {
                                     account: account.email.clone(),
@@ -1457,16 +1500,22 @@ impl Chat {
 
     /// Streams one request's events; when the stream breaks before its end, follows the request on the server instead.
     async fn stream(&self, token: &str, body: &Value, emit: &impl Fn(Value)) -> Result<Value> {
+        self.stream_with_device(token, body, None, emit).await
+    }
+
+    async fn stream_with_device(&self, token: &str, body: &Value, device_token: Option<&str>, emit: &impl Fn(Value)) -> Result<Value> {
         let request_id = body["requestId"].as_str().unwrap_or("").to_string();
-        let response = self
+        let mut request = self
             .http
             .post(format!("{}/copilot/chat", self.server))
             .bearer_auth(token)
             .header("Accept", "text/event-stream")
             .timeout(Duration::from_secs(20 * 60))
-            .json(body)
-            .send()
-            .await
+            .json(body);
+        if let Some(device_token) = device_token {
+            request = request.header("X-Wiqo-Device-Token", device_token);
+        }
+        let response = request.send().await
             .map_err(|_| anyhow::Error::new(Unreachable))?;
         if response.status().as_u16() == 401 {
             let _ = self.store(None, Some(token));

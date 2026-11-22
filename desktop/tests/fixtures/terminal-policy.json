@@ -1,0 +1,20 @@
+[
+  { "target": "unix", "command": "git status --short", "readOnly": true },
+  { "target": "unix", "command": "cat note.txt | wc -l", "readOnly": true },
+  { "target": "unix", "command": "cat ../outside.txt", "readOnly": false },
+  { "target": "unix", "command": "cat /etc/hosts", "readOnly": false },
+  { "target": "unix", "command": "echo ok > result.txt", "readOnly": false },
+  { "target": "unix", "command": "npm run test", "readOnly": false },
+  { "target": "unix", "command": "git branch new-branch", "readOnly": false },
+  { "target": "unix", "command": "git tag new-tag", "readOnly": false },
+  { "target": "unix", "command": "git remote add example remote", "readOnly": false },
+  { "target": "unix", "command": "git diff --output=local.txt", "readOnly": false },
+  { "target": "unix", "command": "tools/git status", "readOnly": false },
+  { "target": "windows", "command": "Get-Content note.txt", "readOnly": true },
+  { "target": "windows", "command": "Get-Content ..\\outside.txt", "readOnly": false },
+  { "target": "windows", "command": "Get-Content D:\\outside.txt", "readOnly": false },
+  { "target": "windows", "command": "Set-Content note.txt value", "readOnly": false },
+  { "target": "windows", "command": "git branch -D new-branch", "readOnly": false },
+  { "target": "cmd", "command": "dir", "readOnly": true },
+  { "target": "cmd", "command": "type ..\\outside.txt", "readOnly": false }
+]

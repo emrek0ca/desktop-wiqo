@@ -1,0 +1,37 @@
+{
+  "notices": [
+    {
+      "id": 8,
+      "ids": [
+        8,
+        7
+      ],
+      "kind": "need",
+      "group": "problems",
+      "text": "Atlas da bu sorunu yaşıyor.",
+      "createdAt": "2026-11-22 09:00:00",
+      "read": false,
+      "actor": {
+        "username": "atlas",
+        "displayName": "Atlas",
+        "avatar": {
+          "kind": "initial",
+          "emoji": null,
+          "color": "indigo",
+          "url": null
+        },
+        "following": true
+      },
+      "others": 1,
+      "mission": null,
+      "post": {
+        "code": "ABCDEFGH",
+        "title": "Proje dosyalarını nasıl düzenleyebilirim?",
+        "kind": "problem"
+      },
+      "preview": null
+    }
+  ],
+  "unread": 2,
+  "next": null
+}

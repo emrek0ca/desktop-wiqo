@@ -1,0 +1,8 @@
+{
+  "expectedStateVersion": 4,
+  "control": {
+    "op": "reassign",
+    "stepId": "s1",
+    "agentId": null
+  }
+}

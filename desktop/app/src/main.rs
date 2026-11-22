@@ -26,6 +26,14 @@ struct App {
     google_cancel: Arc<tokio::sync::Notify>,
     /// The on-device speech recognition and its model.
     ear: Arc<ear::Ear>,
+    discover_link: Mutex<Option<DiscoverLink>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", content = "code", rename_all = "lowercase")]
+enum DiscoverLink {
+    Mission(String),
+    Problem(String),
 }
 
 type Reply<T> = Result<T, String>;
@@ -180,8 +188,11 @@ fn chat_account(app: State<'_, App>) -> Option<String> {
 
 /// Work on this computer that the app was closed in the middle of (told once each): the window offers to go on with it.
 #[tauri::command]
-fn chat_interrupted(app: State<'_, App>) -> Vec<serde_json::Value> {
-    app.desktop.chat.interrupted()
+async fn chat_interrupted(app: State<'_, App>) -> Reply<Vec<serde_json::Value>> {
+    let desktop = app.desktop.clone();
+    tokio::task::spawn_blocking(move || desktop.chat.interrupted())
+        .await
+        .map_err(text)
 }
 
 /// Signs in and makes this computer the account's device (online at once).
@@ -369,20 +380,31 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).status();
 }
 
-/// A `wiqo://oauth-callback?...` link (Google sign-in) finishes the sign-in; the window hears `signed-in` or `sign-in-failed`.
-fn handle_link(handle: &AppHandle, link: &str) {
-    // A shared recipe (rova-backend agent/skills.ts `/r/CODE` → "Wiqo'da aç"): the window opens on it, to be read before it is added.
-    if let Some(code) = link.strip_prefix("wiqo://recipe/") {
-        show_window(handle);
-        let code: String = code.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
-        let _ = handle.emit("recipe-link", code);
-        return;
+fn parse_discover_link(link: &str) -> Option<DiscoverLink> {
+    let url = tauri::Url::parse(link).ok()?;
+    if url.scheme() != "wiqo" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
     }
-    // A shared problem or idea (rova-backend social/problems.ts `/p/CODE` → "Wiqo'da aç"): the window opens on it.
-    if let Some(code) = link.strip_prefix("wiqo://problem/") {
+    let code = url.path().strip_prefix('/')?;
+    if code.len() != 8 || !code.bytes().all(|byte| matches!(byte.to_ascii_uppercase(), b'2'..=b'9' | b'A'..=b'H' | b'J'..=b'N' | b'P'..=b'Z')) {
+        return None;
+    }
+    let code = code.to_ascii_uppercase();
+    match url.host_str()? {
+        "recipe" => Some(DiscoverLink::Mission(code)),
+        "problem" => Some(DiscoverLink::Problem(code)),
+        _ => None,
+    }
+}
+
+/// Shared Discover links wait for the window and its signed-in session; OAuth callbacks finish the existing sign-in flow.
+fn handle_link(handle: &AppHandle, link: &str) {
+    if let Some(discover_link) = parse_discover_link(link) {
+        if let Ok(mut pending) = handle.state::<App>().discover_link.lock() {
+            *pending = Some(discover_link);
+        }
         show_window(handle);
-        let code: String = code.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
-        let _ = handle.emit("problem-link", code);
+        let _ = handle.emit("discover-link", ());
         return;
     }
     if !link.starts_with("wiqo://oauth-callback") {
@@ -583,6 +605,19 @@ async fn skill_action(app: State<'_, App>, id: u64, action: String) -> Reply<ser
 #[tauri::command]
 async fn missions_call(app: State<'_, App>, method: String, path: String, body: Option<serde_json::Value>) -> Reply<serde_json::Value> {
     app.desktop.chat.missions(&method, &path, body).await.map_err(text)
+}
+
+#[tauri::command]
+async fn discover_image(app: State<'_, App>, url: String) -> Reply<String> {
+    app.desktop.chat.discover_image(&url).await.map_err(text)
+}
+
+#[tauri::command]
+fn take_discover_link(app: State<'_, App>) -> Reply<Option<DiscoverLink>> {
+    if app.desktop.chat.email().is_none() {
+        return Ok(None);
+    }
+    Ok(app.discover_link.lock().map_err(text)?.take())
 }
 
 /// Recipe packs: the list (no id) or one pack added to the person's recipes.
@@ -1084,11 +1119,14 @@ fn main() {
             pairing: Mutex::new(None),
             google_cancel: Arc::new(tokio::sync::Notify::new()),
             ear: ear::Ear::new(desktop.voice_dir()),
+            discover_link: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
             skills_list,
             missions_call,
+            discover_image,
+            take_discover_link,
             skill_action,
             skill_packs,
             record_start,
@@ -1186,6 +1224,11 @@ fn main() {
                         handle_link(&links, url.as_str());
                     }
                 });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        handle_link(app.handle(), url.as_str());
+                    }
+                }
             }
             keep_updated(app.handle().clone());
             // First launch: the speech model comes down in the background, so the voice is ready when the person first asks for it.

@@ -64,7 +64,71 @@
     "type": "RunSyncEvent"
   },
   {
+    "file": "schema/examples/agent_run_progress.json",
+    "type": "AgentRunProgressRequest"
+  },
+  {
+    "file": "schema/examples/agent_run_finish.json",
+    "type": "AgentRunFinishRequest"
+  },
+  {
+    "file": "schema/examples/local_run_resume.json",
+    "type": "LocalRunResumeRequest"
+  },
+  {
+    "file": "schema/examples/agent_task_detail.json",
+    "type": "AgentTaskDetail"
+  },
+  {
+    "file": "schema/examples/agent_task_step_control.json",
+    "type": "AgentTaskStepControlRequest"
+  },
+  {
+    "file": "schema/examples/pc_job_started.json",
+    "type": "PcJobEvent"
+  },
+  {
+    "file": "schema/examples/pc_unit_claim.json",
+    "type": "PcUnitClaim"
+  },
+  {
+    "file": "schema/examples/pc_unit_done.json",
+    "type": "PcUnitDone"
+  },
+  {
+    "file": "schema/examples/pc_job_finished.json",
+    "type": "PcJobEvent"
+  },
+  {
+    "file": "schema/examples/pc_job_record.json",
+    "type": "PcJobRecord"
+  },
+  {
     "file": "schema/examples/sync_snapshot.json",
     "type": "RunSyncEvent"
+  },
+  {
+    "file": "schema/examples/discover_feed.json",
+    "type": "DiscoverFeed"
+  },
+  {
+    "file": "schema/examples/discover_post_detail.json",
+    "type": "DiscoverPostDetail"
+  },
+  {
+    "file": "schema/examples/discover_notifications.json",
+    "type": "DiscoverNotifications"
+  },
+  {
+    "file": "schema/examples/discover_profile.json",
+    "type": "DiscoverProfilePage"
+  },
+  {
+    "file": "schema/examples/discover_similar_error.json",
+    "type": "DiscoverError"
+  },
+  {
+    "file": "schema/examples/discover_unlink.json",
+    "type": "DiscoverMissionWrite"
   }
 ]

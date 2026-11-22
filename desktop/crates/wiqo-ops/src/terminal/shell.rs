@@ -489,6 +489,23 @@ pub fn windows_powershell() -> &'static str {
     })
 }
 
+/// A small set of inspections with no quoting or shell state runs as a native process.
+fn direct_inspection(command: &str) -> Option<(&str, impl Iterator<Item = &str>)> {
+    if !command.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || b" ._-/=:+@".contains(&byte)
+    }) || !super::policy::is_read_only(command) {
+        return None;
+    }
+    let mut words = command.split_ascii_whitespace();
+    let program = words.next()?;
+    let supported = if cfg!(windows) {
+        program == "git"
+    } else {
+        matches!(program, "git" | "ls" | "cat" | "head" | "tail" | "wc" | "grep" | "rg" | "stat")
+    };
+    supported.then_some((program, words))
+}
+
 /// Runs one command of a session. `shell` is "zsh"/"bash"/"default" on macOS and Linux, "powershell"/"cmd" on Windows.
 pub fn run_tracked(
     command: &str,
@@ -500,6 +517,30 @@ pub fn run_tracked(
     control: &Control,
 ) -> Outcome {
     let interactive = control.input.is_some();
+    if !interactive && shell.is_none() && exports.is_none_or(str::is_empty)
+        && matches!(scope, Some(WriteScope::ReadOnly))
+    {
+        if let Some((program, args)) = direct_inspection(command) {
+            let env = environment(working);
+            let executable = env.get("PATH").or_else(|| env.get("Path"))
+                .into_iter()
+                .flat_map(std::env::split_paths)
+                .filter(|directory| directory.is_absolute())
+                .map(|directory| directory.join(if cfg!(windows) { format!("{program}.exe") } else { program.to_string() }))
+                .find(|path| path.is_file());
+            if let Some(executable) = executable {
+                let mut process = if cfg!(target_os = "macos") {
+                    let mut sandboxed = crate::process::command("/usr/bin/sandbox-exec");
+                    sandboxed.args(["-p", &sandbox_profile(&WriteScope::ReadOnly)]).arg(executable);
+                    sandboxed
+                } else {
+                    crate::process::command(executable)
+                };
+                process.args(args).current_dir(working).env_clear().envs(env);
+                return finish(run(process, seconds, control), Some(working.to_path_buf()), None);
+            }
+        }
+    }
     if cfg!(windows) {
         return run_windows(command, working, seconds, shell, control);
     }
@@ -675,6 +716,16 @@ fn finish(snapshot: Snapshot, end_directory: Option<PathBuf>, exports: Option<St
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simple_scoped_inspection_uses_plain_process_arguments() {
+        let (program, args) = direct_inspection("git status --short").unwrap();
+        assert_eq!(program, "git");
+        assert_eq!(args.collect::<Vec<_>>(), ["status", "--short"]);
+        for command in ["git status && git log", "git status\nls", "git diff --output=a", "git status 'a b'"] {
+            assert!(direct_inspection(command).is_none(), "{command}");
+        }
+    }
 
     #[test]
     fn a_session_carries_its_folder_and_exports_and_a_timeout_stops_the_group() {

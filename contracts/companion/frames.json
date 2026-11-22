@@ -19,7 +19,7 @@
         "fields": [
           "the /copilot/chat body the phone would have sent itself (messages, conversationId, requestId, taskId, questionId, clientFeatures, locale, attachments, files, agentId…); the desktop replaces what describes the computer and adds its own step results"
         ],
-        "answer": "ack within ackSeconds, then streamEvent frames. No ack: the phone sends the same request (same requestId) to /copilot/chat itself, without a PC."
+        "answer": "ack within ackSeconds, then streamEvent frames. When ack is missing, the phone reads the ledger for the same requestId and keeps the selected desktop as the executor."
       },
       "approvalDecision": {
         "payloadKind": "approvalDecision",

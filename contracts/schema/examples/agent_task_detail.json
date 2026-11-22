@@ -1,0 +1,59 @@
+{
+  "id": 42,
+  "stateVersion": 4,
+  "state": "waiting_input",
+  "canResume": false,
+  "title": "Yerel doğrulama",
+  "persona": "developer",
+  "status": "running",
+  "progress": null,
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Projeyi doğrula",
+      "status": "pending",
+      "role": "developer"
+    }
+  ],
+  "estimatedSeconds": 45,
+  "waiting": {
+    "reason": "pc"
+  },
+  "usage": {
+    "modelCalls": 1,
+    "inputTokens": 30,
+    "outputTokens": 10,
+    "cachedTokens": 0,
+    "budget": 800000
+  },
+  "verification": null,
+  "revisions": 0,
+  "recovery": {
+    "budget": 3,
+    "used": 1,
+    "left": 2,
+    "steps": {
+      "s1": [
+        "alternative"
+      ]
+    },
+    "asked": false
+  },
+  "summary": null,
+  "error": null,
+  "artifacts": [],
+  "conversationId": "chat-1",
+  "events": [
+    {
+      "id": 1,
+      "stepId": null,
+      "event": "waiting",
+      "summary": "Bilgisayar bekleniyor.",
+      "errorCode": null,
+      "verified": false,
+      "uncertain": false,
+      "durationMs": null,
+      "at": "2026-11-22 00:00:00"
+    }
+  ]
+}

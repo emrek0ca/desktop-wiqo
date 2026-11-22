@@ -1,0 +1,63 @@
+{
+  "missions": [
+    {
+      "code": "QSTUVWXY",
+      "name": "Dosyaları düzenle",
+      "description": "Bir düzenleme tarifi.",
+      "prompt": "Proje dosyalarını türlerine göre listele.",
+      "icon": "sparkle",
+      "category": "productivity",
+      "tags": [],
+      "inputs": [],
+      "needs": [],
+      "steps": [],
+      "preview": "",
+      "images": [],
+      "visibility": "public",
+      "url": "https://wiqoai.com/r/QSTUVWXY",
+      "publishedAt": "2026-11-22 09:00:00",
+      "updatedAt": null,
+      "author": {
+        "username": "atlas",
+        "displayName": "Atlas",
+        "bio": "",
+        "headline": "",
+        "avatar": {
+          "kind": "initial",
+          "emoji": null,
+          "color": "indigo",
+          "url": null
+        }
+      },
+      "origin": null,
+      "counts": {
+        "likes": 0,
+        "comments": 0,
+        "copies": 0,
+        "remixes": 0,
+        "succeeded": 0
+      },
+      "liked": false,
+      "saved": false,
+      "mine": false,
+      "solves": {
+        "code": "ABCDEFGH",
+        "title": "Proje dosyalarını nasıl düzenleyebilirim?",
+        "kind": "problem"
+      },
+      "verdicts": {
+        "worked": 0,
+        "partly": 0,
+        "failed": 0,
+        "mine": null
+      }
+    }
+  ],
+  "next": null,
+  "categories": [
+    {
+      "id": "productivity",
+      "label": "Verimlilik"
+    }
+  ]
+}

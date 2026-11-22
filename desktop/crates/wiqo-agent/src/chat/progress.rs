@@ -1,9 +1,7 @@
 //! What this computer tells the person's other devices about one step of its work (POST /agent/progress, then the phone's chat).
 //!
-//! The shape is the backend's `agentRunEvents.ts`; `contracts/agent-events/examples` holds one of each and a test below keeps these builders equal to them.
-//! A step is told twice: when it starts (the tool, the command, the folder) and when it ends (the exit code, how long it took, the end of what it printed,
-//! the files it changed). Output and commands go out with the private values swapped for stand-ins (vault.rs), exactly as the model reads them, and only the end
-//! of the output leaves: the whole of it stays here.
+//! The shape follows the shared agent-event fixtures. These builders can retain local
+//! diagnostic fields; the local run projects them to the shared wire before reporting.
 
 use std::path::PathBuf;
 
@@ -181,6 +179,20 @@ pub fn finished(
     json!({ "type": "step_update", "step": step })
 }
 
+pub fn background_started(id: &str) -> Value {
+    running(id, "Komut arka planda çalışıyor", "shell", &Value::Null, &mut str::to_owned)
+}
+
+pub fn background_finished(id: &str, success: bool, uncertain: bool, exit_code: Option<i64>) -> Value {
+    let status = if uncertain { "blocked" } else if success { "succeeded" } else { "failed" };
+    let summary = if uncertain { "Arka plan işinin sonucu bilinmiyor" } else { "Arka plan işi sona erdi" };
+    let mut step = base(id, summary, status, "shell");
+    if let Some(code) = exit_code {
+        step["exitCode"] = json!(code);
+    }
+    json!({ "type": "step_update", "step": step })
+}
+
 /// A step the server planned (chat.rs runs it on this computer), told in the same shape. Its `id` is already a UUID (the server's), its words are the server's
 /// `summary`; the PC's own status words (`completed`, `denied`) are the phone's (`succeeded`, `denied`).
 pub fn planned(step: &Value, status: &str, message: Option<&str>, summary: Option<&str>) -> Value {
@@ -200,10 +212,15 @@ pub fn planned(step: &Value, status: &str, message: Option<&str>, summary: Optio
 
 /// The end of a run, in the shape of the server's own `done` (reply, steps, executionState, artifacts, backendConfirmations, executionTarget) plus what only
 /// this computer knows. The phone decodes it like any other turn's end; a `done` without `steps` did not decode.
-pub fn done(reply: &str, run_id: &str, private_kept: usize) -> Value {
+pub fn done(reply: &str, run_id: &str, private_kept: usize, outcome: wiqo_contract::schema_generated::AgentRunOutcome) -> Value {
+    let state = if outcome.state == wiqo_contract::schema_generated::AgentRunOutcomeState::Done {
+        "complete_backend"
+    } else {
+        "partial_success"
+    };
     json!({
-        "type": "done", "reply": reply, "steps": [], "executionState": "complete_backend", "artifacts": [], "backendConfirmations": [],
-        "executionTarget": "device", "localRun": run_id, "privateKept": private_kept
+        "type": "done", "reply": reply, "steps": [], "executionState": state, "artifacts": [], "backendConfirmations": [],
+        "executionTarget": "device", "localRun": run_id, "privateKept": private_kept, "outcome": outcome
     })
 }
 
@@ -263,7 +280,13 @@ mod tests {
     #[test]
     fn the_end_of_a_run_is_the_servers_done_with_the_local_run_added() {
         let expected: Value = serde_json::from_str(include_str!("../../../../../contracts/agent-events/examples/done.json")).expect("example is JSON");
-        assert_eq!(done("Testler geçiyor.", "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", 0), expected);
+        let outcome = wiqo_contract::schema_generated::AgentRunOutcome {
+            state: wiqo_contract::schema_generated::AgentRunOutcomeState::Done,
+            verified: true,
+        };
+        let mut actual = done("Testler geçiyor.", "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", 0, outcome);
+        assert_eq!(actual.as_object_mut().unwrap().remove("outcome"), Some(json!({ "state": "done", "verified": true })));
+        assert_eq!(actual, expected);
     }
 
     #[test]

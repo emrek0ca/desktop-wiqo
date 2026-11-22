@@ -3,8 +3,16 @@
 //! thing that leaves the computer is each model call, through the server's gateway (`/agent/model`) with the run id the chat turn handed over.
 //! Nothing waits on a round trip per step, and nothing depends on the chat's stream staying open.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+use sha2::{Digest, Sha256};
+use wiqo_contract::schema_generated::{AgentRunFinishRequest, AgentRunOutcome, AgentRunOutcomeState, AgentRunProgressEvent, AgentRunProgressRequest, LocalAgentHandoff};
+use wiqo_core::storage::write_json;
+use wiqo_ops::terminal::starts_server;
+
+use AgentRunOutcomeState::{Cancelled, Done, Failed, Paused, Unknown};
 
 use super::*;
 
@@ -127,7 +135,7 @@ fn tools() -> Value {
         { "type": "function", "function": { "name": "plan", "description": "Üç adımdan uzun işte yapılacaklar listesi: başta adımları yaz (her adıma, mümkünse, bittiğini gösteren bir check komutu ver), bir adım bitince ya da plan değişince listenin tamamını güncel durumlarıyla yeniden gönder. Kullanıcı görür; sen de kaldığın yeri buradan bulursun. Bir adım ancak check komutu geçince done olur.",
             "parameters": { "type": "object", "properties": {
                 "steps": { "type": "array", "description": "En çok 20 adım", "items": { "type": "object", "properties": {
-                    "title": { "type": "string" }, "status": { "type": "string", "enum": ["pending", "doing", "done", "dropped"] },
+                    "id": { "type": "string", "description": "Bu adımın kalıcı kimliği. İlk planda seç; sonraki güncellemelerde aynısını kullan." }, "title": { "type": "string" }, "status": { "type": "string", "enum": ["pending", "doing", "done", "dropped"] },
                     "check": { "type": "string", "description": "Adımın bittiğini gösteren komut (çıkış kodu 0 = bitti): test, derleme, curl, grep. Adımı done yaptığında bu komutu program çalıştırır; geçmezse adım doing'de kalır." },
                     "workdir": { "type": "string", "description": "check'in çalışacağı klasör" }
                 }, "required": ["title", "status"] } }
@@ -173,14 +181,13 @@ fn environment() -> String {
         "windows" => "Windows (Windows PowerShell 5.1: && ve || YOK; sıralı adımda `a; if ($?) { b }` yaz, dosyaya yazarken -Encoding utf8 ver)".to_string(),
         other => other.to_string(),
     };
-    let home = dirs::home_dir().map(|home| home.to_string_lossy().to_string()).unwrap_or_default();
     let access = if wiqo_ops::full_access() {
         "Tam yetki açık: komutlar ve dosya değişiklikleri sorulmadan çalışır."
     } else {
         "Sorarak modu: değiştiren her komut ve dosya yazımı kullanıcıya sorulur; reddedilirse başka yol öner."
     };
     format!(
-        "ORTAM\n- İşletim sistemi: {os}\n- Ev klasörü: {home}\n- Şimdi: {}\n- {access}\n- Komut satırı araçları: {}\n\n{NOTES}",
+        "ORTAM\n- İşletim sistemi: {os}\n- Ev klasörü: ~\n- Şimdi: {}\n- {access}\n- Komut satırı araçları: {}\n\n{NOTES}",
         chrono::Local::now().format("%Y-%m-%d %H:%M"),
         tool_inventory()
     )
@@ -389,50 +396,6 @@ fn said_since(known: &[Value], taken: &mut Vec<(String, String)>, history: &Valu
     new
 }
 
-/// A plan step's "done when" command, run on this computer in the step's folder (50 seconds at most): whether it passed, its exit code and the end of what
-/// it printed. The model's own word that a step is finished is not what closes it: this is.
-fn run_check(command: &str, folder: &Path) -> (bool, i32, String) {
-    if wiqo_ops::terminal::is_forbidden(command) {
-        return (false, -1, "Bu komut çalıştırılamaz (yasaklı kalıp); başka bir ölçüt yaz.".into());
-    }
-    let log = std::env::temp_dir().join(format!("wiqo-check-{}.log", Uuid::new_v4()));
-    let Ok(file) = std::fs::File::create(&log) else { return (false, -1, "Ölçüt çıktısı için dosya açılamadı.".into()) };
-    let Ok(twin) = file.try_clone() else { return (false, -1, "Ölçüt çıktısı için dosya açılamadı.".into()) };
-    let mut shell = if cfg!(windows) {
-        let mut shell = std::process::Command::new("powershell");
-        shell.args(["-NoProfile", "-Command", command]);
-        shell
-    } else {
-        let mut shell = std::process::Command::new("/bin/sh");
-        shell.args(["-c", command]);
-        shell
-    };
-    let folder = if folder.is_dir() { folder.to_path_buf() } else { std::env::current_dir().unwrap_or_default() };
-    let spawned = shell.current_dir(folder).stdin(std::process::Stdio::null()).stdout(file).stderr(twin).spawn();
-    let Ok(mut child) = spawned else {
-        let _ = std::fs::remove_file(&log);
-        return (false, -1, "Komut başlatılamadı.".into());
-    };
-    let started = Instant::now();
-    let code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code().unwrap_or(-1),
-            Ok(None) if started.elapsed() > Duration::from_secs(50) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break -2;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(_) => break -1,
-        }
-    };
-    let text = std::fs::read_to_string(&log).unwrap_or_default();
-    let _ = std::fs::remove_file(&log);
-    let tail: String = text.chars().rev().take(700).collect::<Vec<_>>().into_iter().rev().collect();
-    let tail = if code == -2 { format!("(50 saniyede bitmedi)\n{tail}") } else { tail };
-    (code == 0, code, tail.trim().to_string())
-}
-
 /// The tools a side worker may use: reading and research only (the web, the project's own search and map). It cannot write, run commands or ask for approvals.
 fn helper_tools(all: &Value) -> Value {
     json!(all.as_array().map(|tools| tools.iter().filter(|tool| matches!(tool["function"]["name"].as_str(), Some("web" | "repo_find" | "repo_map"))).cloned().collect::<Vec<_>>()).unwrap_or_default())
@@ -523,6 +486,162 @@ fn shown_output(data: &Value) -> String {
     }
 }
 
+struct WorkResult {
+    reply: String,
+    state: AgentRunOutcomeState,
+    verified: bool,
+}
+
+impl WorkResult {
+    fn stopped(state: AgentRunOutcomeState, reply: String) -> Self {
+        Self { reply, state, verified: false }
+    }
+
+    fn outcome(&self) -> AgentRunOutcome {
+        AgentRunOutcome { state: self.state.clone(), verified: self.verified }
+    }
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+struct TrackedJob {
+    id: String,
+    step_id: String,
+    server: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionSnapshot {
+    v: u8,
+    saved_at: i64,
+    conversation: String,
+    task_id: String,
+    run_id: String,
+    open: bool,
+    #[serde(default)]
+    interrupted_notified: bool,
+    #[serde(default)]
+    auto_resume_attempted: bool,
+    goal: String,
+    messages: Vec<Value>,
+    plan: Vec<Value>,
+    decisions: Vec<String>,
+    log: Vec<String>,
+    held: Vec<(String, String)>,
+    vault: Value,
+    #[serde(default)]
+    ledger: super::ledger::Ledger,
+    #[serde(default)]
+    jobs: Vec<TrackedJob>,
+    #[serde(default)]
+    pins: Vec<String>,
+    #[serde(default)]
+    last_errors: Vec<String>,
+    #[serde(default)]
+    files: Vec<(String, String)>,
+    #[serde(default)]
+    seen: HashMap<PathBuf, u64>,
+    #[serde(default)]
+    checkpoints: Vec<(PathBuf, Option<String>)>,
+    #[serde(default)]
+    undo: Vec<(String, String)>,
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    servers: Vec<(String, String)>,
+    #[serde(default)]
+    in_flight: bool,
+    #[serde(default)]
+    uncertain: bool,
+}
+
+impl SessionSnapshot {
+    fn eligible_for_automatic_resume(&self, now: i64) -> bool {
+        self.open && !self.read_only && !self.auto_resume_attempted
+            && !self.in_flight && !self.uncertain && self.jobs.is_empty()
+            && !self.plan.iter().any(|step| step["checkJob"].is_string())
+            && Uuid::parse_str(&self.task_id).is_ok()
+            && Uuid::parse_str(&self.run_id).is_ok()
+            && now.saturating_sub(self.saved_at) < 86_400
+    }
+}
+
+struct LocalSession<'a> {
+    path: PathBuf,
+    conversation: &'a str,
+    task_id: &'a str,
+    run_id: &'a str,
+}
+
+struct ActiveSession<'a> {
+    active: &'a Mutex<HashSet<PathBuf>>,
+    paths: [PathBuf; 2],
+}
+
+impl Drop for ActiveSession<'_> {
+    fn drop(&mut self) {
+        let mut active = self.active.lock().expect("local tasks lock");
+        for path in &self.paths {
+            active.remove(path);
+        }
+    }
+}
+
+impl LocalSession<'_> {
+    fn save(&self, work: &Work, open: bool) -> std::io::Result<()> {
+        let log: Vec<_> = work.log.iter().rev().take(200).rev().collect();
+        write_json(&self.path, &json!({
+            "v": 2, "savedAt": chrono::Utc::now().timestamp(), "conversation": self.conversation,
+            "taskId": self.task_id, "runId": self.run_id, "open": open, "goal": work.goal,
+            "messages": work.messages.get(1..).unwrap_or(&[]), "plan": work.plan,
+            "decisions": work.decisions, "log": log, "held": work.held, "vault": work.vault.saved(),
+            "ledger": work.ledger, "jobs": work.jobs, "servers": work.reach.servers,
+            "pins": work.pins, "lastErrors": work.last_errors, "files": work.files,
+            "seen": work.reach.seen, "checkpoints": work.reach.checkpoints, "undo": work.reach.undo,
+            "inFlight": work.in_flight, "uncertain": work.uncertain, "readOnly": work.read_only,
+            "verification": if open { None } else { work.ledger.report() },
+        }))
+    }
+}
+
+fn effectful_tool(name: &str, args: &Value, pc_tools: &[String]) -> bool {
+    match name {
+        "shell" => !wiqo_ops::is_read_only(args["command"].as_str().unwrap_or("")),
+        "job" => matches!(args["action"].as_str(), Some("input" | "cancel")),
+        "write_file" | "edit_file" | "apply_patch" | "undo" | "project_notes" | "browser_check" => true,
+        "api" => args["operation"] == "call" && !matches!(args["method"].as_str(), None | Some("GET" | "HEAD")),
+        "accounts" => args["operation"] != "list",
+        _ => pc_tools.iter().any(|tool| tool == name),
+    }
+}
+
+fn private_model_result(name: &str, pc_tools: &[String]) -> bool {
+    matches!(name, "shell" | "job" | "read_file" | "write_file" | "edit_file" | "apply_patch"
+        | "undo" | "search" | "project_notes" | "repo_map" | "repo_find" | "browser_check")
+        || pc_tools.iter().any(|tool| tool == name)
+}
+
+/// Keep receipt metadata and the opaque job reference while withholding local content.
+fn model_receipt(outcome: &ToolOutcome) -> String {
+    let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
+    json!({
+        "status": if receipt["sideEffectUncertain"] == true || receipt["status"] == "unknown" {
+            "unknown"
+        } else if outcome.ok { "completed" } else { "failed" },
+        "exitCode": receipt["exitCode"],
+        "jobState": receipt["jobState"],
+        "jobId": outcome.job,
+        "errorCode": receipt["errorCode"],
+        "message": "Yerel çıktı bu bilgisayarda kaldı."
+    }).to_string()
+}
+
+fn session_snapshot(path: &Path) -> Option<SessionSnapshot> {
+    let session: SessionSnapshot = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let age = chrono::Utc::now().timestamp().saturating_sub(session.saved_at);
+    (session.v == 2 && age < SESSION_DAYS * 86_400).then_some(session)
+}
+
 /// The working state of one request: what the model is sent, its plan, and a line per step for when the model cannot be asked for a summary.
 struct Work {
     messages: Vec<Value>,
@@ -536,7 +655,7 @@ struct Work {
     /// How many times old results were shortened in a batch.
     trims: usize,
     /// The files this run read or changed, with the last thing done to each (newest last): what a compaction keeps in place of their text.
-    files: Vec<(String, &'static str)>,
+    files: Vec<(String, String)>,
     /// What the model said before acting (what it was doing and why), newest last: the decisions of the work.
     decisions: Vec<String>,
     budget: usize,
@@ -552,6 +671,11 @@ struct Work {
     vault: super::vault::Vault,
     /// What the run changed and what really checked it (ledger.rs): the answer ends with it.
     ledger: super::ledger::Ledger,
+    jobs: Vec<TrackedJob>,
+    in_flight: bool,
+    uncertain: bool,
+    read_only: bool,
+    model_sharing: Option<bool>,
 }
 
 /// What this run may do without asking again, and what it already knows of the projects it works in.
@@ -571,8 +695,6 @@ struct Reach {
     /// the ones left at the end are stopped unless the person asked for them to stay (`release_servers`). A counter app was started four times
     /// (ports 5173-5176) and all four were left running.
     servers: Vec<(String, String)>,
-    /// Ports a server this run started listens on when it was started detached (`nohup ... &`, `http.server 8000 &`), so it is stopped with the run too.
-    ports: Vec<u16>,
     /// Each file as the agent last read or wrote it (a fingerprint of its bytes): a change is refused when the file moved on since then, so the
     /// person's own edits made while the run works are never written over.
     seen: std::collections::HashMap<PathBuf, u64>,
@@ -702,78 +824,46 @@ fn allowable(folder: &Path) -> Option<PathBuf> {
 }
 
 /// A command that starts a server that keeps running (a dev server, a static server, an app server).
-fn starts_server(command: &str) -> bool {
-    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    PATTERN
-        .get_or_init(|| {
-            regex::Regex::new(r"(?i)\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)\b|\bvite(?:\s+(?:dev|preview|serve)\b|\s*$|\s+--)|\bnext\s+(?:dev|start)\b|http\.server|\bflask\s+run\b|\buvicorn\b|\bphp\s+-S\b|\bnodemon\b|\bnpx\s+(?:serve|http-server)\b|\bpython3?\s+(?:-m\s+)?(?:app|server|manage)\.?py?\b.*runserver")
-                .expect("server pattern")
-        })
-        .is_match(command)
-}
-
 /// No emoji in what the person reads (they were the model's habit, not the person's wish); the tick and cross marks and arrows stay, they carry meaning.
 fn strip_emoji(text: &str) -> String {
-    let cleaned: String = text
-        .chars()
-        .filter(|c| {
-            let code = *c as u32;
-            let keeps = matches!(code, 0x2713 | 0x2714 | 0x2717 | 0x2718 | 0x2190..=0x21FF);
-            keeps || !(matches!(code, 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0xFE0F | 0x200D))
-        })
-        .collect();
+    let mut cleaned = String::new();
+    let mut emoji = false;
+    for c in text.chars() {
+        let code = c as u32;
+        let keeps = matches!(code, 0x2713 | 0x2714 | 0x2717 | 0x2718 | 0x2190..=0x21FF);
+        if !keeps && matches!(code, 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0xFE0F | 0x200D) {
+            emoji = true;
+            continue;
+        }
+        if !(emoji && c == ' ' && cleaned.ends_with(' ')) {
+            cleaned.push(c);
+        }
+        emoji = false;
+    }
     cleaned.lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
 }
 
-/// What changed in the git project(s) this run worked in, as git says it (`diff --stat` and the new files): the same lines a developer reads before a commit.
-fn git_summary(checkpoints: &[(PathBuf, Option<String>)]) -> String {
-    let Some((root, _)) = checkpoints.first() else { return String::new() };
-    let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(root).args(args).stdin(std::process::Stdio::null()).output().ok().filter(|out| out.status.success()).map(|out| String::from_utf8_lossy(&out.stdout).to_string());
-    let stat = git(&["diff", "--stat", "HEAD"]).unwrap_or_default();
-    let new_files = git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
-    let mut lines: Vec<String> = Vec::new();
-    if !stat.trim().is_empty() {
-        lines.push(stat.trim_end().to_string());
-    }
-    let fresh: Vec<&str> = new_files.lines().take(8).collect();
-    if !fresh.is_empty() {
-        lines.push(format!("Yeni dosyalar: {}{}", fresh.join(", "), if new_files.lines().count() > 8 { ", …" } else { "" }));
-    }
-    if lines.is_empty() { String::new() } else { format!("\nGit değişiklik özeti ({}):\n{}", root.display(), lines.join("\n")) }
-}
-
-/// Whether the request builds or changes something and is long enough to be worth a card (a question, a count, a lookup is not).
-fn wants_intent_card(goal: &str) -> bool {
+fn mentions_change(goal: &str) -> bool {
     static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let builds = PATTERN.get_or_init(|| {
         regex::Regex::new(r"(?i)\b(yap\w*|oluştur\w*|geliştir\w*|düzelt\w*|ekle\w*|kur\w*|yaz\w*|çevir\w*|düzenle\w*|taşı\w*|değiştir\w*|sil\w*|build|create|make|fix|add|implement|refactor|write|migrate|convert|rename)\b").expect("build pattern")
     });
-    goal.split_whitespace().count() >= 8 && builds.is_match(goal)
+    builds.is_match(goal)
 }
 
-/// The port a server command names (`http.server 8000`, `--port 3000`, `-p 5173`, `PORT=4000`), if it names one.
-fn server_port(command: &str) -> Option<u16> {
-    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let pattern = PATTERN.get_or_init(|| regex::Regex::new(r"(?i)(?:http\.server|--port|-p|-P|PORT=)[\s=]*(\d{2,5})\b").expect("port pattern"));
-    pattern.captures(command).and_then(|found| found[1].parse().ok())
+fn wants_intent_card(goal: &str) -> bool {
+    goal.split_whitespace().count() >= 8 && mentions_change(goal)
 }
 
-/// Stops what listens on these ports (the servers this run started and did not stop): the processes' ids from lsof, then a plain stop. How many ports had one.
-fn stop_listening(ports: &[u16]) -> usize {
-    if cfg!(windows) {
-        return 0;
-    }
-    let mut stopped = 0;
-    for port in ports {
-        let Ok(out) = std::process::Command::new("lsof").args(["-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"]).output() else { continue };
-        let pids: Vec<String> = String::from_utf8_lossy(&out.stdout).split_whitespace().map(str::to_string).collect();
-        if pids.is_empty() {
-            continue;
-        }
-        let _ = std::process::Command::new("kill").args(&pids).status();
-        stopped += 1;
-    }
-    stopped
+fn asks_for_inspection(goal: &str) -> bool {
+    static INSPECTION: std::sync::OnceLock<(regex::Regex, regex::Regex)> = std::sync::OnceLock::new();
+    let (read, effect) = INSPECTION.get_or_init(|| (
+        regex::Regex::new(r"(?i)\b(read|list|find|search|inspect|status|show|oku\w*|listele\w*|bul\w*|ara\w*|incele\w*|durum\w*|göster\w*)\b")
+            .expect("inspection goal pattern"),
+        regex::Regex::new(r"(?i)\b(send|share|delete|remove|move|deploy|schedule|publish|gönder\w*|paylaş\w*|yayınla\w*|zamanla\w*|kaldır\w*)\b")
+            .expect("side-effect goal pattern"),
+    ));
+    !mentions_change(goal) && read.is_match(goal) && !effect.is_match(goal)
 }
 
 /// Whether the request wants a server left running ("çalıştır", "adresini söyle", "aç"): then it stays and the answer says so; otherwise the
@@ -1090,6 +1180,11 @@ impl Work {
         if !self.pins.is_empty() {
             lines.push(format!("Kullanıcının koyduğu sınırlar (her zaman uy):\n{}", self.pins.iter().map(|pin| format!("  - {pin}")).collect::<Vec<_>>().join("\n")));
         }
+        if self.model_sharing != Some(true) {
+            let checked = self.ledger.checks_summary();
+            lines.push(format!("Yerel kayıt: {} dosya işlemi, {} denetim, {} geçen denetim.", self.files.len(), checked.len(), checked.iter().filter(|(_, passed)| *passed).count()));
+            return lines.join("\n");
+        }
         let changed = self.ledger.changed_paths();
         if !changed.is_empty() {
             let shown: Vec<&str> = changed.iter().rev().take(12).rev().map(String::as_str).collect();
@@ -1111,14 +1206,57 @@ impl Work {
         lines.join("\n")
     }
 
+    fn pending_jobs(&self) -> Vec<String> {
+        self.jobs.iter().map(|job| job.id.clone())
+            .chain(self.plan.iter().filter_map(|step| step["checkJob"].as_str().map(str::to_owned)))
+            .collect()
+    }
+
+    fn with_verification(&self, reply: String) -> String {
+        let files = self.ledger.changed_paths().len();
+        let checks = self.ledger.checks_summary();
+        if files == 0 && checks.is_empty() {
+            return reply;
+        }
+        format!("{reply}\n\nYerel doğrulama: {files} dosya işlemi, {} geçen denetim, {} başarısız denetim.",
+            checks.iter().filter(|(_, passed)| *passed).count(),
+            checks.iter().filter(|(_, passed)| !*passed).count())
+    }
+
+    fn completion(&self, reply: String) -> WorkResult {
+        if self.uncertain || self.in_flight {
+            return WorkResult::stopped(Unknown, format!("{reply}\n\nÖnceki bir işlemin sonucu doğrulanamadı."));
+        }
+        if self.jobs.iter().any(|job| !job.server)
+            || self.plan.iter().any(|step| step["status"] != "done" || step["verified"] != true)
+            || self.ledger.unchecked_changes()
+        {
+            return WorkResult::stopped(Paused, format!("{reply}\n\nTamamlanmamış veya doğrulanmamış adımlar kayıtlı."));
+        }
+        let checks = self.ledger.checks_summary();
+        let verified = if checks.is_empty() {
+            asks_for_inspection(&self.goal) && self.ledger.verified_inspection()
+        } else {
+            checks.iter().all(|(_, passed)| *passed)
+        };
+        if verified {
+            WorkResult { reply, state: Done, verified }
+        } else {
+            WorkResult::stopped(Unknown, format!("{reply}\n\nGörev tamamlanmış olarak doğrulanamadı."))
+        }
+    }
+
     /// What the run did, in a sentence: how many steps went through, how many did not, and the last one. The log itself (commands, paths) stays out of the
     /// person's reading; the steps are on the task card.
     fn done_so_far(&self) -> String {
-        steps_in_words(&self.log)
+        let ok = self.log.iter().filter(|line| line.starts_with('✓')).count();
+        let failed = self.log.iter().filter(|line| line.starts_with('✗')).count();
+        format!("{ok} işlem tamamlandı, {failed} işlem başarısız oldu.")
     }
 }
 
 /// "✓ Komut: pytest -q" / "✗ Dosya oku: a.txt (bulunamadı)": the step's words without the mark and without the reason in brackets.
+#[cfg(test)]
 fn steps_in_words(log: &[String]) -> String {
     let done = log.iter().filter(|line| line.starts_with('✓')).count();
     let failed = log.iter().filter(|line| line.starts_with('✗')).count();
@@ -1225,28 +1363,98 @@ fn refused(message: &str) -> ToolOutcome {
     ToolOutcome { ok: false, output: json!({ "status": "failed", "message": message }).to_string(), brief: message.chars().take(160).collect(), job: None }
 }
 
-/// The answer is the task's answer on every device: it is delivered until the server has it.
-async fn deliver(http: reqwest::Client, server: String, token: String, run_id: String, reply: String, sent: Vec<Value>) {
-    for wait in [0u64, 3, 10, 30, 60, 120, 300] {
-        tokio::time::sleep(Duration::from_secs(wait)).await;
-        let sent = http
-            .post(format!("{server}/agent/finish"))
-            .bearer_auth(&token)
-            .timeout(Duration::from_secs(20))
-            .json(&json!({ "runId": run_id, "reply": reply.chars().take(19_000).collect::<String>(), "sent": sent }))
-            .send()
-            .await;
-        // Taken, or refused for good (the run is not this account's, or is unknown): either way there is nothing more to try.
-        if sent.is_ok_and(|response| response.status().is_success() || matches!(response.status().as_u16(), 400 | 403 | 404)) {
-            return;
+#[derive(serde::Deserialize, serde::Serialize)]
+struct PendingDelivery {
+    finish: Option<AgentRunFinishRequest>,
+    progress: VecDeque<AgentRunProgressRequest>,
+}
+
+async fn accept_progress(http: &reqwest::Client, server: &str, token: &str, device_token: Option<&str>, progress: &AgentRunProgressRequest) -> bool {
+    let mut request = http.post(format!("{server}/agent/progress")).bearer_auth(token)
+        .timeout(Duration::from_secs(8)).json(progress);
+    if let Some(device_token) = device_token {
+        request = request.header("X-Wiqo-Device-Token", device_token);
+    }
+    request.send().await
+        .is_ok_and(|response| response.status().is_success() || matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 410))
+}
+
+async fn deliver_once(http: &reqwest::Client, server: &str, token: &str, device_token: Option<&str>, pending: &PendingDelivery) -> bool {
+    for progress in &pending.progress {
+        if !accept_progress(http, server, token, device_token, progress).await {
+            return false;
         }
     }
+    let Some(finish) = &pending.finish else { return true };
+    let mut request = http.post(format!("{server}/agent/finish")).bearer_auth(token)
+        .timeout(Duration::from_secs(15)).json(finish);
+    if let Some(device_token) = device_token {
+        request = request.header("X-Wiqo-Device-Token", device_token);
+    }
+    request.send().await
+        .is_ok_and(|response| response.status().is_success() || matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 410))
+}
+
+fn device_bearer(engine: &Engine) -> Option<String> {
+    engine.services().credentials.get()
+        .filter(|credentials| credentials.access_expires_at > chrono::Utc::now().timestamp())
+        .map(|credentials| credentials.access_token)
+}
+
+fn shared_progress(mut event: Value) -> Value {
+    if event["type"] == "step_update" {
+        if let Some(step) = event["step"].as_object_mut() {
+            for field in ["command", "workdir", "output", "files", "message"] {
+                step.remove(field);
+            }
+            step.insert("summary".into(), json!(match step.get("tool").and_then(Value::as_str) {
+                Some("shell") => "Terminal komutu",
+                Some("job") => "Arka plan işi",
+                Some("read_file" | "repo_map" | "repo_find" | "search") => "Yerel bilgi okunuyor",
+                Some("write_file" | "edit_file" | "apply_patch" | "undo") => "Yerel dosya işlemi",
+                _ => "Masaüstü işlemi",
+            }));
+        }
+    }
+    if event["type"] == "activity" && event["activity"]["id"].as_str().is_some_and(|id| id.starts_with("local-note-") || id == "local-plan") {
+        event["activity"]["label"] = json!("Görev planı güncellendi");
+    }
+    event
 }
 
 impl Chat {
-    /// The steps go to the server in small batches, in order, so the person's other devices see the work as it happens. A batch that does not arrive is
-    /// not sent again: the next one carries the newer state, and the answer has its own delivery. Ends when the run lets go of its end of the channel.
-    async fn report(&self, token: &str, run_id: &str, mut events: tokio::sync::mpsc::UnboundedReceiver<Value>) {
+    /// Reconnects retry completion records before opening the next observer stream.
+    pub(super) async fn flush_local_finishes(&self, token: &str) {
+        let Some(folder) = self.account_session_dir(None) else { return };
+        let Ok(mut entries) = tokio::fs::read_dir(folder).await else { return };
+        let mut attempted = 0;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if attempted >= 16 || self.token().ok().as_deref() != Some(token) {
+                break;
+            }
+            let name = entry.file_name();
+            if !name.to_str().is_some_and(|name| name.starts_with("finish-") && name.ends_with(".json")) {
+                continue;
+            }
+            let path = entry.path();
+            if self.local_tasks.lock().expect("local tasks lock").contains(&path) {
+                continue;
+            }
+            let Ok(bytes) = tokio::fs::read(&path).await else { continue };
+            let Ok(pending) = serde_json::from_slice::<PendingDelivery>(&bytes) else { continue };
+            attempted += 1;
+            if deliver_once(&self.http, &self.server, token, None, &pending).await {
+                let _ = tokio::fs::remove_file(path).await;
+            } else {
+                break;
+            }
+        }
+    }
+
+    async fn report(&self, engine: &Engine, token: &str, owner: Option<&str>, run_id: &str, delivery_path: &Path, mut events: tokio::sync::mpsc::UnboundedReceiver<Value>) -> PendingDelivery {
+        let mut pending = PendingDelivery { finish: None, progress: VecDeque::new() };
+        let mut seq = 0_i64;
+        let mut next_attempt = Instant::now();
         while let Some(first) = events.recv().await {
             let mut batch = vec![first];
             tokio::time::sleep(Duration::from_millis(350)).await;
@@ -1256,78 +1464,154 @@ impl Chat {
                     Err(_) => break,
                 }
             }
-            // The pieces of an answer arrive many times a second and the phone that asked has them already (the relay): the server gets the run of pieces in
-            // one event, for the person's other devices.
-            let batch = join_pieces(batch);
-            // The newest token: a run of hours can outlive the one it started with.
-            let bearer = self.token().unwrap_or_else(|_| token.to_string());
-            let _ = self
-                .http
-                .post(format!("{}/agent/progress", self.server))
-                .bearer_auth(&bearer)
-                .timeout(Duration::from_secs(8))
-                .json(&json!({ "runId": run_id, "events": batch }))
-                .send()
-                .await;
+            let events: Vec<_> = join_pieces(batch).into_iter().filter_map(|event| {
+                serde_json::from_value::<AgentRunProgressEvent>(event).ok()
+                    .filter(|event| !matches!(event, AgentRunProgressEvent::Unknown))
+            }).collect();
+            if events.is_empty() {
+                continue;
+            }
+            seq += 1;
+            if pending.progress.len() >= 128 {
+                let ephemeral = pending.progress.iter().position(|batch| batch.events.iter().all(|event|
+                    matches!(event, AgentRunProgressEvent::Delta(_) | AgentRunProgressEvent::Reset(_))));
+                if let Some(index) = ephemeral {
+                    pending.progress.remove(index);
+                }
+            }
+            if pending.progress.len() < 128 {
+                pending.progress.push_back(AgentRunProgressRequest { run_id: run_id.into(), events, seq: Some(seq) });
+                let _ = write_json(delivery_path, &pending);
+            }
+            let bearer = match owner {
+                Some(owner) if self.email().as_deref() == Some(owner) => self.token().ok(),
+                None => Some(token.to_string()),
+                _ => None,
+            };
+            if Instant::now() >= next_attempt {
+                if let (Some(bearer), Some(next)) = (bearer, pending.progress.front()) {
+                    let device_token = device_bearer(engine);
+                    if accept_progress(&self.http, &self.server, &bearer, device_token.as_deref(), next).await {
+                        pending.progress.pop_front();
+                        if pending.progress.is_empty() {
+                            let _ = tokio::fs::remove_file(delivery_path).await;
+                        } else {
+                            let _ = write_json(delivery_path, &pending);
+                        }
+                    } else {
+                        next_attempt = Instant::now() + Duration::from_secs(4);
+                    }
+                }
+            }
         }
+        pending
     }
 
-    /// Where a conversation's session is kept on this computer.
-    fn session_file(&self, conversation: &str) -> Option<PathBuf> {
-        let name: String = conversation.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(128).collect();
-        if name.is_empty() {
+    fn account_session_dir(&self, fallback_token: Option<&str>) -> Option<PathBuf> {
+        let scope = self.email().map(|email| format!("account:{}", email.trim().to_ascii_lowercase()))
+            .or_else(|| fallback_token.map(|token| format!("eval:{token}")))?;
+        let parent = self.file.parent()?.join("local-sessions");
+        Some(parent.join(format!("{:x}", Sha256::digest(scope.as_bytes()))))
+    }
+
+    fn legacy_session(&self, conversation: &str, task_id: &str) -> Option<SessionSnapshot> {
+        // A server-handled explicit resume proves ownership of this conversation. Older
+        // records have no task identity or receipts, so recover context but require review.
+        Uuid::parse_str(conversation).ok()?;
+        let path = self.file.parent()?.join("local-sessions").join(format!("{conversation}.json"));
+        let mut record: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        let age = chrono::Utc::now().timestamp().saturating_sub(record["savedAt"].as_i64()?);
+        if record["v"] != 1 || record["conversation"] != conversation || age >= SESSION_DAYS * 86_400 {
             return None;
         }
-        let folder = self.file.parent()?.join("local-sessions");
-        std::fs::create_dir_all(&folder).ok()?;
-        Some(folder.join(format!("{name}.json")))
+        record["taskId"] = json!(task_id);
+        record["runId"] = json!("");
+        record["uncertain"] = json!(true);
+        record["decisions"] = json!(record["decisions"].as_array().cloned().unwrap_or_default());
+        serde_json::from_value(record).ok()
     }
 
-    /// The session is written after every turn (to a side file first, so a crash never leaves half of one): the app can close at any point and the
-    /// next request of this conversation goes on from here.
-    fn save_session(&self, conversation: &str, work: &Work, open: bool) {
-        let Some(file) = self.session_file(conversation) else { return };
-        let log: Vec<&String> = work.log.iter().rev().take(200).rev().collect();
-        let held: Vec<Value> = work.held.iter().map(|(role, begin)| json!([role, begin])).collect();
-        // `open`: the run is still going. A session found open when the app starts was cut off (the app closed, the computer restarted).
-        let session = json!({ "v": 1, "savedAt": chrono::Utc::now().timestamp(), "conversation": conversation, "open": open, "goal": work.goal, "messages": work.messages.get(1..).unwrap_or(&[]), "plan": work.plan, "decisions": work.decisions, "servers": work.reach.servers, "log": log, "held": held, "vault": work.vault.saved() });
-        let side = file.with_extension("json.tmp");
-        if std::fs::write(&side, session.to_string()).is_ok() {
-            let _ = std::fs::rename(&side, &file);
+    /// Reuses normal chat initiation, fenced to the prior local run and this device.
+    pub async fn resume_safe_tasks(&self, engine: &Engine, device_id: &str, events: &broadcast::Sender<Event>) {
+        let Some(folder) = self.account_session_dir(None) else { return };
+        let Some(owner) = self.email() else { return };
+        let mut ready = false;
+        for delay in [0_u64, 400, 1000] {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            let Ok(token) = self.token() else { return };
+            if self.email().as_deref() != Some(&owner) {
+                return;
+            }
+            let response = self.http.get(format!("{}/devices/{device_id}/readiness", self.server))
+                .bearer_auth(token).timeout(Duration::from_secs(3)).send().await;
+            if let Ok(response) = response {
+                if response.status().is_success() && response.json::<Value>().await.is_ok_and(|value| value["online"] == true) {
+                    ready = true;
+                    break;
+                }
+            }
+        }
+        if !ready {
+            return;
+        }
+        let mut recovered = 0;
+        let Ok(mut entries) = tokio::fs::read_dir(folder).await else { return };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if recovered >= 4 || self.email().as_deref() != Some(&owner) {
+                break;
+            }
+            let Some(credentials) = engine.services().credentials.get() else { break };
+            if credentials.access_expires_at <= chrono::Utc::now().timestamp() {
+                break;
+            }
+            let path = entry.path();
+            let Some(saved) = session_snapshot(&path) else { continue };
+            if !saved.eligible_for_automatic_resume(chrono::Utc::now().timestamp()) {
+                continue;
+            }
+            {
+                let active = self.local_tasks.lock().expect("local tasks lock");
+                if active.contains(&path) {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(&path) else { continue };
+                let Ok(mut record) = serde_json::from_slice::<Value>(&bytes) else { continue };
+                record["autoResumeAttempted"] = json!(true);
+                if write_json(&path, &record).is_err() {
+                    continue;
+                }
+            }
+            let turn = format!("auto-resume-{}", Uuid::new_v4());
+            let asker = Asker::AutoResume { prior_run: saved.run_id, device_token: credentials.access_token };
+            let deny = |_: String, _: String| Box::pin(async { Decision::No }) as _;
+            let _ = self.send(engine, device_id, events, &turn, Uuid::new_v4().to_string(), &saved.conversation,
+                json!([]), "devam et", Some(saved.task_id), None, json!([]), &asker, &deny).await;
+            recovered += 1;
         }
     }
 
-    fn load_session(&self, conversation: &str) -> Option<Value> {
-        let file = self.session_file(conversation)?;
-        let session: Value = serde_json::from_slice(&std::fs::read(file).ok()?).ok()?;
-        let age = chrono::Utc::now().timestamp() - session["savedAt"].as_i64()?;
-        (session["v"] == 1 && age < SESSION_DAYS * 86_400 && session["messages"].is_array()).then_some(session)
-    }
-
-    /// Work the app was closed in the middle of, newest first: the conversation and what was asked. Each is told once (its mark is taken off here), so
-    /// the person is offered to go on with it and is not asked again at every start.
+    /// Interrupted work stays recorded and is offered once on the device that owned it.
     pub fn interrupted(&self) -> Vec<Value> {
-        let Some(folder) = self.file.parent().map(|parent| parent.join("local-sessions")) else { return Vec::new() };
-        let now = chrono::Utc::now().timestamp();
-        let mut found: Vec<(i64, Value)> = Vec::new();
+        let Some(folder) = self.account_session_dir(None) else { return Vec::new() };
+        let active = self.local_tasks.lock().expect("local tasks lock");
+        let mut found = Vec::new();
         for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
             let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            if active.contains(&path) || path.extension().and_then(|value| value.to_str()) != Some("json") {
                 continue;
             }
-            let Some(mut session) = std::fs::read(&path).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) else { continue };
-            if session["open"] != true {
+            let Some(session) = session_snapshot(&path) else { continue };
+            if !session.open || session.interrupted_notified {
                 continue;
             }
-            session["open"] = json!(false);
-            let side = path.with_extension("json.tmp");
-            if std::fs::write(&side, session.to_string()).is_ok() {
-                let _ = std::fs::rename(&side, &path);
-            }
-            let saved = session["savedAt"].as_i64().unwrap_or(0);
-            let conversation = text_of(&session["conversation"]);
-            if now - saved < 86_400 && !conversation.is_empty() {
-                found.push((saved, json!({ "conversation": conversation, "goal": text_of(&session["goal"]).chars().take(200).collect::<String>() })));
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(mut record) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            record["interruptedNotified"] = json!(true);
+            if write_json(&path, &record).is_ok() {
+                found.push((session.saved_at, json!({
+                    "conversation": session.conversation, "taskId": session.task_id,
+                    "goal": session.goal.chars().take(200).collect::<String>(),
+                })));
             }
         }
         found.sort_by_key(|(saved, _)| std::cmp::Reverse(*saved));
@@ -1347,7 +1631,7 @@ impl Chat {
 
     /// One call of such a tool: the server writes the step, this computer asks what it must ask and runs it.
     #[allow(clippy::too_many_arguments)]
-    async fn pc_tool(&self, engine: &Engine, run_id: &str, token: &str, pc: &mut Pc, sent: &mut Vec<Value>, name: &str, args: &Value, approve: &Approve, stop: &Stop) -> ToolOutcome {
+    async fn pc_tool(&self, engine: &Engine, run_id: &str, token: &str, pc: &mut Pc, sent: &mut Vec<Value>, name: &str, args: &Value, vault: &super::vault::Vault, approve: &Approve, stop: &Stop) -> ToolOutcome {
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
         let mut body = json!({ "runId": run_id, "device": pc.device, "name": name, "args": args });
         if let Some(snapshot) = &pc.snapshot {
@@ -1365,7 +1649,7 @@ impl Chat {
         if let Some(why) = value["refused"].as_str() {
             return refused(why);
         }
-        let step = value["step"].clone();
+        let step = vault.open_value(&value["step"]);
         if !step.is_object() {
             return refused("Araç hazırlanamadı.");
         }
@@ -1381,7 +1665,7 @@ impl Chat {
             }
         }
         let Some((mut result, mut data)) = run_stoppable(engine, &step, false, asked, stop).await else {
-            return refused("Kullanıcı durdurdu; adımın sonucu beklenmedi.");
+            return ToolOutcome { ok: false, brief: "Kullanıcı durdurdu.".into(), output: json!({ "status": "unknown", "sideEffectUncertain": true }).to_string(), job: None };
         };
         // A press that cannot be taken back is asked by the computer itself, with its own sentence; the rest of the step then runs carrying that yes.
         if result["errorCode"] == "DESKTOP_APPROVAL_REQUIRED" {
@@ -1434,25 +1718,59 @@ impl Chat {
         device_id: &str,
         handoff: &Value,
         conversation: &str,
+        task_id: &str,
         history: &Value,
         text: &str,
         token: &str,
         approve: &Approve,
         stop: &Stop,
+        read_only: bool,
         emit: &impl Fn(Value),
     ) -> Result<()> {
-        let run_id = handoff["runId"].as_str().unwrap_or("").to_string();
+        let handoff: LocalAgentHandoff = serde_json::from_value(handoff.clone())
+            .map_err(|_| anyhow!("Yerel çalışma kaydı okunamadı."))?;
+        let run_id = handoff.run_id;
+        let task_id = handoff.task_id.as_deref().filter(|id| !id.is_empty()).unwrap_or(task_id);
         if Uuid::parse_str(&run_id).is_err() {
             bail!("Yerel çalışma başlatılamadı.");
         }
+        let owner = self.email();
+        let folder = self.account_session_dir(Some(token)).ok_or_else(|| anyhow!("Yerel görev kaydı açılamadı."))?;
+        std::fs::create_dir_all(&folder).map_err(|_| anyhow!("Yerel görev kaydı açılamadı."))?;
+        let path = folder.join(format!("{:x}.json", Sha256::digest(task_id.to_ascii_lowercase().as_bytes())));
+        let finish_path = folder.join(format!("finish-{run_id}.json"));
+        {
+            let mut active = self.local_tasks.lock().expect("local tasks lock");
+            if !active.insert(path.clone()) {
+                bail!("Bu görev zaten bu bilgisayarda yürütülüyor.");
+            }
+            active.insert(finish_path.clone());
+        }
+        let _active = ActiveSession { active: &self.local_tasks, paths: [path.clone(), finish_path.clone()] };
+        let checkpoint = LocalSession { path, conversation, task_id, run_id: &run_id };
+        let resumes = handoff.resumes.unwrap_or(false);
+        let prior = session_snapshot(&checkpoint.path)
+            .filter(|saved| saved.task_id.eq_ignore_ascii_case(task_id) && saved.conversation == conversation)
+            .or_else(|| if resumes && !read_only { self.legacy_session(conversation, task_id) } else { None });
+        if prior.as_ref().is_some_and(|saved| saved.run_id == run_id) {
+            bail!("Bu çalışmanın yerel kaydı zaten var. Devam etmek için yeni bir devam isteği gönder.");
+        }
+        let untrusted = handoff.untrusted.unwrap_or(false);
         let began = Instant::now();
-        let goal = handoff["goal"].as_str().filter(|goal| !goal.trim().is_empty()).unwrap_or(text);
+        let goal = if handoff.goal.trim().is_empty() { text } else { &handoff.goal };
         let context = device_context(engine, device_id);
         let device = json!({
-            "deviceId": device_id, "platform": if cfg!(windows) { "windows" } else { "macOS" }, "availableApps": context["availableApps"],
+            "deviceId": device_id, "platform": match engine.platform() {
+                wiqo_contract::Platform::Windows => "windows",
+                wiqo_contract::Platform::MacOs => "macOS",
+                wiqo_contract::Platform::Linux => "linux",
+            }, "availableApps": context["availableApps"],
             "availableCapabilities": context["availableCapabilities"], "applicationTargets": context["applicationTargets"], "authorities": context["authorities"],
         });
-        let extra = self.pc_tools(token, &run_id, &device).await;
+        if read_only && prior.is_none() {
+            bail!("Otomatik devam için yerel görev kaydı bulunamadı.");
+        }
+        let extra = if read_only { Vec::new() } else { self.pc_tools(token, &run_id, &device).await };
         let names: Vec<String> = extra.iter().filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string)).collect();
         let mut offered = tools();
         if let Some(list) = offered.as_array_mut() {
@@ -1463,9 +1781,10 @@ impl Chat {
             messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), pins: super::memory::constraints_of(goal), last_errors: Vec::new(), trims: 0, files: Vec::new(), decisions: Vec::new(), budget: CONTEXT_BYTES,
             tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(),
             // Project folders the person said yes for in an earlier run (within TRUST_DAYS) are not asked again; a Mission's run starts with none.
-            reach: Reach { untrusted: handoff["untrusted"] == true, allowed: if handoff["untrusted"] == true { Vec::new() } else { self.trusted_folders() }, ..Reach::default() },
+            reach: Reach { untrusted, allowed: if untrusted { Vec::new() } else { self.trusted_folders() }, ..Reach::default() },
             vault: super::vault::Vault::default(),
             ledger: super::ledger::Ledger::default(),
+            jobs: Vec::new(), in_flight: false, uncertain: false, read_only, model_sharing: None,
         };
         work.ledger.expect_from(goal);
         for pin in super::memory::constraints_of(text) {
@@ -1473,28 +1792,41 @@ impl Chat {
                 work.pins.push(pin);
             }
         }
-        work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}\n\n{PRIVATE_NOTE}", text_of(&handoff["instructions"]), environment()) }));
-        // This conversation's earlier work on this computer, if any: the model goes on with what it wrote and ran, not only with what was said.
-        match self.load_session(conversation) {
-            Some(session) => {
-                work.messages.extend(repair(session["messages"].as_array().cloned().unwrap_or_default()).into_iter().filter(|message| !is_malformed_note(message)));
-                // The plan belongs to the request it was written for: it is carried on only when this request goes on with that one ("devam et").
-                if handoff["resumes"] == true {
-                    work.plan = session["plan"].as_array().cloned().unwrap_or_default();
-                    work.decisions = session["decisions"].as_array().map(|lines| lines.iter().map(text_of).collect()).unwrap_or_default();
-                    // Servers the earlier run left running are not taken for granted (the computer may have restarted since): the model is told which they were and
-                    // checks them, restarting what is gone, instead of starting a second copy or waiting on a dead one.
-                    let left: Vec<String> = session["servers"].as_array().map(|rows| rows.iter().map(|row| format!("{} (job {})", text_of(&row[0]), text_of(&row[1]))).collect()).unwrap_or_default();
-                    if !left.is_empty() {
-                        work.messages.push(json!({ "role": "user", "content": format!("Önceki çalışmada başlatılan sunucular: {}. Bilgisayar yeniden başlatıldıysa ya da uygulama kapandıysa çalışmıyor olabilir: job status ile ya da bir istekle (curl) bak; ölmüşse yeniden başlat, yaşıyorsa ikinci kopya başlatma.", left.join(", ")) }));
-                    }
+        work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}\n\n{PRIVATE_NOTE}", handoff.instructions, environment()) }));
+        if let Some(saved) = prior.filter(|_| resumes) {
+            // Old output and summaries had the earlier run's permission, if any.
+            work.messages.extend(repair(saved.messages).into_iter().filter(|message| !is_malformed_note(message)).map(|mut message| {
+                if message["role"] != "user" || !message["content"].as_str().is_some_and(|content| content == saved.goal) {
+                    message["content"] = json!("Önceki çalışma içeriği yerel görev kaydında.");
                 }
-                work.log = session["log"].as_array().map(|lines| lines.iter().map(text_of).collect()).unwrap_or_default();
-                work.held = session["held"].as_array().map(|turns| turns.iter().map(|turn| (text_of(&turn[0]), text_of(&turn[1]))).collect()).unwrap_or_default();
-                work.vault = super::vault::Vault::from_saved(&session["vault"]);
-                shorten_old(&mut work.messages, 4);
+                message
+            }));
+            work.plan = saved.plan;
+            work.decisions = saved.decisions;
+            work.log = saved.log;
+            work.held = saved.held;
+            work.vault = super::vault::Vault::from_saved(&saved.vault);
+            work.ledger = saved.ledger;
+            work.jobs = saved.jobs;
+            work.reach.servers = saved.servers;
+            work.reach.seen = saved.seen;
+            work.reach.checkpoints = saved.checkpoints;
+            work.reach.undo = saved.undo;
+            work.last_errors = saved.last_errors;
+            work.files = saved.files;
+            for pin in saved.pins {
+                if !work.pins.contains(&pin) {
+                    work.pins.push(pin);
+                }
             }
-            None => {}
+            work.uncertain = saved.in_flight || saved.uncertain;
+            if work.uncertain {
+                work.messages.push(json!({ "role": "user", "content": "Bir önceki çalışma bir işlemin sonucu kaydedilmeden kesildi. Önce salt-okunur araçlarla mevcut durumu incele. Sonucu belirsiz işlemi kendiliğinden tekrarlama. Tekrar gerekiyorsa kullanıcıdan açık onay istenecek." }));
+            }
+            shorten_old(&mut work.messages, 4);
+        }
+        if read_only {
+            work.messages.push(json!({ "role": "user", "content": "Bu güvenli otomatik devam turu yalnız salt-okunur komutlar içindir. Bir şeyin değiştirilmesi gerekiyorsa bunu kullanıcıya bildir ve açık adımları bırak." }));
         }
         // What was said in the chat since (answers the server gave, not this computer): "az önce yazdığını dosyaya kaydet" needs them.
         let unknown = said_since(&work.messages, &mut work.held, history);
@@ -1502,7 +1834,7 @@ impl Chat {
         let asked = if goal.trim() == text.trim() { text.to_string() } else { format!("{text}\n\n{goal}") };
         // The request written down as a card before any work (what is wanted, what will be handed over, what "done" is checked by, the limits, a reading chosen for
         // an ambiguous phrase): one call without tools, for work that builds or changes something. The card rides with the request through every compaction.
-        let intent = if handoff["resumes"] != true && wants_intent_card(goal) {
+        let intent = if !resumes && wants_intent_card(goal) {
             emit(json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anlıyorum", "state": "running" } }));
             let card = self.intent_card(token, &run_id, goal, stop).await;
             emit(json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anladım", "state": "done" } }));
@@ -1527,16 +1859,16 @@ impl Chat {
             // The channel's sending end lives as long as the work: when the work ends, the reporter sends what is left and ends too.
             let steps = steps;
             let say = |event: Value| {
+                let event = shared_progress(event);
                 let _ = steps.send(event.clone());
                 emit(event);
             };
-            self.work(engine, &run_id, conversation, &mut work, token, approve, stop, &say).await
+            self.work(engine, &run_id, &checkpoint, &mut work, token, approve, stop, &say).await
         };
-        let (reply, ()) = tokio::join!(working, self.report(token, &run_id, received));
+        let (result, mut pending) = tokio::join!(working, self.report(engine, token, owner.as_deref(), &run_id, &finish_path, received));
 
         // What the run did is written into the memory of each project it worked in (from the ledger, not from what the model says): the next run starts from it.
-        let stopped = reply.starts_with("Durduruldu");
-        let mut rules_note = String::new();
+        let stopped = result.state == Cancelled;
         for root in work.reach.briefed.clone() {
             let Some(memory) = self.memory(&root) else { continue };
             let prefix = format!("{}/", root.display());
@@ -1552,28 +1884,56 @@ impl Chat {
                 errors: work.last_errors.clone(),
                 minutes: began.elapsed().as_secs() / 60,
             });
-            let added = memory.add_rules(&work.pins);
-            if !added.is_empty() {
-                rules_note.push_str(&format!("\n\nSöylediğin sınırı bu projenin kuralları arasına yazdım ({}): {}", memory.rules_file().display(), added.join(" · ")));
-            }
+            memory.add_rules(&work.pins);
         }
-        let reply = if rules_note.is_empty() { reply } else { format!("{reply}{rules_note}") };
-        // The model's words keep the stand-ins in this run's record; the person reads the real values (this computer puts them back).
+        let outcome = result.outcome();
+        let reply = strip_emoji(&work.vault.seal(&result.reply));
         work.messages.push(json!({ "role": "assistant", "content": reply }));
-        self.save_session(conversation, &work, false);
-        let reply = strip_emoji(&work.vault.open(&reply));
-        emit(super::progress::done(&reply, &run_id, work.vault.len()));
-        // Delivered in the background: the turn ends for the person now, and a server that is out of reach gets the answer when it is back.
-        let bearer = self.token().unwrap_or_else(|_| token.to_string());
-        tokio::spawn(deliver(self.http.clone(), self.server.clone(), bearer, run_id, reply, std::mem::take(&mut work.sent)));
+        pending.finish = Some(AgentRunFinishRequest {
+            run_id: run_id.clone(),
+            reply: reply.chars().take(19_000).collect(),
+            sent: Some(std::mem::take(&mut work.sent).into_iter().filter_map(|value| serde_json::from_value(value).ok()).collect()),
+            outcome: Some(outcome.clone()),
+        });
+        let stored = write_json(&finish_path, &pending).is_ok();
+        if stored {
+            let _ = checkpoint.save(&work, false);
+        }
+        // The same event reaches the desktop and the paired phone. Raw tool values stay here.
+        emit(super::progress::done(&reply, &run_id, work.vault.len(), outcome));
+        let bearer = match owner {
+            Some(owner) if self.email().as_deref() == Some(&owner) => self.token().ok(),
+            None => Some(token.to_string()),
+            _ => None,
+        };
+        if let Some(bearer) = bearer {
+            let http = self.http.clone();
+            let server = self.server.clone();
+            let device_token = device_bearer(engine);
+            tokio::spawn(async move {
+                for delay in [0_u64, 3, 10, 30, 60] {
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    if stored && !finish_path.is_file() {
+                        break;
+                    }
+                    let proof = if delay == 0 { device_token.as_deref() } else { None };
+                    if deliver_once(&http, &server, &bearer, proof, &pending).await {
+                        if stored {
+                            let _ = tokio::fs::remove_file(&finish_path).await;
+                        }
+                        break;
+                    }
+                }
+            });
+        }
         Ok(())
     }
 
     /// The loop: ask the model, run what it calls, give the results back, until it answers in words and nothing is visibly left open.
     #[allow(clippy::too_many_arguments)]
-    async fn work(&self, engine: &Engine, run_id: &str, conversation: &str, work: &mut Work, token: &str, approve: &Approve, stop: &Stop, say: &impl Fn(Value)) -> String {
+    async fn work(&self, engine: &Engine, run_id: &str, checkpoint: &LocalSession<'_>, work: &mut Work, token: &str, approve: &Approve, stop: &Stop, say: &impl Fn(Value)) -> WorkResult {
         let started = Instant::now();
-        let stopped = |work: &Work| format!("Durduruldu. {}", work.done_so_far());
+        let stopped = |work: &Work| WorkResult::stopped(Cancelled, format!("Durduruldu. {}", work.done_so_far()));
         let mut thinking = 0usize;
         let mut note_id = 0usize;
         let mut digest_seen: (String, usize) = (String::new(), 0);
@@ -1584,17 +1944,16 @@ impl Chat {
         let mut failures_noted = false;
         let mut failed_calls: HashMap<String, usize> = HashMap::new();
         let mut last_failure: Option<String> = None;
-        let mut jobs: Vec<String> = Vec::new();
-        let mut same: (String, usize) = (String::new(), 0);
+            let mut same: (String, usize) = (String::new(), 0);
         let mut stall: (String, usize, bool) = (String::new(), 0, false);
         let (mut changes, mut verified_turns, mut verified_noted) = (0usize, 0usize, false);
         for turn in 0..MAX_TURNS {
             if stop.is_asked() {
-                self.cancel_jobs(engine, &jobs).await;
+                self.cancel_jobs(engine, &work.pending_jobs()).await;
                 return stopped(work);
             }
             if started.elapsed() > Duration::from_secs(MAX_MINUTES * 60) {
-                return format!("Bu çalışma {} saati doldurdu ve burada durdu. {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", MAX_MINUTES / 60, work.done_so_far());
+                return WorkResult::stopped(Paused, format!("Bu çalışma {} saati doldurdu ve burada durdu. {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", MAX_MINUTES / 60, work.done_so_far()));
             }
             self.compact(run_id, work, token, stop, say).await;
             // Moving or not: new closed plan steps, a check that started passing, a file touched for the first time, the open errors changing. Turns without any of
@@ -1604,12 +1963,14 @@ impl Chat {
                 stall = (signature, turn, false);
             } else if turn - stall.1 >= STALL_STOP {
                 self.release_servers(engine, work).await;
-                return format!("Son {STALL_STOP} turdur ilerleme yok (yeni geçen kontrol, kapanan adım ya da değişen hata yok) ve burada durdum. {}\n\nNeyi değiştirmem gerektiğini söylersen ya da \"devam et\" yazarsan sürdürürüm.", work.done_so_far());
+                return WorkResult::stopped(Paused, format!("Son {STALL_STOP} turdur ilerleme yok (yeni geçen kontrol, kapanan adım ya da değişen hata yok) ve burada durdum. {}\n\nNeyi değiştirmem gerektiğini söylersen ya da \"devam et\" yazarsan sürdürürüm.", work.done_so_far()));
             } else if turn - stall.1 >= STALL_NOTE && !stall.2 {
                 stall.2 = true;
                 work.messages.push(json!({ "role": "user", "content": format!("Son {STALL_NOTE} turdur ilerleme yok: yeni geçen kontrol, kapanan plan adımı ya da değişen hata yok. Aynı yoldan devam etme: kök nedeni baştan incele (hatayı, sürümü, yolu, varsayımını kontrol et), yöntemi değiştir; gerekirse adımı daha küçük parçalara böl ya da yan işçiye (delegate) bir araştırma ver. Bir sonraki denemede de ilerleme olmazsa durup kullanıcıya neyin engel olduğunu söyleyeceksin.") }));
             }
-            self.save_session(conversation, work, true);
+            if checkpoint.save(work, true).is_err() {
+                return WorkResult::stopped(Paused, "Yerel görev kaydı yazılamadı. Görev duraklatıldı.".into());
+            }
             thinking += 1;
             let think_id = format!("local-think-{thinking}");
             let think_label = if turn == 0 { "Düşünüyor" } else { "Sonuca bakıyor" };
@@ -1624,7 +1985,7 @@ impl Chat {
                 Ok(answer) => answer,
                 Err(ModelStop::Cancelled) => {
                     think("Durduruldu", "failed");
-                    self.cancel_jobs(engine, &jobs).await;
+                    self.cancel_jobs(engine, &work.pending_jobs()).await;
                     return stopped(work);
                 }
                 Err(ModelStop::TooLarge) => {
@@ -1632,7 +1993,7 @@ impl Chat {
                     think("Bağlam kısaltılıyor", "done");
                     too_large += 1;
                     if too_large > 4 {
-                        return format!("Çalışma bağlamı modelin okuyabileceğinden büyük kaldı ve kısaltılamadı. {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far());
+                        return WorkResult::stopped(Paused, format!("Çalışma bağlamı modelin okuyabileceğinden büyük kaldı ve kısaltılamadı. {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far()));
                     }
                     work.budget = (work.budget / 2).max(CONTEXT_BYTES_LEAST);
                     shorten_old(&mut work.messages, 3);
@@ -1644,7 +2005,7 @@ impl Chat {
                     // Only the newest note stays: piled up, they were saved with the session and "devam et" started from the same dead end.
                     work.messages.retain(|message| !is_malformed_note(message));
                     if malformed > 4 {
-                        return format!("Model art arda okunamayan araç çağrıları yazdı; burada durdum. {}\n\n\"devam et\" yazarsan sürdürürüm.", work.done_so_far());
+                        return WorkResult::stopped(Failed, format!("Model art arda okunamayan araç çağrıları yazdı; burada durdum. {}\n\n\"devam et\" yazarsan sürdürürüm.", work.done_so_far()));
                     }
                     let said = if why.is_empty() { String::new() } else { format!("\nSağlayıcının nedeni ve yazdığın: {why}") };
                     work.messages.push(json!({ "role": "user", "content": format!("{MALFORMED_NOTE}{said}\nAraç adını listedeki gibi yaz (ör. shell, write_file), argümanları aracın alanlarıyla geçerli JSON olarak ver, listede olmayan alan ekleme. İçerik uzunsa write_file ile ilk bölümü yaz, kalanını append: true ile ekle.") }));
@@ -1652,11 +2013,11 @@ impl Chat {
                 }
                 Err(ModelStop::Gone(why)) => {
                     think("Çalışma sunucuda kapandı", "failed");
-                    return format!("Çalışma sunucuda sona erdi ({why}). {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far());
+                    return WorkResult::stopped(Paused, format!("Çalışma sunucuda sona erdi ({why}). {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far()));
                 }
                 Err(ModelStop::Failed(why)) => {
                     think("Model yanıt vermedi", "failed");
-                    return format!("Model şu an yanıt vermiyor ({why}). {}\n\nYapılanlar bilgisayarda duruyor; \"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far());
+                    return WorkResult::stopped(Paused, format!("Model şu an yanıt vermiyor ({why}). {}\n\nYapılanlar bilgisayarda duruyor; \"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far()));
                 }
             };
             think(think_label, "done");
@@ -1685,7 +2046,13 @@ impl Chat {
                         gates += 1;
                         Some(why)
                     }
-                    None => work.ledger.turn_back(),
+                    None => work.ledger.turn_back().map(|why| {
+                        if work.model_sharing == Some(true) {
+                            why
+                        } else {
+                            "Yerel kayıt bazı adımların doğrulanmadığını gösteriyor. Son değişiklikten sonra gerekli denetimi çalıştır veya eksik kalan adımı açıkça belirt.".into()
+                        }
+                    }),
                 };
                 if let Some(why) = turn_back {
                     if !content.trim().is_empty() {
@@ -1696,20 +2063,17 @@ impl Chat {
                 }
                 if content.trim().is_empty() {
                     self.release_servers(engine, work).await;
-                    return format!("Çalışma bir özet yazılmadan bitti. {}", work.done_so_far());
+                    return WorkResult::stopped(Failed, format!("Çalışma bir özet yazılmadan bitti. {}", work.done_so_far()));
                 }
                 // Dev servers this run started: stopped now, or left running because the person asked to run it (and the answer says which).
                 let content = format!("{content}{}", self.release_servers(engine, work).await);
                 // What was changed and what really checked it, from the tool results: the model's own words cannot mark the work verified.
-                let content = match work.ledger.report() {
-                    Some(report) => format!("{content}\n\n{report}{}", git_summary(&work.reach.checkpoints)),
-                    None => content,
-                };
+                let content = work.with_verification(content);
                 // Turned back as often as allowed and the plan is still open: the answer stands, with what it left undone said under it.
                 if !open.is_empty() {
-                    return format!("{content}\n\nPlanda açık kalan adımlar:\n{}", open.iter().map(|title| format!("- {title}")).collect::<Vec<_>>().join("\n"));
+                    return work.completion(format!("{content}\n\nPlanda açık kalan adımlar:\n{}", open.iter().map(|title| format!("- {title}")).collect::<Vec<_>>().join("\n")));
                 }
-                return content;
+                return work.completion(content);
             }
             for call in &mut calls {
                 if call["id"].as_str().is_none_or(str::is_empty) {
@@ -1737,11 +2101,12 @@ impl Chat {
                 let name = text_of(&call["function"]["name"]);
                 let raw = call["function"]["arguments"].as_str().unwrap_or("{}").to_string();
                 // The model wrote stand-ins (⟦EPOSTA_1⟧); the tool gets the real values, here and only here.
-                let args = serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { &raw }).ok().filter(Value::is_object).map(|args| work.vault.open_value(&args));
+                let model_args = serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { &raw }).ok().filter(Value::is_object);
+                let args = model_args.as_ref().map(|args| work.vault.open_value(args));
                 if name == "plan" {
                     let output = match args.as_ref().and_then(|args| args["steps"].as_array()).filter(|steps| !steps.is_empty()) {
                         Some(steps) => {
-                            let (message, finished) = self.update_plan(work, steps).await;
+                            let (message, finished) = self.update_plan(engine, checkpoint, work, steps, approve, stop).await;
                             let done = work.plan.iter().filter(|step| matches!(step["status"].as_str(), Some("done" | "dropped"))).count();
                             let now = work.plan.iter().find(|step| step["status"] == "doing").or_else(|| work.plan.iter().find(|step| step["status"] == "pending")).map(|step| text_of(&step["title"]));
                             let words = match now {
@@ -1757,6 +2122,9 @@ impl Chat {
                         None => json!({ "status": "failed", "message": "steps gerekli: [{title, status}]." }).to_string(),
                     };
                     work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": output }));
+                    if checkpoint.save(work, true).is_err() {
+                        return WorkResult::stopped(Unknown, "Plan denetiminin yerel kaydı yazılamadı.".into());
+                    }
                     continue;
                 }
                 let words = label(&name, args.as_ref().unwrap_or(&Value::Null));
@@ -1769,27 +2137,63 @@ impl Chat {
                 let started = Instant::now();
                 say(super::progress::running(&step_id, &words, &name, told_args, &mut |text: &str| work.vault.seal(text)));
                 let key = format!("{name}:{raw}");
+                let effectful = args.as_ref().is_some_and(|args| effectful_tool(&name, args, &work.pc.names));
+                if effectful && work.read_only {
+                    let blocked = super::progress::planned(&json!({ "id": step_uuid, "summary": "Kullanıcıdan devam bekleniyor" }), "blocked", None, None);
+                    say(blocked);
+                    return WorkResult::stopped(Paused, "Devam etmek için yerel bir değişiklik gerekiyor. Görevi açıp devam edebilirsin.".into());
+                }
+                let may_run = if effectful && work.uncertain && !stop.is_asked() {
+                    let permission = approve("terminal-recovery".into(), format!("Önceki çalışmada bir işlemin sonucu bilinmiyor. Mevcut durumu doğruladıysan bu adımı ve görevin devamını onaylıyor musun?\n{words}"));
+                    let decision = tokio::select! { choice = permission => choice, _ = stop.asked() => Decision::No };
+                    if matches!(decision, Decision::Yes) {
+                        work.uncertain = false;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                };
+                if effectful && may_run && !stop.is_asked() {
+                    work.in_flight = true;
+                    if checkpoint.save(work, true).is_err() {
+                        work.in_flight = false;
+                        return WorkResult::stopped(Paused, "Yerel görev kaydı yazılamadı. Adım çalıştırılmadı.".into());
+                    }
+                }
                 let tried = failed_calls.get(&key).copied().unwrap_or(0);
                 let mut outcome = match &args {
                     None => refused("Araç çağrısının argümanları geçerli JSON değil (büyük olasılıkla çıktı sınırında kesildi); çalıştırılmadı. Çağrıyı daha küçük yaz: uzun dosyayı write_file ile ilk bölüm, sonra append: true ile kalan bölümler halinde gönder."),
                     Some(_) if stop.is_asked() => refused("Kullanıcı durdurdu; çalıştırılmadı."),
+                    Some(_) if !may_run => refused("Sonucu belirsiz önceki çalışmanın ardından bu adım için onay alınamadı."),
+                    Some(args) if name == "job" && !work.jobs.iter().any(|job| args["job_id"] == job.id)
+                        && !work.plan.iter().any(|step| args["job_id"] == step["checkJob"]) =>
+                            refused("Bu terminal işi mevcut göreve ait değil."),
                     Some(_) if tried >= 3 => refused("Bu çağrı aynı haliyle üç kez başarısız oldu; yeniden çalıştırılmadı. Hatanın nedenini araştır (dosya var mı, yol doğru mu, araç kurulu mu, izin var mı) ve farklı bir yol dene."),
                     Some(args) if name == "shell" && running_server(&work.reach.servers, args).is_some() => {
                         let job = running_server(&work.reach.servers, args).unwrap_or_default().to_string();
                         refused(&format!("Bu klasörde bu çalışmada başlattığın bir sunucu zaten çalışıyor (job_id {job}). Yenisini başlatma: job status ile durumuna ve adresine bak; yeniden başlatman gerekiyorsa önce job cancel ile durdur."))
                     }
-                    Some(args) if work.pc.names.contains(&name) => self.pc_tool(engine, run_id, token, &mut work.pc, &mut work.sent, &name, args, approve, stop).await,
+                    Some(_) if work.pc.names.contains(&name) => self.pc_tool(engine, run_id, token, &mut work.pc, &mut work.sent, &name, model_args.as_ref().unwrap_or(&Value::Null), &work.vault, approve, stop).await,
                     Some(args) if name == "delegate" => {
                         let helper = helper_tools(&work.tools);
-                        self.delegate_tool(run_id, token, args, &helper, stop).await
+                        self.delegate_tool(run_id, token, args, &helper, stop, work.model_sharing == Some(true)).await
                     }
-                    Some(args) if name == "web" => self.web_tool(run_id, token, args).await,
+                    Some(_) if name == "web" => self.web_tool(run_id, token, model_args.as_ref().unwrap_or(&Value::Null)).await,
                     Some(args) if name == "browser_check" => browser_check_tool(args).await,
                     Some(args) if name == "project_notes" => self.write_notes(args),
                     Some(args) if name == "repo_map" => repo_map_tool(args).await,
                     Some(args) if name == "repo_find" => self.repo_find_tool(args).await,
-                    Some(args) if name == "api" => self.api_tool(run_id, token, args, approve).await,
-                    Some(args) if name == "accounts" => self.accounts_tool(run_id, token, args, approve).await,
+                    Some(_) if name == "api" || name == "accounts" => {
+                        let wire_args = model_args.as_ref().unwrap_or(&Value::Null);
+                        let args = if work.model_sharing == Some(true) { args.as_ref().unwrap_or(&Value::Null) } else { wire_args };
+                        if name == "api" {
+                            self.api_tool(run_id, token, args, approve).await
+                        } else {
+                            self.accounts_tool(run_id, token, args, approve).await
+                        }
+                    }
                     Some(args) => {
                         // A command that runs for a while shows what it has printed so far on the task (its operation keeps that by the step's id): the same step, told again with
                         // the end of its output, about once a second while it changes.
@@ -1848,6 +2252,9 @@ impl Chat {
                 if let Some(args) = &args {
                     work.ledger.record(&name, args, outcome.ok, &outcome.output, outcome.job.as_deref());
                 }
+                let inspection = matches!(name.as_str(), "read_file" | "search" | "repo_find" | "repo_map")
+                    || (name == "shell" && !effectful && args.is_some());
+                work.ledger.record_inspection(effectful, inspection.then_some(outcome.ok && outcome.job.is_none()));
                 if outcome.ok {
                     let did = match name.as_str() {
                         "read_file" => Some("okundu"),
@@ -1860,7 +2267,7 @@ impl Chat {
                         for path in file_targets(&name, told_args) {
                             let shown = path.display().to_string();
                             work.files.retain(|(known, _)| *known != shown);
-                            work.files.push((shown, did));
+                            work.files.push((shown, did.to_string()));
                         }
                         if work.files.len() > 40 {
                             work.files.remove(0);
@@ -1924,43 +2331,66 @@ impl Chat {
                         outcome.output = format!("{}\n\nUYARI: Bu çağrı aynı haliyle ikinci kez başarısız oldu. Üçüncü kez aynısını deneme; hatayı oku, nedenini bul, farklı bir yol seç.", outcome.output);
                     }
                 }
-                if outcome.job.is_none() && name == "shell" {
-                    let command = text_of(&told_args["command"]);
-                    if starts_server(&command) {
-                        if let Some(port) = server_port(&command) {
-                            if !work.reach.ports.contains(&port) {
-                                work.reach.ports.push(port);
+                if let Some(job) = outcome.job.as_ref().filter(|_| name == "shell") {
+                    let server = starts_server(&text_of(&told_args["command"]));
+                    if server && !work.reach.servers.iter().any(|(_, known)| known == job) {
+                        work.reach.servers.push((text_of(&told_args["workdir"]), job.clone()));
+                    }
+                    if !work.jobs.iter().any(|known| known.id == *job) {
+                        work.jobs.push(TrackedJob { id: job.clone(), step_id: step_id.clone(), server });
+                    }
+                    say(super::progress::background_started(&step_id));
+                } else {
+                    if name == "job" && matches!(told_args["action"].as_str(), Some("wait" | "status" | "cancel")) {
+                        let job_id = text_of(&told_args["job_id"]);
+                        let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
+                        if let Some(position) = work.jobs.iter().position(|known| known.id == job_id) {
+                            let state = receipt["jobState"].as_str();
+                            if matches!(state, Some("completed" | "failed" | "cancelled" | "unknown"))
+                                || matches!(receipt["errorCode"].as_str(), Some("TERMINAL_JOB_NOT_FOUND" | "TERMINAL_JOB_UNKNOWN"))
+                            {
+                                let job = work.jobs.remove(position);
+                                work.reach.servers.retain(|(_, known)| known != &job_id);
+                                let success = state == Some("completed") && receipt["exitCode"] == 0;
+                                let uncertain = !matches!(state, Some("completed" | "failed" | "cancelled"));
+                                work.uncertain |= uncertain || state == Some("cancelled") && !job.server;
+                                if !success && !job.server {
+                                    last_failure = Some("Arka plan işi başarıyla tamamlanmadı.".into());
+                                }
+                                say(super::progress::background_finished(&job.step_id, success, uncertain, receipt["exitCode"].as_i64()));
                             }
                         }
                     }
+                    say(super::progress::finished(&step_id, &words, &name, told_args, outcome.ok, &outcome.brief, &printed, started.elapsed().as_millis(), &touched, &mut |text: &str| work.vault.seal(text)));
                 }
-                if let Some(job) = outcome.job.take() {
-                    if name == "shell" && args.as_ref().is_some_and(|args| starts_server(&text_of(&args["command"]))) {
-                        let folder = args.as_ref().map(|args| text_of(&args["workdir"])).unwrap_or_default();
-                        if !work.reach.servers.iter().any(|(_, known)| *known == job) {
-                            work.reach.servers.push((folder, job.clone()));
-                        }
-                    }
-                    if !jobs.contains(&job) {
-                        // A command that went on in the background is a line of the task that stays "running" until it ends: the person sees what is still going on.
-                        let what: String = told_args["command"].as_str().unwrap_or(&words).chars().take(70).collect();
-                        say(json!({ "type": "activity", "activity": { "id": format!("local-job-{job}"), "phase": "tool", "label": format!("Arka planda çalışıyor: {what}"), "state": "running", "persona": "developer" } }));
-                        jobs.push(job);
-                    }
-                } else if name == "job" {
-                    // A server that was cancelled, or that a status/wait shows as no longer running, is no longer this run's to guard.
-                    let id = args.as_ref().map(|args| text_of(&args["job_id"])).unwrap_or_default();
-                    let gone = args.as_ref().is_some_and(|args| args["action"] == "cancel") || !outcome.output.contains("running");
-                    if outcome.ok && gone {
-                        work.reach.servers.retain(|(_, job)| *job != id);
-                        say(json!({ "type": "activity", "activity": { "id": format!("local-job-{id}"), "phase": "tool", "label": "Arka plan işi bitti", "state": "done", "persona": "developer" } }));
-                    }
-                }
-                say(super::progress::finished(&step_id, &words, &name, told_args, outcome.ok, &outcome.brief, &printed, started.elapsed().as_millis(), &touched, &mut |text: &str| work.vault.seal(text)));
                 work.log.push(format!("{} {words}{}", if outcome.ok { "✓" } else { "✗" }, if outcome.ok { String::new() } else { format!(" ({})", outcome.brief) }));
-                // What the tool read goes to the model with its private values swapped for stand-ins (vault.rs).
-                let sealed = work.vault.seal(&outcome.output);
-                work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": sealed }));
+                let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
+                if effectful && may_run {
+                    work.in_flight = false;
+                    work.uncertain |= receipt["sideEffectUncertain"] == true
+                        || receipt["status"] == "unknown" || stop.is_asked();
+                }
+                let private = private_model_result(&name, &work.pc.names);
+                if private && work.model_sharing.is_none() && !work.read_only && !work.reach.untrusted && !stop.is_asked()
+                    && (outcome.ok || receipt.get("output").is_some()) && !outcome.output.is_empty()
+                {
+                    let permission = approve("local_context_share".into(),
+                        "Bu görev için yerel dosya içeriği ve terminal çıktısı Wiqo’nun model hizmetine gönderilsin mi? Reddedersen görev yalnızca güvenli işlem özetleriyle devam eder.".into());
+                    let decision = tokio::select! {
+                        decision = permission => decision,
+                        _ = stop.asked() => Decision::No,
+                    };
+                    work.model_sharing = Some(matches!(decision, Decision::Yes));
+                }
+                let model_output = if private && work.model_sharing != Some(true) {
+                    model_receipt(&outcome)
+                } else {
+                    work.vault.seal(&outcome.output)
+                };
+                work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": model_output }));
+                if checkpoint.save(work, true).is_err() {
+                    return WorkResult::stopped(Unknown, "Adımın yerel kaydı yazılamadı. Sonucu doğrulamadan işlem tekrarlanmayacak.".into());
+                }
             }
             if turn_changed {
                 changes += 1;
@@ -1971,38 +2401,30 @@ impl Chat {
                 verified_turns = 0;
             }
             if verified_turns >= VERIFIED_TURNS_STOP {
-                let report = work.ledger.report().map(|report| format!("\n\n{report}")).unwrap_or_default();
-                return format!("Yaptığım her şey doğrulandı; yeni bir şey denemeden burada durdum. {}{report}", work.done_so_far());
+                let reply = work.with_verification(format!("Yerel doğrulamalar değerlendirildi. {}", work.done_so_far()));
+                return work.completion(reply);
             }
             if verified_turns >= VERIFIED_TURNS_NOTE && !verified_noted {
                 verified_noted = true;
                 work.messages.push(json!({ "role": "user", "content": "Değiştirdiğin her şey doğrulandı. İstenmeyen yeni denemeler (ek test, olmayan senaryolar, kapsam dışı iyileştirme) yapma. İstenen tamamsa şimdi sonucu yaz: ne yapıldı, nasıl açılır/çalıştırılır (adres, komut), neler doğrulandı." }));
             }
             if failures >= FAILURES_MOST {
-                self.cancel_jobs(engine, &jobs).await;
-                return format!("Art arda {failures} adım başarısız oldu; daha fazla denemeden burada durdum. {}\n\nNeyi farklı yapmamı istediğini yazarsan oradan devam ederim.", work.done_so_far());
+                self.cancel_jobs(engine, &work.pending_jobs()).await;
+                return WorkResult::stopped(Failed, format!("Art arda {failures} adım başarısız oldu; daha fazla denemeden burada durdum. {}\n\nNeyi farklı yapmamı istediğini yazarsan oradan devam ederim.", work.done_so_far()));
             }
             if failures >= FAILURES_NOTED && !failures_noted {
                 failures_noted = true;
                 work.messages.push(json!({ "role": "user", "content": format!("Art arda {failures} adım başarısız oldu. Aynı yolda ısrar etme: dur, şu ana kadar ne bildiğini ve neyin tutmadığını bir cümleyle yaz, durumu incele (ls, sürüm, günlük) ve ona göre yeni bir yol seç. İş gerçekten yapılamıyorsa bunu açıkça söyleyerek bitir.") }));
             }
         }
-        format!("Bu çalışma {MAX_TURNS} adım sınırına geldi ve burada durdu. {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far())
+        WorkResult::stopped(Paused, format!("Bu çalışma {MAX_TURNS} adım sınırına geldi ve burada durdu. {}\n\n\"devam et\" yazarsan kaldığım yerden sürdürürüm.", work.done_so_far()))
     }
 
     /// At the end of a run: the dev servers it started stay when the request asked to run/open something (one line says so), otherwise they are
     /// stopped (one line says that). Nothing is said when none was started.
     async fn release_servers(&self, engine: &Engine, work: &mut Work) -> String {
-        if work.reach.servers.is_empty() && work.reach.ports.is_empty() {
-            return String::new();
-        }
         if work.reach.servers.is_empty() {
-            if wants_server_kept(&work.goal) {
-                return format!("\n\nSunucu açık bırakıldı (port {}); kapatmamı istersen söyle.", work.reach.ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", "));
-            }
-            let ports = std::mem::take(&mut work.reach.ports);
-            let stopped = tokio::task::spawn_blocking(move || stop_listening(&ports)).await.unwrap_or(0);
-            return if stopped > 0 { "\n\nBaşlattığım sunucuyu işim bitince kapattım.".to_string() } else { String::new() };
+            return String::new();
         }
         let jobs: Vec<String> = work.reach.servers.iter().map(|(_, job)| job.clone()).collect();
         if wants_server_kept(&work.goal) {
@@ -2025,7 +2447,7 @@ impl Chat {
     /// a summary the model writes of it (or, when the model cannot be asked, by the list of steps), with the request and the plan said again.
     /// A side worker: its own short conversation with the model (reading and research tools only), so what it reads does not fill this run's context. Only its
     /// answer comes back.
-    async fn delegate_tool(&self, run_id: &str, token: &str, args: &Value, tools: &Value, stop: &Stop) -> ToolOutcome {
+    async fn delegate_tool(&self, run_id: &str, token: &str, args: &Value, tools: &Value, stop: &Stop, share_local: bool) -> ToolOutcome {
         let task = text_of(&args["task"]);
         if task.trim().len() < 12 {
             return refused("task: yan işçinin yapacağı işi kendi başına anlaşılır yaz (proje yolu, ne öğrenilecek, nasıl bir sonuç).");
@@ -2072,58 +2494,144 @@ impl Chat {
                     (Some(args), "repo_map") => repo_map_tool(args).await,
                     _ => refused("Bu araç yan işçide yok: yalnız web, repo_find, repo_map."),
                 };
-                messages.push(json!({ "role": "tool", "tool_call_id": text_of(&call["id"]), "content": clip(&outcome.output, OUTPUT_CHARS) }));
+                let output = if !share_local && matches!(name.as_str(), "repo_find" | "repo_map") {
+                    model_receipt(&outcome)
+                } else {
+                    clip(&outcome.output, OUTPUT_CHARS)
+                };
+                messages.push(json!({ "role": "tool", "tool_call_id": text_of(&call["id"]), "content": output }));
             }
         }
         let note = if last.trim().is_empty() { String::new() } else { format!(" Son notu: {}", clip(last.trim(), 800)) };
         refused(&format!("Yan işçi {DELEGATE_TURNS} turda bir sonuca varamadı; görevi daralt.{note}"))
     }
 
-    /// A new plan (the model sends the whole list each time) against the one held: a step keeps its check, its folder and its checkpoint across the
-    /// updates; one that starts takes a git checkpoint of its project; one marked done with a check is closed only if the check passes, run here and not
-    /// taken on the model's word. Returns what the model is told and whether some step was closed this time.
-    async fn update_plan(&self, work: &mut Work, steps: &[Value]) -> (String, bool) {
+    /// Reconcile a model plan with the evidence this desktop actually observed.
+    async fn update_plan(&self, engine: &Engine, checkpoint_record: &LocalSession<'_>, work: &mut Work, steps: &[Value], approve: &Approve, stop: &Stop) -> (String, bool) {
         let old = work.plan.clone();
         let mut next: Vec<Value> = Vec::new();
         let mut told: Vec<String> = Vec::new();
         let mut finished = false;
-        for (index, step) in steps.iter().take(20).enumerate() {
-            let title: String = text_of(&step["title"]).chars().take(200).collect();
-            let mut status = step["status"].as_str().unwrap_or("pending").to_string();
-            let before = old.iter().find(|held| text_of(&held["title"]) == title).or_else(|| old.get(index));
+        for step in steps.iter().take(20) {
+            let title = clip(&text_of(&step["title"]), 200);
+            if title.trim().is_empty() {
+                continue;
+            }
+            let id = clip(&text_of(&step["id"]), 96);
+            let before = old.iter().find(|held| {
+                if id.is_empty() { held["title"] == title } else {
+                    held["id"] == id || (held["id"].is_null() && held["title"] == title)
+                }
+            });
             let kept = |key: &str| before.map(|held| text_of(&held[key])).unwrap_or_default();
-            let given = |key: &str| text_of(&step[key]);
-            let check = if given("check").is_empty() { kept("check") } else { given("check") };
-            let folder = if given("workdir").is_empty() { kept("workdir") } else { given("workdir") };
+            let id = if id.is_empty() {
+                let prior = kept("id");
+                if prior.is_empty() { Uuid::new_v4().to_string() } else { prior }
+            } else { id };
+            if next.iter().any(|row| row["id"] == id) {
+                continue;
+            }
+            let mut status = match step["status"].as_str() {
+                Some("doing") => "doing",
+                Some("done") => "done",
+                Some("dropped") => "dropped",
+                _ => "pending",
+            };
+            let prior_check = kept("check");
+            let prior_folder = kept("workdir");
+            let check = if prior_check.is_empty() { text_of(&step["check"]) } else { prior_check };
+            let folder = if prior_folder.is_empty() { text_of(&step["workdir"]) } else { prior_folder };
             let mut checkpoint = kept("checkpoint");
+            let mut check_job = kept("checkJob");
             let mut tries = before.and_then(|held| held["tries"].as_u64()).unwrap_or(0);
-            let was = before.and_then(|held| held["status"].as_str()).unwrap_or("pending").to_string();
-            let root = if folder.is_empty() { work.reach.checkpoints.first().map(|(root, _)| root.clone()) } else { Some(expand(&folder)) };
-            if status == "doing" && was != "doing" && checkpoint.is_empty() {
-                if let Some(commit) = root.clone().and_then(|root| git_checkpoint(&root)) {
-                    checkpoint = commit;
-                }
-            }
-            if status == "done" && was != "done" && !check.is_empty() {
-                let (command, at) = (check.clone(), root.clone().unwrap_or_else(|| PathBuf::from(".")));
-                let (passed, code, tail) = tokio::task::spawn_blocking(move || run_check(&command, &at)).await.unwrap_or((false, -1, String::new()));
-                if passed {
-                    told.push(format!("\"{title}\": ölçüt geçti, adım kapandı."));
-                    finished = true;
+            let mut verified = before.is_some_and(|held| held["verified"] == true);
+            let root = if folder.is_empty() {
+                work.reach.checkpoints.first().map(|(root, _)| root.clone())
+            } else {
+                std::fs::canonicalize(expand(&folder)).ok().filter(|root| root.is_dir())
+            };
+            if status == "done" && !verified {
+                let checked = if !check_job.is_empty() {
+                    let args = json!({ "action": "wait", "job_id": check_job });
+                    Some(self.local_tool(engine, "job", &args, &mut work.reach, approve, stop, Uuid::new_v4()).await)
+                } else if let Some(root) = root.filter(|root| root.is_dir()).filter(|_| !check.trim().is_empty()) {
+                    let args = json!({ "command": check, "workdir": root, "timeout_seconds": 50 });
+                    let args = work.vault.open_value(&args);
+                    let effectful = effectful_tool("shell", &args, &[]);
+                    let allowed = !effectful || (!work.read_only && (!work.uncertain
+                        || matches!(approve("terminal-recovery".into(), format!("Önceki işlemin sonucu bilinmiyor. Şu denetim çalıştırılsın mı?\n{check}")).await, Decision::Yes)));
+                    if !allowed || stop.is_asked() {
+                        Some(refused("Denetim iptal edildi veya onaylanmadı."))
+                    } else {
+                        work.in_flight = effectful;
+                        if effectful && checkpoint_record.save(work, true).is_err() {
+                            work.in_flight = false;
+                            Some(refused("Yerel görev kaydı yazılamadı; denetim çalıştırılmadı."))
+                        } else {
+                            let outcome = self.local_tool(engine, "shell", &args, &mut work.reach, approve, stop, Uuid::new_v4()).await;
+                            work.in_flight = false;
+                            let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
+                            work.uncertain |= effectful && (stop.is_asked() || receipt["status"] == "unknown" || receipt["sideEffectUncertain"] == true);
+                            Some(outcome)
+                        }
+                    }
                 } else {
-                    status = "doing".into();
-                    tries += 1;
-                    let way_back = if tries >= 2 && !checkpoint.is_empty() { format!(" Adımın başındaki durum git'te kayıtlı ({}); vazgeçip dönmek için `git checkout {} -- .` (sonradan eklenen yeni dosyalar kalır).", &checkpoint[..checkpoint.len().min(12)], &checkpoint[..checkpoint.len().min(12)]) } else { String::new() };
-                    told.push(format!("\"{title}\" bitmedi: ölçüt komutu geçmedi (çıkış {code}, {tries}. deneme): {tail}\nDüzelt, aynı ölçütü yeniden geçir, sonra adımı done yap.{way_back}"));
+                    None
+                };
+                match checked {
+                    Some(outcome) if outcome.job.is_some() => {
+                        check_job = outcome.job.unwrap_or_default();
+                        status = "doing";
+                        told.push(format!("\"{title}\": denetim arka planda çalışıyor. Aynı adımı güncelle ve sonucu bekle."));
+                    }
+                    Some(outcome) => {
+                        let was_in_background = !check_job.is_empty();
+                        check_job.clear();
+                        let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
+                        if was_in_background && (receipt["jobState"] == "unknown"
+                            || matches!(receipt["errorCode"].as_str(), Some("TERMINAL_JOB_NOT_FOUND" | "TERMINAL_JOB_UNKNOWN")))
+                        {
+                            work.uncertain = true;
+                        }
+                        let passed = outcome.ok && receipt["exitCode"] == 0 && receipt["jobState"] != "cancelled";
+                        verified = work.ledger.record_plan_check(&check, passed, &outcome.output);
+                        finished |= verified;
+                        if verified {
+                            told.push(format!("\"{title}\": denetim geçti."));
+                        } else {
+                            status = "doing";
+                            tries += 1;
+                            let tail = if work.model_sharing == Some(true) { clip(&work.vault.seal(&outcome.output), 700) } else { model_receipt(&outcome) };
+                            told.push(format!("\"{title}\": denetim geçmedi ({tries}. deneme). {tail}"));
+                        }
+                    }
+                    None => {
+                        status = "doing";
+                        told.push(format!("\"{title}\": bitirmek için bir denetim komutu ve çalışma klasörü gerekli."));
+                    }
                 }
-            } else if status == "done" && was != "done" {
-                finished = true;
+            } else if status == "doing" && checkpoint.is_empty() && !work.read_only && !stop.is_asked() {
+                if let Some(root) = root.filter(|root| work.reach.allowed.iter().any(|allowed| root.starts_with(allowed))) {
+                    checkpoint = tokio::task::spawn_blocking(move || git_checkpoint(&root)).await.ok().flatten().unwrap_or_default();
+                }
             }
-            let mut row = json!({ "title": title, "status": status, "tries": tries });
-            if !check.is_empty() { row["check"] = json!(check); }
-            if !folder.is_empty() { row["workdir"] = json!(folder); }
-            if !checkpoint.is_empty() { row["checkpoint"] = json!(checkpoint); }
+            let mut row = json!({ "id": id, "title": title, "status": status, "tries": tries, "verified": verified });
+            for (key, value) in [("check", check), ("workdir", folder), ("checkpoint", checkpoint), ("checkJob", check_job)] {
+                if !value.is_empty() {
+                    row[key] = json!(value);
+                }
+            }
             next.push(row);
+        }
+        for previous in old {
+            let already_listed = next.iter().any(|row| if previous["id"].is_string() {
+                row["id"] == previous["id"]
+            } else {
+                row["title"] == previous["title"]
+            });
+            if !already_listed {
+                next.push(previous);
+            }
         }
         work.plan = next;
         let message = if told.is_empty() { "Plan kaydedildi.".to_string() } else { told.join("\n") };
@@ -2576,9 +3084,6 @@ impl Chat {
                 if file.trim().is_empty() || !args["content"].is_string() {
                     return refused("path ve content gerekli.");
                 }
-                if let Some(folder) = &folder {
-                    let _ = std::fs::create_dir_all(Path::new(folder));
-                }
                 let mut value = json!({ "action": "write_file", "filePath": file, "content": text_of(&args["content"]), "mode": "full" });
                 if args["append"] == true {
                     value["append"] = json!(true);
@@ -2649,7 +3154,11 @@ impl Chat {
                 Some(scope) => format!("{question}\n\nOnaylarsan {} içindeki değişiklikler {TRUST_DAYS} gün boyunca yeniden sorulmaz (ağa gönderen ve başka programları etkileyen komutlar yine sorulur).", scope.display()),
                 None => question,
             };
-            match approve("terminal".into(), question).await {
+            let decision = tokio::select! {
+                answer = approve("terminal".into(), question) => answer,
+                _ = stop.asked() => Decision::No,
+            };
+            match decision {
                 Decision::Yes => {
                     if let Some(scope) = &scope {
                         self.trust_folder(scope);
@@ -2659,6 +3168,9 @@ impl Chat {
                 Decision::No => return refused("Kullanıcı onay vermedi; çalıştırılmadı. Başka bir yol öner ya da ne yapmak istediğini sor."),
                 Decision::TimedOut => return refused("Onay zamanında gelmedi; çalıştırılmadı."),
             }
+        }
+        if stop.is_asked() {
+            return refused("Kullanıcı durdurdu; çalıştırılmadı.");
         }
         // Before the first change in a git project this run: a checkpoint the change can be taken back to (git_checkpoint), whatever the change is
         // (a command's writes are not in the file tools' undo records).
@@ -2687,9 +3199,19 @@ impl Chat {
             shown["errorCode"] = json!(code);
             shown["error"] = result["error"].clone();
         }
+        if result["sideEffectUncertain"] == true {
+            shown["sideEffectUncertain"] = json!(true);
+        }
         let mut job = None;
         if let Some(data) = &data {
             shown["output"] = json!(shown_output(data));
+            let value = &data["value"];
+            if let Some(exit_code) = value["exitCode"].as_i64().or_else(|| value["output"]["exitCode"].as_i64()) {
+                shown["exitCode"] = json!(exit_code);
+            }
+            if data["kind"] == "terminalJob" {
+                shown["jobState"] = value["status"].clone();
+            }
             let value = if data["kind"] == "terminalResult" { &data["value"] } else { data };
             if let (Some(undo), Some(folder)) = (value["undoId"].as_str(), step["payload"]["value"]["workingDirectory"].as_str()) {
                 reach.undo.push((undo.to_string(), folder.to_string()));
@@ -2707,14 +3229,56 @@ impl Chat {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_plan_check_passes_or_fails_by_its_exit_code() {
-        let folder = std::env::temp_dir();
-        let (passed, code, _) = super::run_check("exit 0", &folder);
-        assert!(passed && code == 0);
-        let (passed, code, tail) = super::run_check("echo bozuk; exit 3", &folder);
-        assert!(!passed && code == 3 && tail.contains("bozuk"));
-        let (passed, _, tail) = super::run_check("sudo ls", &folder);
-        assert!(!passed && tail.contains("yasaklı"));
+    fn shared_progress_and_model_receipts_withhold_local_file_content_and_paths() {
+        let step = serde_json::json!({ "type": "step_update", "step": {
+            "id": "step-1", "kind": "device", "status": "succeeded", "tool": "shell",
+            "summary": "cat /private/report.txt", "command": "cat /private/report.txt",
+            "workdir": "/private", "output": "customer name", "files": [{"path": "/private/report.txt"}],
+            "exitCode": 0
+        }});
+        let event = super::shared_progress(step);
+        assert_eq!(event["step"]["exitCode"], 0);
+        assert!(!event.to_string().contains("/private"));
+        assert!(!event.to_string().contains("customer name"));
+
+        let outcome = super::ToolOutcome { ok: true, output: serde_json::json!({
+            "status": "completed", "exitCode": 0, "output": "customer name"
+        }).to_string(), brief: "/private/report.txt".into(), job: Some("job-1".into()) };
+        let receipt: serde_json::Value = serde_json::from_str(&super::model_receipt(&outcome)).unwrap();
+        assert_eq!(receipt["jobId"], "job-1");
+        assert_eq!(receipt["exitCode"], 0);
+        assert!(!receipt.to_string().contains("customer"));
+        assert!(!receipt.to_string().contains("/private"));
+    }
+
+    #[test]
+    fn automatic_recovery_excludes_unknown_effects_and_running_jobs() {
+        let now = chrono::Utc::now().timestamp();
+        let mut snapshot: super::SessionSnapshot = serde_json::from_value(serde_json::json!({
+            "v": 2, "savedAt": now, "conversation": "conversation",
+            "taskId": super::Uuid::new_v4(), "runId": super::Uuid::new_v4(), "open": true,
+            "goal": "goal", "messages": [], "plan": [], "decisions": [], "log": [], "held": [], "vault": {}
+        })).unwrap();
+        assert!(snapshot.eligible_for_automatic_resume(now));
+        snapshot.in_flight = true;
+        assert!(!snapshot.eligible_for_automatic_resume(now));
+        snapshot.in_flight = false;
+        snapshot.uncertain = true;
+        assert!(!snapshot.eligible_for_automatic_resume(now));
+        snapshot.uncertain = false;
+        snapshot.plan = vec![serde_json::json!({ "checkJob": "running-check" })];
+        assert!(!snapshot.eligible_for_automatic_resume(now));
+        snapshot.plan.clear();
+        snapshot.auto_resume_attempted = true;
+        assert!(!snapshot.eligible_for_automatic_resume(now));
+    }
+
+    #[test]
+    fn only_read_only_operations_can_be_automatically_recovered() {
+        assert!(!super::effectful_tool("shell", &serde_json::json!({ "command": "git status" }), &[]));
+        assert!(super::effectful_tool("shell", &serde_json::json!({ "command": "npm run build" }), &[]));
+        assert!(super::effectful_tool("write_file", &serde_json::json!({ "path": "a.txt" }), &[]));
+        assert!(super::effectful_tool("computer_files", &serde_json::Value::Null, &["computer_files".into()]));
     }
 
     #[test]
@@ -2763,13 +3327,21 @@ mod tests {
     }
 
     #[test]
-    fn a_server_command_names_its_port_and_emoji_are_taken_out_of_the_answer() {
-        use super::{server_port, strip_emoji};
-        assert_eq!(server_port("cd site && python3 -m http.server 8000 &"), Some(8000));
-        assert_eq!(server_port("npm run dev -- --port 5173"), Some(5173));
-        assert_eq!(server_port("PORT=4000 node server.js"), Some(4000));
-        assert_eq!(server_port("npm start"), None);
-        assert_eq!(strip_emoji("Hazır 🎉 ✅ ve ✔ doğrulandı → tamam  "), "Hazır  ve ✔ doğrulandı → tamam");
+    fn emoji_are_taken_out_of_the_answer() {
+        assert_eq!(strip_emoji("Hazır 🎉 ✅ ve ✔ doğrulandı → tamam  "), "Hazır ve ✔ doğrulandı → tamam");
+    }
+
+    #[test]
+    fn inspection_success_requires_a_real_read_and_no_write_attempt() {
+        assert!(asks_for_inspection("Projedeki dosyaları listele"));
+        assert!(!asks_for_inspection("Dosyaları bul ve sil"));
+        assert!(!asks_for_inspection("Read the report and send it"));
+        let mut ledger = crate::chat::ledger::Ledger::default();
+        assert!(!ledger.verified_inspection());
+        ledger.record_inspection(false, Some(true));
+        assert!(ledger.verified_inspection());
+        ledger.record_inspection(true, None);
+        assert!(!ledger.verified_inspection());
     }
 
     #[test]

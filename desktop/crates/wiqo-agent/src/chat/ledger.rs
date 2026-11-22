@@ -5,9 +5,11 @@
 use std::collections::HashMap;
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::OnceLock;
 
+#[derive(Deserialize, Serialize)]
 struct Check {
     label: String,
     passed: bool,
@@ -18,7 +20,7 @@ struct Check {
     covers: Option<Vec<String>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub(super) struct Ledger {
     changed: Vec<String>,
     /// The edit counter at each file's last change: a check covers a file only when it ran after that.
@@ -37,6 +39,10 @@ pub(super) struct Ledger {
     /// the folder and called "inside" it.
     expected_folders: Vec<String>,
     placement_nudged: bool,
+    #[serde(default)]
+    last_inspection_ok: bool,
+    #[serde(default)]
+    attempted_effect: bool,
 }
 
 fn check_command() -> &'static Regex {
@@ -166,6 +172,17 @@ fn short(command: &str) -> String {
 }
 
 impl Ledger {
+    pub(super) fn record_inspection(&mut self, effectful: bool, inspection: Option<bool>) {
+        self.attempted_effect |= effectful;
+        if let Some(ok) = inspection {
+            self.last_inspection_ok = ok;
+        }
+    }
+
+    pub(super) fn verified_inspection(&self) -> bool {
+        self.last_inspection_ok && !self.attempted_effect && self.changed.is_empty()
+    }
+
     /// The request's own words: folders it names to be created are expected to hold what the run writes.
     pub(super) fn expect_from(&mut self, goal: &str) {
         self.expected_folders = folders_named(goal);
@@ -183,7 +200,12 @@ impl Ledger {
             }
             "shell" => {
                 let command = text("command");
-                if syntax_only(&command) || (!check_command().is_match(&command) && !runs_changed_file(&command, &self.changed)) {
+                let reads_written_text_file = command.split_whitespace().next() == Some("cat")
+                    && self.changed.iter().any(|path| path.ends_with(".txt")
+                        && command.split_whitespace().any(|word| path.rsplit('/').next() == Some(word)));
+                if syntax_only(&command) || (!check_command().is_match(&command)
+                    && !runs_changed_file(&command, &self.changed) && !reads_written_text_file)
+                {
                     return;
                 }
                 let covers = self.coverage_of(&command);
@@ -242,6 +264,14 @@ impl Ledger {
         }
     }
 
+    pub(super) fn record_plan_check(&mut self, command: &str, passed: bool, output: &str) -> bool {
+        let command = command.trim();
+        let no_op = matches!(command, "" | ":" | "true" | "exit 0" | "exit 0;" | "$true");
+        let passed = passed && !no_op && !ran_no_tests(output);
+        self.checked_for(short(command), passed, self.coverage_of(command));
+        passed
+    }
+
     /// A file the run just wrote does not parse (its own language's syntax check said so): a failed check after the change, so the report says it and a "done" cannot stand over it.
     pub(super) fn syntax_failed(&mut self, path: &str) {
         let name = path.rsplit('/').next().unwrap_or(path);
@@ -273,7 +303,13 @@ impl Ledger {
     /// a test run, build or type check for the whole project.
     fn coverage_of(&self, command: &str) -> Option<Vec<String>> {
         if command.contains("curl") && local_server().is_match(command) {
-            return Some(self.changed.iter().filter(|path| !static_script(path)).cloned().collect());
+            return Some(self.changed.iter().filter(|path| {
+                if !static_script(path) {
+                    return true;
+                }
+                api_like_curl(command) && std::path::Path::new(path).file_stem()
+                    .and_then(|name| name.to_str()).is_some_and(|name| matches!(name, "server" | "api" | "routes"))
+            }).cloned().collect());
         }
         if check_command().is_match(command) {
             return None;
@@ -417,6 +453,14 @@ impl Ledger {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_successful_no_op_or_empty_test_suite_does_not_verify_a_plan_step() {
+        let mut ledger = Ledger::default();
+        assert!(!ledger.record_plan_check("exit 0", true, ""));
+        assert!(!ledger.record_plan_check("cargo test", true, "test result: ok. 0 passed"));
+        assert!(ledger.record_plan_check("cargo test", true, "test result: ok. 1 passed"));
+    }
 
     #[test]
     fn only_checks_after_the_last_change_count_and_exit_codes_decide() {

@@ -1,0 +1,50 @@
+{
+  "error": {
+    "code": "PROBLEM_SIMILAR",
+    "message": "Benzer bir problem var.",
+    "similar": [
+      {
+        "code": "ABCDEFGH",
+        "kind": "problem",
+        "title": "Proje dosyalarını nasıl düzenleyebilirim?",
+        "body": "Örnek problem.",
+        "audience": "",
+        "workaround": "",
+        "topic": "productivity",
+        "tags": [],
+        "url": "https://wiqoai.com/p/ABCDEFGH",
+        "createdAt": "2026-11-22 09:00:00",
+        "updatedAt": "2026-11-22 09:00:00",
+        "author": {
+          "username": "atlas",
+          "displayName": "Atlas",
+          "bio": "",
+          "headline": "",
+          "avatar": {
+            "kind": "initial",
+            "emoji": null,
+            "color": "indigo",
+            "url": null
+          }
+        },
+        "problem": null,
+        "counts": {
+          "needs": 2,
+          "validated": 1,
+          "replies": 0,
+          "experiences": 0,
+          "alternatives": 0,
+          "ideas": 0,
+          "solutions": 1,
+          "worked": 0,
+          "workedAffected": 0,
+          "echoes": 0
+        },
+        "solved": false,
+        "needed": true,
+        "mine": false,
+        "score": 0.89
+      }
+    ]
+  }
+}

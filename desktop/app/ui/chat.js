@@ -23,6 +23,7 @@
   let pending = [];
   /** The code of the Mission whose words are in the composer (Keşfet), until it is sent or the box is emptied. */
   let composedMission = null;
+  let interruptedTask = null;
   let renderQueued = false;
 
   const toast = (message, tone) => {
@@ -130,15 +131,24 @@
       const value = await invoke("chat_messages", { conversation: id });
       if (conversation !== id || owner !== syncAccount || (refresh && turn)) return;
       const transient = messages.filter(message => !message.serverId);
-      messages = (value.messages || []).map((item) => ({
-        role: item.role === "user" ? "user" : "assistant",
-        serverId: item.id, taskId: item.taskId,
-        text: item.role !== "user" && item.agentId && members.has(item.agentId) ? `**${members.get(item.agentId)}**\n\n${item.content || ""}` : item.content || "",
-        widgets: item.widgets || [],
-        artifacts: item.artifacts || [],
-        steps: [],
-        confirmations: [],
-      }));
+      messages = (value.messages || []).map((item) => {
+        const role = item.role === "user" ? "user" : "assistant";
+        const previous = messages.find(message => item.id && message.serverId === item.id)
+          || transient.find(message => item.taskId && message.taskId === item.taskId && message.role === role);
+        const text = role === "assistant" && item.agentId && members.has(item.agentId)
+          ? `**${members.get(item.agentId)}**\n\n${item.content || ""}` : item.content || "";
+        return {
+          steps: [],
+          confirmations: [],
+          ...previous,
+          role,
+          serverId: item.id,
+          taskId: item.taskId,
+          text: previous?.syncActive ? previous.text : text,
+          widgets: previous?.syncActive ? previous.widgets : item.widgets || [],
+          artifacts: previous?.syncActive ? previous.artifacts : item.artifacts || [],
+        };
+      });
       for (const message of transient) {
         if (message.taskId && !messages.some(saved => saved.taskId === message.taskId && saved.role === message.role)) messages.push(message);
       }
@@ -480,7 +490,8 @@
     rows.forEach((row, position) => { if (box.children[position] !== row) box.insertBefore(row, box.children[position] ?? null); });
     while (box.children.length > rows.length) box.lastElementChild.remove();
     $("chat-empty").hidden = messages.length > 0;
-    $("chat-send").hidden = turn !== null || remoteTask !== null || remoteAgent !== null;
+    const canResume = interruptedTask?.taskId === remoteTask && interruptedTask?.conversation === conversation;
+    $("chat-send").hidden = turn !== null || (remoteTask !== null && !canResume) || remoteAgent !== null;
     $("chat-stop").hidden = turn === null && remoteTask === null && remoteAgent === null;
     if (atBottom) scroller.scrollTop = scroller.scrollHeight;
     renderSide();
@@ -533,7 +544,10 @@
 
   async function send(text, answer) {
     const message = String(text || "").trim();
-    if ((!message && !pending.length) || turn || remoteTask || remoteAgent) return;
+    const resume = interruptedTask?.conversation === conversation && /^devam et$/iu.test(message)
+      ? interruptedTask.taskId : null;
+    if ((!message && !pending.length) || turn || (remoteTask && remoteTask !== resume) || remoteAgent) return;
+    interruptedTask = null;
     window.showSection("chat");
     if (isGroup()) return sendGroup(message);
     const history = messages.slice(-16).map((item) => ({ role: item.role, content: String(item.text).slice(0, 4000) }));
@@ -551,7 +565,7 @@
       conversation,
       history,
       message: message || "Bu görselleri incele.",
-      taskId: answer?.taskId || null,
+      taskId: answer?.taskId || resume,
       questionId: answer?.questionId || null,
       attachments,
       mission,
@@ -580,9 +594,14 @@
 
   function applyRunSync(sync, hydrate = true) {
     if (sync.type !== "snapshot") return;
+    if (Number.isInteger(sync.cursor) && sync.cursor < latestSync?.cursor) return;
     latestSync = sync;
     if (Array.isArray(sync.conversations)) { conversations = sync.conversations; renderList(); }
-    const rows = (sync.requests || []).filter(row => row.conversationId === conversation);
+    const latestRows = new Map();
+    for (const row of sync.requests || []) {
+      if (row.conversationId === conversation && !latestRows.has(row.taskId)) latestRows.set(row.taskId, row);
+    }
+    const rows = [...latestRows.values()];
     const summary = (sync.conversations || []).find(item => item.id === conversation);
     const historyKey = JSON.stringify([conversation, summary?.updatedAt, summary?.turnCount, rows.map(row => [row.requestId, row.status])]);
     if (hydrate && !turn && summary && historyKey !== syncHistoryKey) { syncHistoryKey = historyKey; open(conversation, true); }
@@ -594,28 +613,53 @@
         continue;
       }
       const response = row.response || {};
-      const active = !row.cancelled && ["running", "awaiting_backend_confirmation", "awaiting_weather_location"].includes(row.status);
-      let reply = messages.find(message => message.role === "assistant" && (message.requestId === row.requestId || message.taskId === row.taskId));
+      const outcome = response.outcome?.state;
+      const cancelled = Boolean(row.cancelled || outcome === "cancelled");
+      const failed = row.status === "failed" || outcome === "failed" || outcome === "unknown";
+      const active = !cancelled && !outcome && ["running", "awaiting_backend_confirmation", "awaiting_weather_location"].includes(row.status);
+      let reply = messages.find(message => message.role === "assistant" && message.requestId === row.requestId)
+        || messages.find(message => message.role === "assistant" && message.taskId === row.taskId);
       if (!reply) {
         if (!active) continue;
         messages.push({ role: "user", text: row.goal || "Görev", taskId: row.taskId });
         reply = { role: "assistant", text: "", taskId: row.taskId, requestId: row.requestId, steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [], trace: newTrace() };
         messages.push(reply);
       }
-      if ((reply.revision || 0) > row.revision || (reply.cancelled && !row.cancelled)) continue;
+      const seq = response.seq;
+      const sameRequest = reply.requestId === row.requestId;
+      const stale = (reply.revision || 0) > row.revision
+        || (sameRequest && Number.isInteger(seq) && seq < (reply.syncSeq || 0))
+        || (reply.cancelled && !cancelled)
+        || (sameRequest && reply.syncTerminal && active);
+      if (stale) {
+        if (reply.syncActive) remoteTask = row.taskId;
+        continue;
+      }
       // A run this window's own agent finished: its words stand. Only that run's finished record may replace them (the turn that handed it over
       // still says "çalışıyorum…", and a snapshot taken a moment before the end shows the run as running with no text).
-      if (reply.localRun && !(row.requestId === reply.localRun && row.status === "done")) continue;
+      if (reply.localRun && row.requestId !== reply.localRun && reply.requestId !== reply.localRun) continue;
+      if (reply.localRun && row.requestId === reply.localRun && active) continue;
+      if (!sameRequest) {
+        reply.syncSeq = undefined;
+        reply.syncGapAt = undefined;
+        if (active) reply.trace = newTrace();
+      }
       reply.revision = row.revision;
-      reply.error = row.status === "failed";
+      reply.syncActive = active;
+      reply.syncTerminal = !active && outcome !== "paused";
+      if (Number.isInteger(seq)) {
+        reply.syncSeq = seq;
+        if (seq >= reply.syncGapAt) reply.syncGapAt = undefined;
+      }
+      reply.error = failed;
       reply.trace ||= newTrace();
       reply.requestId = row.requestId;
       reply.taskId = row.taskId;
-      reply.cancelled = row.cancelled;
+      reply.cancelled = cancelled;
       if (typeof response.reply === "string" && (!response.truncated || !reply.text)) reply.text = response.reply;
       if (response.widgets) reply.widgets = response.widgets;
       if (response.artifacts) reply.artifacts = response.artifacts;
-      if (response.steps) reply.steps = response.steps;
+      if (response.steps || (Number.isInteger(seq) && !response.truncated)) reply.steps = response.steps || [];
       reply.confirmations = active ? response.backendConfirmations || [] : [];
       if (response.agentTask) {
         reply.tasks = [{ ...response.agentTask, type: "agent_task" }];
@@ -623,11 +667,29 @@
       }
       if (active) remoteTask = row.taskId;
       else {
-        finishTrace(reply.trace, row.status === "failed");
-        if (row.cancelled) reply.note = "Görev durduruldu.";
+        finishTrace(reply.trace, failed || cancelled || outcome === "paused");
+        if (cancelled) reply.note = "Görev durduruldu.";
+        if (outcome === "paused") reply.note = "Görev duraklatıldı.";
       }
     }
     render();
+  }
+
+  function applyRunEvent(reply, sync) {
+    if (reply.cancelled || reply.syncTerminal) return;
+    const { seq, event } = sync;
+    if (Number.isInteger(seq)) {
+      const previous = reply.syncSeq || 0;
+      if (seq <= previous) return;
+      if (reply.syncGapAt || seq !== previous + 1) {
+        reply.syncGapAt = Math.max(reply.syncGapAt || 0, seq);
+        return;
+      }
+      reply.syncSeq = seq;
+    } else if (Number.isInteger(reply.syncSeq) || reply.syncGapAt) {
+      return;
+    }
+    applyChatEvent(reply, event, false);
   }
 
   listen("wiqo", (event) => {
@@ -638,7 +700,7 @@
       if (sync.type === "snapshot") applyRunSync(sync);
       else if (sync.type === "copilot" && sync.conversationId === conversation && !(turn && sync.taskId === task)) {
         const reply = messages.find(message => message.role === "assistant" && message.requestId === sync.requestId);
-        if (reply && !reply.cancelled) applyChatEvent(reply, sync.event, false);
+        if (reply) applyRunEvent(reply, sync);
       }
       return;
     }
@@ -733,7 +795,10 @@
         reply.tasks = ["agentTask", "projectTask", "deferredTask", "actTask"]
           .filter((key) => data[key] && typeof data[key] === "object")
           .map((key) => ({ ...data[key], type: { agentTask: "agent_task", projectTask: "project_task", deferredTask: "deferred_task", actTask: "act_task" }[key] }));
-        if (!reply.text && !reply.widgets.length && !reply.artifacts.length && !(data.steps || []).length) reply.text = "Tamam.";
+        if (data.outcome?.state === "failed" || data.outcome?.state === "unknown") reply.error = true;
+        if (data.outcome?.state === "cancelled") { reply.cancelled = true; reply.note = "Görev durduruldu."; }
+        if (data.outcome?.state === "paused") reply.note = "Görev duraklatıldı.";
+        if (!data.outcome && !reply.text && !reply.widgets.length && !reply.artifacts.length && !(data.steps || []).length) reply.text = "Tamam.";
         break;
       case "error":
         reply.error = true;
@@ -836,19 +901,22 @@
     if (email) loadConversations();
     if (email) offerInterrupted();
   }
-  // Work the app was closed in the middle of: its conversation opens with "devam et" in the composer, for the person to send (never sent for them:
-  // what was running may be the very thing they closed the app to stop).
+  // Work that requires the person's input can be resumed from its existing conversation.
   async function offerInterrupted() {
     try {
+      const generation = accountGeneration;
       const [cut] = await invoke("chat_interrupted");
-      if (!cut || turn) return;
+      if (!cut || turn || generation !== accountGeneration) return;
       await open(cut.conversation);
+      if (generation !== accountGeneration || conversation !== cut.conversation) return;
+      interruptedTask = cut;
       compose("devam et");
-      toast(`Yarım kalan çalışma: ${String(cut.goal || "").slice(0, 80)} — sürdürmek için gönder.`);
+      render();
+      toast("Yarım kalan çalışma hazır. Sürdürmek için mesajı gönder.");
     } catch { /* nothing was cut off, or it cannot be read: the app starts as usual */ }
   }
   window.addEventListener("wiqo-signed-in", refreshAccount);
-  window.addEventListener("wiqo-signed-out", () => { accountGeneration++; syncAccount = null; syncHistoryKey = ""; latestSync = null; remoteTask = null; remoteAgent = null; turn = null; task = null; messages = []; conversations = []; render(); renderList(); });
+  window.addEventListener("wiqo-signed-out", () => { accountGeneration++; syncAccount = null; syncHistoryKey = ""; latestSync = null; remoteTask = null; remoteAgent = null; interruptedTask = null; turn = null; task = null; messages = []; conversations = []; render(); renderList(); });
   refreshAccount();
   render(true);
   // The Ajanlar page opens a teammate's direct chat here: it is Wiqo's own chat, the server resolves the agent from the conversation id.

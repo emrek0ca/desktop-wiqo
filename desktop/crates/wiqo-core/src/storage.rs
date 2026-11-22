@@ -43,18 +43,25 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
 
-pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
-    let temporary = path.with_extension("tmp");
-    let mut file = fs::File::create(&temporary)?;
+/// Write a private local record using a same-directory atomic replacement.
+pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec(value).map_err(std::io::Error::other)?;
+    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    fs::rename(&temporary, path)
+    let mut file = options.open(&temporary)?;
+    let result = file.write_all(&bytes).and_then(|()| file.sync_all());
+    drop(file);
+    let result = result.and_then(|()| fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 /// Who this desktop is to the server. Made once, kept for good.

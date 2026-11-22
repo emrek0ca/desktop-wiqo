@@ -823,7 +823,7 @@ listen("update-ready", (message) => {
 });
 $("update-restart").onclick = () => invoke("restart_app");
 
-loadPermissions().then(refresh).then(() => {
+window.WiqoReady = loadPermissions().then(refresh).then(() => {
   showSection("chat");
   if (snapshot?.account) loadProfile();
 });

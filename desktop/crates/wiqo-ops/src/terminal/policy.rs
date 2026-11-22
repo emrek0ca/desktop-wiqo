@@ -117,7 +117,6 @@ const READ_ONLY_PROGRAMS: &[&str] = &[
     "lsof",
     "uptime",
     "hostname",
-    "xcodebuild",
     "system_profiler",
     "cd",
     "mdls",
@@ -128,7 +127,6 @@ const READ_ONLY_PROGRAMS: &[&str] = &[
     "nslookup",
     "dig",
     "host",
-    "pbpaste",
     "free",
     "lsblk",
     "lscpu",
@@ -204,7 +202,7 @@ pub fn is_read_only(command: &str) -> bool {
     static SHAPES: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
     let (absolute, redirect_ok, flags) = SHAPES.get_or_init(|| {
         (
-            Regex::new(r#"(^|[\s"'=])/"#).unwrap(),
+            Regex::new(r#"(^|[\s"'=])/|[A-Za-z]:[\\/]|\\\\"#).unwrap(),
             Regex::new(r">\s*/dev/null|>&1").unwrap(),
             Regex::new(r"^-(delete|exec|execdir|ok|okdir|fprint)").unwrap(),
         )
@@ -215,7 +213,7 @@ pub fn is_read_only(command: &str) -> bool {
         return false;
     }
     // zsh glob qualifiers `*(e:'cmd':)`, `=(cmd)` and PowerShell `(Cmd)` run code from inside an argument; a read never needs a group or a brace.
-    if text.contains('(') || text.contains(')') || text.contains('{') || text.contains('}') || text.contains("=(") {
+    if text.contains(['(', ')', '{', '}', '%']) {
         return false;
     }
     let redirects = redirect_ok.replace_all(&text, "");
@@ -242,32 +240,43 @@ pub fn is_read_only(command: &str) -> bool {
         let Some(first) = words.first() else {
             return false;
         };
-        let program = first.rsplit('/').next().unwrap_or(first).to_lowercase();
+        let program = first.to_lowercase();
         let rest = &words[1..];
         match program.as_str() {
             "find" => !rest.iter().any(|word| flags.is_match(word)),
             // Spotlight content search: read-only only when kept to the session folder.
             "mdfind" => rest.contains(&"-onlyin"),
+            "sort" => rest.iter().all(|word| match *word {
+                "-" | "--" | "--reverse" | "--numeric-sort" | "--unique" | "--ignore-case"
+                | "--stable" | "--check" | "-k" | "-t" => true,
+                _ => {
+                    if let Some(flags) = word.strip_prefix('-') {
+                        flags.bytes().all(|flag| b"bCcdfghiMnRrsuVz".contains(&flag))
+                    } else {
+                        // Quoting, escapes and globs can change the arguments the shell passes.
+                        word.bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"._/,+".contains(&byte))
+                    }
+                }
+            }),
             "git" => {
                 let Some(sub) = rest.first() else {
                     return false;
                 };
-                if !GIT_READ.contains(sub) {
+                if !GIT_READ.contains(sub) || rest.iter().any(|word| {
+                    matches!(word.split('=').next(), Some("--output" | "--ext-diff" | "--textconv"))
+                }) {
                     return false;
                 }
                 match *sub {
                     "config" => rest
                         .iter()
                         .any(|word| matches!(*word, "--get" | "--list" | "-l")),
-                    "branch" => !rest.iter().any(|word| {
-                        word.starts_with("-d")
-                            || word.starts_with("-D")
-                            || word.starts_with("-m")
-                            || word.starts_with("-M")
-                    }),
-                    "tag" => !rest
-                        .iter()
-                        .any(|word| word.starts_with("-a") || word.starts_with("-d")),
+                    "branch" => rest[1..].iter().all(|word| matches!(*word,
+                        "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current"
+                    )),
+                    "tag" => rest[1..].iter().all(|word| matches!(*word, "-l" | "--list")),
+                    "remote" => rest[1..].iter().all(|word| matches!(*word, "-v" | "--verbose")),
                     _ => true,
                 }
             }
@@ -479,11 +488,51 @@ pub fn redact_secrets(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn shared_terminal_policy_vectors() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Vector {
+            target: String,
+            command: String,
+            read_only: bool,
+        }
+        let vectors: Vec<Vector> = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/terminal-policy.json"
+        ))
+        .unwrap();
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            assert_eq!(
+                is_read_only(&vector.command),
+                vector.read_only,
+                "{}: {}",
+                vector.target,
+                vector.command
+            );
+        }
+    }
+
+    #[test]
     fn a_read_never_runs_code_from_inside_an_argument() {
         for command in ["ls *(e:'touch pwned':)", "cat =(touch pwned)", "echo (New-Item pwned)", "echo {a,b}"] {
             assert!(!is_read_only(command), "{command}");
         }
         assert!(is_read_only("ls -la"));
+    }
+
+    #[test]
+    fn sort_only_accepts_literal_read_only_arguments() {
+        assert!(is_read_only("sort -nr --unique input.txt"));
+        assert!(is_read_only("cat input.txt | sort -u"));
+        for command in [
+            "sort -o output.txt input.txt",
+            "sort -ro output.txt input.txt",
+            "sort '--output' output.txt input.txt",
+            "sort --out=output.txt input.txt",
+            "sort *",
+        ] {
+            assert!(!is_read_only(command), "{command}");
+        }
     }
 
     use super::*;

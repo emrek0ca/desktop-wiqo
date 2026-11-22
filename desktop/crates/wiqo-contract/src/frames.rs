@@ -102,6 +102,7 @@ mod tests {
             CANCEL_JOB,
             CANCEL_TURN,
             APPROVALS_OPEN,
+            REMOTE_SCREEN,
         ];
         let mut to_phone = vec![
             ACK,

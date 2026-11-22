@@ -28,6 +28,7 @@ use wiqo_core::wire::{timestamp, CommandResult, CommandStatus, WireError};
 pub use edit::undo_recorded;
 pub use policy::{full_access, is_forbidden, is_read_only, redact_secrets, set_full_access};
 pub use shell::windows_powershell;
+pub use step::starts_server;
 use policy::{READ_WITHOUT_GRANT_ID, SCRATCH_FOLDER};
 use shell::{Control, Input, WriteScope};
 
@@ -843,7 +844,7 @@ impl Sessions {
                     _ => "unknown",
                 };
                 drop(job);
-                store.finished(&job_id, watched.status, None, &watched.message, &watched.paths);
+                store.finished(&job_id, watched.status, None);
                 return;
             }
             let outcome = shell::run_tracked(
@@ -902,14 +903,9 @@ impl Sessions {
                 "completed" => "ok",
                 other => other,
             };
-            let text = format!(
-                "{}{}",
-                outcome.output["stdout"].as_str().unwrap_or(""),
-                outcome.output["stderr"].as_str().unwrap_or("")
-            );
             let exit = outcome.output["exitCode"].as_i64();
             drop(job);
-            store.finished(&job_id, status, exit, &text, &[]);
+            store.finished(&job_id, status, exit);
         });
         self.snapshot(&id)
     }

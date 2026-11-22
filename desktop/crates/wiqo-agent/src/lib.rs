@@ -330,6 +330,9 @@ impl Observer for Shared {
         let _ = self.events.send(Event::Connection {
             state: state.clone(),
         });
+        if *state == ConnectionState::Online {
+            let _ = self.inbox.send(Inbox::ResumeLocalTasks);
+        }
     }
 
     fn command(&self, key: &str, kind: &str, result: &CommandResult) {
@@ -421,12 +424,17 @@ struct ActivityLine {
     detail: String,
     steps: std::collections::BTreeMap<String, bool>,
     failed: bool,
+    outcome: Option<&'static str>,
+    saw_final_reply: bool,
     last_sent: Option<std::time::Instant>,
 }
 
 impl ActivityLine {
     fn new(title: String) -> ActivityLine {
-        ActivityLine { title, detail: String::new(), steps: Default::default(), failed: false, last_sent: None }
+        ActivityLine {
+            title, detail: String::new(), steps: Default::default(), failed: false,
+            outcome: None, saw_final_reply: false, last_sent: None,
+        }
     }
 
     fn state(&self, status: &str) -> serde_json::Value {
@@ -446,7 +454,9 @@ impl ActivityLine {
                 if matches!(status, "failed" | "denied") {
                     self.failed = true;
                 }
-                self.steps.insert(id, status == "completed");
+                if !id.is_empty() {
+                    self.steps.insert(id, matches!(status, "succeeded" | "completed"));
+                }
                 false
             }
             Some("approval") | Some("confirmation_needed") => {
@@ -456,6 +466,18 @@ impl ActivityLine {
             Some("error") => {
                 self.failed = true;
                 false
+            }
+            Some("done") => {
+                self.saw_final_reply = event["replyIsProgress"] != true;
+                self.outcome = match event["outcome"]["state"].as_str() {
+                    Some("done") if event["outcome"]["verified"] == true => Some("done"),
+                    Some("cancelled") => Some("cancelled"),
+                    Some("paused") => Some("paused"),
+                    Some("failed") => Some("failed"),
+                    Some(_) => Some("unknown"),
+                    None => self.outcome,
+                };
+                return None;
             }
             _ => return None,
         };
@@ -471,16 +493,25 @@ impl ActivityLine {
     }
 
     fn end(&self) -> serde_json::Value {
-        let mut state = self.state(if self.failed { "failed" } else { "done" });
-        if !self.failed {
-            state["detail"] = serde_json::json!("Bitti");
-        }
+        let (status, detail) = match self.outcome {
+            Some("done") => ("done", "Bitti"),
+            Some("cancelled") => ("cancelled", "Görev durduruldu"),
+            Some("paused") => ("paused", "Görev duraklatıldı"),
+            Some("failed") => ("failed", "Görev tamamlanamadı"),
+            Some(_) => ("unknown", "Görevin sonucu doğrulanamadı"),
+            None if self.failed => ("failed", "Görev tamamlanamadı"),
+            None if self.saw_final_reply => ("done", "Bitti"),
+            None => ("unknown", "Görevin sonucu doğrulanamadı"),
+        };
+        let mut state = self.state(status);
+        state["detail"] = serde_json::json!(detail);
         state
     }
 }
 
 /// What the relay hands to this computer's own work.
 enum Inbox {
+    ResumeLocalTasks,
     /// A paired phone's checked frame.
     Phone(Request),
     /// Due automation steps: the server's step id and the step.
@@ -556,6 +587,7 @@ pub struct Desktop {
     relay: Mutex<Option<(JoinHandle<()>, Arc<Notify>)>>,
     /// Taken once by `connect`: the job events the terminal emitted, forwarded to the server as `pcJobEvent`.
     job_events: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>>>,
+    resume_scan: tokio::sync::Mutex<()>,
     permissions: Arc<permissions::Permissions>,
     pub chat: chat::Chat,
 }
@@ -644,6 +676,7 @@ impl Desktop {
             shared,
             relay: Mutex::new(None),
             job_events: Mutex::new(Some(job_reader)),
+            resume_scan: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -872,6 +905,18 @@ impl Desktop {
         while let Some(item) = inbox.recv().await {
             let request = match item {
                 Inbox::Phone(request) => request,
+                Inbox::ResumeLocalTasks => {
+                    let desktop = self.clone();
+                    tokio::spawn(async move {
+                        let Ok(_scan) = desktop.resume_scan.try_lock() else { return; };
+                        desktop.chat.resume_safe_tasks(
+                            &desktop.runtime.engine,
+                            &desktop.runtime.identity.device_id,
+                            &desktop.shared.events,
+                        ).await;
+                    });
+                    continue;
+                }
                 Inbox::Automation(steps) => {
                     let desktop = self.clone();
                     tokio::spawn(async move { desktop.run_automation(steps).await });
@@ -956,8 +1001,9 @@ impl Desktop {
     /// a message typed here (the question is in this window and goes to the person's phone by push). When the turn ends the server is told on the socket;
     /// what the step achieved is read there from the turn's own record, not from this computer's word.
     async fn run_agent_steps(self: &Arc<Self>, units: Vec<serde_json::Value>) {
+        use wiqo_contract::schema_generated::{PcUnitClaim, PcUnitDone};
         for unit in units {
-            let (Some(unit_id), Some(request_id), Some(conversation), Some(prompt)) = (unit["unitId"].as_i64(), unit["requestId"].as_str(), unit["conversationId"].as_str(), unit["prompt"].as_str()) else {
+            let Ok(PcUnitClaim { unit_id, request_id, conversation_id, prompt, .. }) = serde_json::from_value(unit) else {
                 continue;
             };
             let device = self.runtime.identity.device_id.clone();
@@ -969,15 +1015,15 @@ impl Desktop {
                     &device,
                     &self.shared.events,
                     &turn,
-                    request_id.to_string(),
-                    conversation,
+                    request_id.clone(),
+                    &conversation_id,
                     serde_json::json!([]),
-                    prompt,
+                    &prompt,
                     None,
                     None,
                     serde_json::json!([]),
                     &chat::Asker::Window { mission: None },
-                    &self.approver(Some(request_id.to_string())),
+                    &self.approver(Some(request_id)),
                 )
                 .await;
             if let Err(error) = &outcome {
@@ -987,10 +1033,10 @@ impl Desktop {
                 turn: turn.clone(),
                 event: serde_json::json!({ "type": "turnEnd", "error": outcome.err().map(|error| error.to_string()) }),
             });
-            self.runtime
-                .outbox
-                .deliver(&serde_json::json!({ "type": "agentStepDone", "unitId": unit_id }))
-                .await;
+            if let Ok(mut receipt) = serde_json::to_value(PcUnitDone { unit_id }) {
+                receipt["type"] = serde_json::json!("agentStepDone");
+                self.runtime.outbox.deliver(&receipt).await;
+            }
         }
     }
 
@@ -1053,11 +1099,10 @@ impl Desktop {
         let (forward, mut queue) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
         let request_id = message.request_id.clone();
         let sender = outbox.clone();
-        let title: String = message.text.chars().take(60).collect();
         let drain = tokio::spawn(async move {
             // The phone's Live Activity for this task moves on while its app is closed: how far the task got goes to the server, which passes it
             // to Apple as it is (rova-backend notifications/liveActivity.ts). At most every two seconds; the end at once.
-            let mut activity = ActivityLine::new(title);
+            let mut activity = ActivityLine::new("Wiqo görevi".into());
             while let Some(event) = queue.recv().await {
                 if let Some(state) = activity.read(&event) {
                     sender.deliver(&serde_json::json!({ "type": "activityUpdate", "requestId": request_id, "state": state })).await;
@@ -1096,15 +1141,15 @@ impl Desktop {
                 &self.approver(Some(message.request_id.clone())),
             )
             .await;
-        if let (Err(error), chat::Asker::Phone { forward, .. }) = (&outcome, &asker) {
-            forward(serde_json::json!({ "type": "error", "message": error.to_string() }));
+        if let (Err(_), chat::Asker::Phone { forward, .. }) = (&outcome, &asker) {
+            forward(serde_json::json!({ "type": "error", "message": "Masaüstü görevi tamamlanamadı." }));
         }
         drop(asker);
         let _ = drain.await;
         outbox
             .deliver(&frame(
                 wiqo_contract::frames::TURN_END,
-                serde_json::json!({}),
+                serde_json::json!({ "error": outcome.is_err().then_some("Masaüstü görevi tamamlanamadı.") }),
             ))
             .await;
     }
@@ -1709,6 +1754,20 @@ impl Desktop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_activity_reports_verified_steps_and_the_actual_run_outcome() {
+        let mut activity = ActivityLine::new("Wiqo görevi".into());
+        let _ = activity.read(&serde_json::json!({
+            "type": "step_update", "step": { "id": "step-1", "status": "succeeded" }
+        }));
+        let _ = activity.read(&serde_json::json!({
+            "type": "done", "outcome": { "state": "cancelled", "verified": false }
+        }));
+        assert_eq!(activity.end()["step"], 1);
+        assert_eq!(activity.end()["status"], "cancelled");
+        assert_eq!(ActivityLine::new("Wiqo görevi".into()).end()["status"], "unknown");
+    }
 
     /// One desktop on a data folder of its own, with what it sends to the server captured.
     fn desktop() -> (Arc<Desktop>, tokio::sync::mpsc::Receiver<String>) {

@@ -267,6 +267,620 @@ pub struct PcApprovalSettledEvent {
     pub timed_out: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentRunOutcomeState {
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "unknown")]
+    Unknown,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// The outcome of a desktop run, with verification recorded independently from delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunOutcome {
+    pub state: AgentRunOutcomeState,
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunSentFile {
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(rename = "artifactId")]
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunFinishRequest {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    pub reply: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent: Option<Vec<AgentRunSentFile>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<AgentRunOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AgentRunProgressEvent {
+    #[serde(rename = "step_update")]
+    StepUpdate(StepUpdateEvent),
+    #[serde(rename = "activity")]
+    Activity(ActivityEvent),
+    #[serde(rename = "status")]
+    Status(StatusEvent),
+    #[serde(rename = "delta")]
+    Delta(DeltaEvent),
+    #[serde(rename = "reset")]
+    Reset(ResetEvent),
+    /// An event of a kind a newer server sends: ignored.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunProgressRequest {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    pub events: Vec<AgentRunProgressEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAgentHandoff {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    #[serde(rename = "taskId", default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    pub instructions: String,
+    pub goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumes: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted: Option<bool>,
+}
+
+/// A restart from an existing local checkpoint. This request has no chat messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunResumeRequest {
+    #[serde(rename = "resumeLocalOnly")]
+    pub resume_local_only: bool,
+    #[serde(rename = "resumeLocalRunId")]
+    pub resume_local_run_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "conversationId")]
+    pub conversation_id: String,
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+    #[serde(rename = "deviceId")]
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskArtifactInfoKind {
+    #[serde(rename = "document")]
+    Document,
+    #[serde(rename = "spreadsheet")]
+    Spreadsheet,
+    #[serde(rename = "pdf")]
+    Pdf,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "chart")]
+    Chart,
+    #[serde(rename = "table")]
+    Table,
+    #[serde(rename = "data")]
+    Data,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskArtifactInfo {
+    pub id: String,
+    pub kind: AgentTaskArtifactInfoKind,
+    pub filename: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    #[serde(rename = "byteCount")]
+    pub byte_count: i64,
+    pub sha256: String,
+    #[serde(rename = "downloadURL")]
+    pub download_u_r_l: String,
+    #[serde(rename = "expiresAt")]
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskArtifactKind {
+    #[serde(rename = "document")]
+    Document,
+    #[serde(rename = "spreadsheet")]
+    Spreadsheet,
+    #[serde(rename = "pdf")]
+    Pdf,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "chart")]
+    Chart,
+    #[serde(rename = "table")]
+    Table,
+    #[serde(rename = "data")]
+    Data,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskArtifact {
+    pub id: String,
+    pub kind: AgentTaskArtifactKind,
+    pub filename: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    #[serde(rename = "byteCount")]
+    pub byte_count: i64,
+    pub sha256: String,
+    #[serde(rename = "downloadURL")]
+    pub download_u_r_l: String,
+    #[serde(rename = "expiresAt")]
+    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previews: Option<Vec<AgentTaskArtifactInfo>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskStepArtifactPurpose {
+    #[serde(rename = "build_brief")]
+    BuildBrief,
+    #[serde(rename = "site")]
+    Site,
+    #[serde(rename = "preview")]
+    Preview,
+    #[serde(rename = "act_project")]
+    ActProject,
+    #[serde(rename = "file")]
+    File,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskStepArtifact {
+    pub id: String,
+    pub filename: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub purpose: AgentTaskStepArtifactPurpose,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskStepStatus {
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "pending")]
+    Pending,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskStepVerification {
+    #[serde(rename = "verified")]
+    Verified,
+    #[serde(rename = "incomplete")]
+    Incomplete,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskStepRecovery {
+    pub used: i64,
+    pub method: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskStepBuilds {
+    #[serde(rename = "web")]
+    Web,
+    #[serde(rename = "desktop")]
+    Desktop,
+    #[serde(rename = "mobile")]
+    Mobile,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskStep {
+    pub id: String,
+    pub title: String,
+    pub status: AgentTaskStepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<Persona>,
+    #[serde(rename = "agentId", default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<AgentTaskStepVerification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<AgentTaskStepRecovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builds: Option<AgentTaskStepBuilds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<AgentTaskStepArtifact>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskRecoveryRung {
+    #[serde(rename = "alternative")]
+    Alternative,
+    #[serde(rename = "replan")]
+    Replan,
+    #[serde(rename = "reassign")]
+    Reassign,
+    #[serde(rename = "ask")]
+    Ask,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskSummaryState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "waiting_input")]
+    WaitingInput,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskSummaryStatus {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskSummaryWaitingReason {
+    #[serde(rename = "approval")]
+    Approval,
+    #[serde(rename = "answer")]
+    Answer,
+    #[serde(rename = "pc")]
+    Pc,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskSummaryWaiting {
+    pub reason: AgentTaskSummaryWaitingReason,
+    #[serde(rename = "confirmationId", default, skip_serializing_if = "Option::is_none")]
+    pub confirmation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskSummaryUsage {
+    #[serde(rename = "modelCalls")]
+    pub model_calls: i64,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: i64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: i64,
+    #[serde(rename = "cachedTokens")]
+    pub cached_tokens: i64,
+    pub budget: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskSummaryVerification {
+    pub checked: bool,
+    pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskSummaryRecovery {
+    pub budget: i64,
+    pub used: i64,
+    pub left: i64,
+    pub steps: std::collections::HashMap<String, Vec<AgentTaskRecoveryRung>>,
+    pub asked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskSummary {
+    pub id: i64,
+    #[serde(rename = "stateVersion")]
+    pub state_version: i64,
+    #[serde(rename = "contractVersion", default, skip_serializing_if = "Option::is_none")]
+    pub contract_version: Option<i64>,
+    pub state: AgentTaskSummaryState,
+    #[serde(rename = "canResume")]
+    pub can_resume: bool,
+    pub title: String,
+    pub persona: Persona,
+    pub status: AgentTaskSummaryStatus,
+    pub progress: Option<String>,
+    pub steps: Vec<AgentTaskStep>,
+    #[serde(rename = "estimatedSeconds")]
+    pub estimated_seconds: Option<i64>,
+    pub waiting: Option<AgentTaskSummaryWaiting>,
+    pub usage: AgentTaskSummaryUsage,
+    pub verification: Option<AgentTaskSummaryVerification>,
+    pub revisions: i64,
+    pub recovery: AgentTaskSummaryRecovery,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub artifacts: Vec<AgentTaskArtifact>,
+    #[serde(rename = "conversationId")]
+    pub conversation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskTimelineEvent {
+    pub id: i64,
+    #[serde(rename = "stepId")]
+    pub step_id: Option<String>,
+    pub event: String,
+    pub summary: String,
+    #[serde(rename = "errorCode")]
+    pub error_code: Option<String>,
+    pub verified: bool,
+    pub uncertain: bool,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: Option<i64>,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskDetailState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "waiting_input")]
+    WaitingInput,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskDetailStatus {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentTaskDetailWaitingReason {
+    #[serde(rename = "approval")]
+    Approval,
+    #[serde(rename = "answer")]
+    Answer,
+    #[serde(rename = "pc")]
+    Pc,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskDetailWaiting {
+    pub reason: AgentTaskDetailWaitingReason,
+    #[serde(rename = "confirmationId", default, skip_serializing_if = "Option::is_none")]
+    pub confirmation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskDetailUsage {
+    #[serde(rename = "modelCalls")]
+    pub model_calls: i64,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: i64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: i64,
+    #[serde(rename = "cachedTokens")]
+    pub cached_tokens: i64,
+    pub budget: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskDetailVerification {
+    pub checked: bool,
+    pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskDetailRecovery {
+    pub budget: i64,
+    pub used: i64,
+    pub left: i64,
+    pub steps: std::collections::HashMap<String, Vec<AgentTaskRecoveryRung>>,
+    pub asked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskDetail {
+    pub id: i64,
+    #[serde(rename = "stateVersion")]
+    pub state_version: i64,
+    #[serde(rename = "contractVersion", default, skip_serializing_if = "Option::is_none")]
+    pub contract_version: Option<i64>,
+    pub state: AgentTaskDetailState,
+    #[serde(rename = "canResume")]
+    pub can_resume: bool,
+    pub title: String,
+    pub persona: Persona,
+    pub status: AgentTaskDetailStatus,
+    pub progress: Option<String>,
+    pub steps: Vec<AgentTaskStep>,
+    #[serde(rename = "estimatedSeconds")]
+    pub estimated_seconds: Option<i64>,
+    pub waiting: Option<AgentTaskDetailWaiting>,
+    pub usage: AgentTaskDetailUsage,
+    pub verification: Option<AgentTaskDetailVerification>,
+    pub revisions: i64,
+    pub recovery: AgentTaskDetailRecovery,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub artifacts: Vec<AgentTaskArtifact>,
+    #[serde(rename = "conversationId")]
+    pub conversation_id: String,
+    pub events: Vec<AgentTaskTimelineEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskList {
+    pub tasks: Vec<AgentTaskSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskTimeline {
+    pub events: Vec<AgentTaskTimelineEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskRetryStep {
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskSkipStep {
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskRemoveStep {
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskEditStep {
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskReassignStep {
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(rename = "agentId")]
+    pub agent_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskAddStep {
+    pub title: String,
+    pub goal: String,
+    #[serde(rename = "dependsOn", default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(rename = "agentId", default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum AgentTaskStepControl {
+    #[serde(rename = "retry")]
+    Retry(AgentTaskRetryStep),
+    #[serde(rename = "skip")]
+    Skip(AgentTaskSkipStep),
+    #[serde(rename = "remove")]
+    Remove(AgentTaskRemoveStep),
+    #[serde(rename = "edit")]
+    Edit(AgentTaskEditStep),
+    #[serde(rename = "reassign")]
+    Reassign(AgentTaskReassignStep),
+    #[serde(rename = "add")]
+    Add(AgentTaskAddStep),
+    /// An event of a kind a newer server sends: ignored.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskStepControlRequest {
+    #[serde(rename = "expectedStateVersion")]
+    pub expected_state_version: i64,
+    pub control: AgentTaskStepControl,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoneEvent {
     pub reply: String,
@@ -286,6 +900,14 @@ pub struct DoneEvent {
     pub reply_is_progress: Option<bool>,
     #[serde(rename = "localRun", default, skip_serializing_if = "Option::is_none")]
     pub local_run: Option<String>,
+    #[serde(rename = "localAgent", default, skip_serializing_if = "Option::is_none")]
+    pub local_agent: Option<LocalAgentHandoff>,
+    #[serde(rename = "continueTask", default, skip_serializing_if = "Option::is_none")]
+    pub continue_task: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<AgentRunOutcome>,
+    #[serde(rename = "agentTask", default, skip_serializing_if = "Option::is_none")]
+    pub agent_task: Option<AgentTaskSummary>,
     #[serde(rename = "privateKept", default, skip_serializing_if = "Option::is_none")]
     pub private_kept: Option<i64>,
 }
@@ -430,32 +1052,6 @@ pub enum RunStepBuilds {
     Unrecognized,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RunStepArtifactsItemPurpose {
-    #[serde(rename = "build_brief")]
-    BuildBrief,
-    #[serde(rename = "site")]
-    Site,
-    #[serde(rename = "preview")]
-    Preview,
-    #[serde(rename = "act_project")]
-    ActProject,
-    #[serde(rename = "file")]
-    File,
-    /// A value a newer server sends that this build does not know.
-    #[serde(other)]
-    Unrecognized,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunStepArtifactsItem {
-    pub id: String,
-    pub filename: String,
-    #[serde(rename = "mimeType")]
-    pub mime_type: String,
-    pub purpose: RunStepArtifactsItemPurpose,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunStep {
     pub id: String,
@@ -474,7 +1070,7 @@ pub struct RunStep {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builds: Option<RunStepBuilds>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifacts: Option<Vec<RunStepArtifactsItem>>,
+    pub artifacts: Option<Vec<AgentTaskStepArtifact>>,
 }
 
 /// What is being asked of the person, for a run that waits for a yes or no.
@@ -602,11 +1198,13 @@ pub struct SyncedReply {
     #[serde(rename = "executionState", default, skip_serializing_if = "Option::is_none")]
     pub execution_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<AgentRunOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<AgentStep>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<i64>,
     #[serde(rename = "agentTask", default, skip_serializing_if = "Option::is_none")]
-    pub agent_task: Option<serde_json::Value>,
+    pub agent_task: Option<AgentTaskSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -618,12 +1216,11 @@ pub struct SyncedRequest {
     #[serde(rename = "taskId")]
     pub task_id: String,
     #[serde(rename = "deviceId")]
-    pub device_id: serde_json::Value,
+    pub device_id: Option<String>,
     pub goal: String,
     pub status: String,
     pub cancelled: bool,
     pub revision: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<SyncedReply>,
 }
 
@@ -646,6 +1243,1166 @@ pub enum RunSyncEvent {
     /// An event of a kind a newer server sends: ignored.
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PcJobKind {
+    #[serde(rename = "command")]
+    Command,
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "process")]
+    Process,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PcJobStatus {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "unknown")]
+    Unknown,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PcJobEventPhase {
+    #[serde(rename = "started")]
+    Started,
+    #[serde(rename = "finished")]
+    Finished,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcJobEvent {
+    pub phase: PcJobEventPhase,
+    #[serde(rename = "jobId")]
+    pub job_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PcJobKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<PcJobStatus>,
+    #[serde(rename = "exitCode", default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    #[serde(rename = "durationMs", default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcJobRecord {
+    #[serde(rename = "jobId")]
+    pub job_id: String,
+    pub label: String,
+    pub kind: PcJobKind,
+    pub status: PcJobStatus,
+    #[serde(rename = "exitCode")]
+    pub exit_code: Option<i64>,
+    pub summary: String,
+    #[serde(rename = "startedAt")]
+    pub started_at: String,
+    #[serde(rename = "finishedAt")]
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcUnitClaim {
+    #[serde(rename = "unitId")]
+    pub unit_id: i64,
+    #[serde(rename = "taskId")]
+    pub task_id: i64,
+    #[serde(rename = "stepId")]
+    pub step_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "conversationId")]
+    pub conversation_id: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcUnitDone {
+    #[serde(rename = "unitId")]
+    pub unit_id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverPostKind {
+    #[serde(rename = "problem")]
+    Problem,
+    #[serde(rename = "idea")]
+    Idea,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverVisibility {
+    #[serde(rename = "private")]
+    Private,
+    #[serde(rename = "link")]
+    Link,
+    #[serde(rename = "public")]
+    Public,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverVerdict {
+    #[serde(rename = "worked")]
+    Worked,
+    #[serde(rename = "partly")]
+    Partly,
+    #[serde(rename = "failed")]
+    Failed,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverReplyKind {
+    #[serde(rename = "comment")]
+    Comment,
+    #[serde(rename = "experience")]
+    Experience,
+    #[serde(rename = "alternative")]
+    Alternative,
+    #[serde(rename = "feedback")]
+    Feedback,
+    #[serde(rename = "suggestion")]
+    Suggestion,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverNoticeKind {
+    #[serde(rename = "like")]
+    Like,
+    #[serde(rename = "comment")]
+    Comment,
+    #[serde(rename = "reply")]
+    Reply,
+    #[serde(rename = "follow")]
+    Follow,
+    #[serde(rename = "copy")]
+    Copy,
+    #[serde(rename = "remix")]
+    Remix,
+    #[serde(rename = "published")]
+    Published,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    #[serde(rename = "need")]
+    Need,
+    #[serde(rename = "idea")]
+    Idea,
+    #[serde(rename = "solution")]
+    Solution,
+    #[serde(rename = "post_reply")]
+    PostReply,
+    #[serde(rename = "verdict")]
+    Verdict,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverNoticeGroup {
+    #[serde(rename = "activity")]
+    Activity,
+    #[serde(rename = "people")]
+    People,
+    #[serde(rename = "problems")]
+    Problems,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverProfileTab {
+    #[serde(rename = "missions")]
+    Missions,
+    #[serde(rename = "remixes")]
+    Remixes,
+    #[serde(rename = "liked")]
+    Liked,
+    #[serde(rename = "saved")]
+    Saved,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverFeedTab {
+    #[serde(rename = "new")]
+    New,
+    #[serde(rename = "popular")]
+    Popular,
+    #[serde(rename = "following")]
+    Following,
+    #[serde(rename = "saved")]
+    Saved,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverPostTab {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "new")]
+    New,
+    #[serde(rename = "solved")]
+    Solved,
+    #[serde(rename = "foryou")]
+    Foryou,
+    #[serde(rename = "following")]
+    Following,
+    #[serde(rename = "needed")]
+    Needed,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverFindingKind {
+    #[serde(rename = "secret")]
+    Secret,
+    #[serde(rename = "personal")]
+    Personal,
+    #[serde(rename = "path")]
+    Path,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverNoticeDeleteMode {
+    #[serde(rename = "read")]
+    Read,
+    #[serde(rename = "all")]
+    All,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverOption {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverAvatar {
+    pub kind: String,
+    pub emoji: Option<String>,
+    pub color: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverAuthor {
+    pub username: String,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub bio: String,
+    pub headline: String,
+    pub avatar: DiscoverAvatar,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverImage {
+    pub id: i64,
+    pub url: String,
+    pub width: i64,
+    pub height: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionCounts {
+    pub likes: i64,
+    pub comments: i64,
+    pub copies: i64,
+    pub remixes: i64,
+    pub succeeded: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionOrigin {
+    pub code: String,
+    pub name: String,
+    pub author: Option<String>,
+    #[serde(rename = "updatedSince")]
+    pub updated_since: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionSolves {
+    pub code: String,
+    pub title: String,
+    pub kind: DiscoverPostKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionVerdicts {
+    pub worked: i64,
+    pub partly: i64,
+    pub failed: i64,
+    pub mine: Option<DiscoverVerdict>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMission {
+    pub code: String,
+    pub name: String,
+    pub description: String,
+    pub prompt: String,
+    pub icon: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub inputs: Vec<String>,
+    pub needs: Vec<String>,
+    pub steps: Vec<String>,
+    pub preview: String,
+    pub images: Vec<DiscoverImage>,
+    pub visibility: DiscoverVisibility,
+    pub url: String,
+    #[serde(rename = "publishedAt")]
+    pub published_at: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<String>,
+    pub author: Option<DiscoverAuthor>,
+    pub origin: Option<DiscoverMissionOrigin>,
+    pub counts: DiscoverMissionCounts,
+    pub liked: bool,
+    pub saved: bool,
+    pub mine: bool,
+    pub solves: Option<DiscoverMissionSolves>,
+    pub verdicts: DiscoverMissionVerdicts,
+    #[serde(rename = "liveUrl", default, skip_serializing_if = "Option::is_none")]
+    pub live_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverFinding {
+    pub field: String,
+    pub kind: DiscoverFindingKind,
+    pub label: String,
+    pub sample: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostProblem {
+    pub code: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostCounts {
+    pub needs: i64,
+    pub validated: i64,
+    pub replies: i64,
+    pub experiences: i64,
+    pub alternatives: i64,
+    pub ideas: i64,
+    pub solutions: i64,
+    pub worked: i64,
+    #[serde(rename = "workedAffected")]
+    pub worked_affected: i64,
+    pub echoes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPost {
+    pub code: String,
+    pub kind: DiscoverPostKind,
+    pub title: String,
+    pub body: String,
+    pub audience: String,
+    pub workaround: String,
+    pub topic: String,
+    pub tags: Vec<String>,
+    pub url: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    pub author: Option<DiscoverAuthor>,
+    pub problem: Option<DiscoverPostProblem>,
+    pub counts: DiscoverPostCounts,
+    pub solved: bool,
+    pub needed: bool,
+    pub mine: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverSimilarPost {
+    pub code: String,
+    pub kind: DiscoverPostKind,
+    pub title: String,
+    pub body: String,
+    pub audience: String,
+    pub workaround: String,
+    pub topic: String,
+    pub tags: Vec<String>,
+    pub url: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    pub author: Option<DiscoverAuthor>,
+    pub problem: Option<DiscoverPostProblem>,
+    pub counts: DiscoverPostCounts,
+    pub solved: bool,
+    pub needed: bool,
+    pub mine: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostReply {
+    pub id: i64,
+    #[serde(rename = "parentId")]
+    pub parent_id: Option<i64>,
+    pub kind: DiscoverReplyKind,
+    pub body: String,
+    pub deleted: bool,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub author: Option<DiscoverAuthor>,
+    pub mine: bool,
+    #[serde(rename = "canDelete")]
+    pub can_delete: bool,
+    pub affected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostAlternative {
+    pub name: String,
+    pub url: String,
+    pub gap: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostInsight {
+    pub source: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub summary: String,
+    pub alternatives: Vec<DiscoverPostAlternative>,
+    pub audience: String,
+    pub benefit: String,
+    pub gaps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostBriefOption {
+    pub title: String,
+    pub approach: String,
+    pub effort: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostBriefData {
+    pub source: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub summary: String,
+    pub needs: Vec<String>,
+    pub options: Vec<DiscoverPostBriefOption>,
+    pub plan: Vec<String>,
+    pub acceptance: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverComment {
+    pub id: i64,
+    #[serde(rename = "parentId")]
+    pub parent_id: Option<i64>,
+    pub body: String,
+    pub deleted: bool,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "editedAt")]
+    pub edited_at: Option<String>,
+    pub author: Option<DiscoverAuthor>,
+    pub mine: bool,
+    #[serde(rename = "canDelete")]
+    pub can_delete: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverProfileCounts {
+    pub followers: i64,
+    pub following: i64,
+    pub missions: i64,
+    pub remixed: i64,
+    pub likes: i64,
+    pub uses: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverProfile {
+    pub username: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub bio: String,
+    pub headline: String,
+    pub place: String,
+    pub website: String,
+    pub cover: String,
+    #[serde(rename = "coverUrl")]
+    pub cover_url: Option<String>,
+    pub avatar: DiscoverAvatar,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mine: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub following: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<DiscoverProfileCounts>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPerson {
+    pub username: String,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub headline: String,
+    pub avatar: DiscoverAvatar,
+    pub following: bool,
+    pub mine: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCirclePerson {
+    pub username: String,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub headline: String,
+    pub avatar: DiscoverAvatar,
+    pub following: bool,
+    pub mine: bool,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNoticeActor {
+    pub username: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub avatar: Option<DiscoverAvatar>,
+    pub following: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNoticeMission {
+    pub code: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNotice {
+    pub id: i64,
+    pub ids: Vec<i64>,
+    pub kind: DiscoverNoticeKind,
+    pub group: DiscoverNoticeGroup,
+    pub text: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub read: bool,
+    pub actor: DiscoverNoticeActor,
+    pub others: i64,
+    pub mission: Option<DiscoverNoticeMission>,
+    pub post: Option<DiscoverMissionSolves>,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverDraftData {
+    pub name: String,
+    pub description: String,
+    pub prompt: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub inputs: Vec<String>,
+    pub needs: Vec<String>,
+    pub steps: Vec<String>,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverFeed {
+    pub missions: Vec<DiscoverMission>,
+    pub next: Option<String>,
+    pub categories: Vec<DiscoverOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMe {
+    pub profile: DiscoverProfile,
+    pub missions: Vec<DiscoverMission>,
+    pub categories: Vec<DiscoverOption>,
+    pub needs: Vec<DiscoverOption>,
+    pub covers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionDetail {
+    pub mission: DiscoverMission,
+    pub needs: Vec<DiscoverOption>,
+    pub categories: Vec<DiscoverOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionMutation {
+    pub mission: DiscoverMission,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionList {
+    pub missions: Vec<DiscoverMission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverProfilePage {
+    pub profile: DiscoverProfile,
+    pub tab: DiscoverProfileTab,
+    pub missions: Vec<DiscoverMission>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverProfileUpdate {
+    pub profile: DiscoverProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPeople {
+    pub people: Vec<DiscoverPerson>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCircle {
+    #[serde(rename = "builtOn")]
+    pub built_on: Vec<DiscoverCirclePerson>,
+    #[serde(rename = "builtOnThem")]
+    pub built_on_them: Vec<DiscoverCirclePerson>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNotifications {
+    pub notices: Vec<DiscoverNotice>,
+    pub unread: i64,
+    pub next: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverComments {
+    pub comments: Vec<DiscoverComment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostFeed {
+    pub posts: Vec<DiscoverPost>,
+    pub next: Option<String>,
+    pub topics: Vec<DiscoverOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostDetail {
+    pub post: DiscoverPost,
+    pub problem: Option<DiscoverPost>,
+    pub ideas: Vec<DiscoverPost>,
+    pub solutions: Vec<DiscoverMission>,
+    pub similar: Vec<DiscoverPost>,
+    pub insight: Option<DiscoverPostInsight>,
+    pub topics: Vec<DiscoverOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostMutation {
+    pub post: DiscoverPost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostReplies {
+    pub replies: Vec<DiscoverPostReply>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverDraft {
+    pub draft: DiscoverDraftData,
+    pub findings: Vec<DiscoverFinding>,
+    pub categories: Vec<DiscoverOption>,
+    pub needs: Vec<DiscoverOption>,
+    #[serde(rename = "workToken")]
+    pub work_token: Option<String>,
+    pub solves: Option<DiscoverPost>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostSimilar {
+    pub similar: Vec<DiscoverSimilarPost>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostResearch {
+    pub insight: DiscoverPostInsight,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostBrief {
+    pub brief: DiscoverPostBriefData,
+    pub insight: Option<DiscoverPostInsight>,
+    pub post: Option<DiscoverPost>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverOk {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCreated {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverLike {
+    pub likes: i64,
+    pub liked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverSaved {
+    pub saved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverVerdictResponse {
+    pub verdicts: DiscoverMissionVerdicts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverImages {
+    pub images: Vec<DiscoverImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverRecipe {
+    pub id: i64,
+    pub name: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCopy {
+    pub recipe: DiscoverRecipe,
+    pub mission: DiscoverMission,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverWorkToken {
+    #[serde(rename = "workToken")]
+    pub work_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverDeleted {
+    pub deleted: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNeed {
+    pub needs: i64,
+    pub needed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverErrorData {
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings: Option<Vec<DiscoverFinding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similar: Option<Vec<DiscoverSimilarPost>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverError {
+    pub error: DiscoverErrorData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCoverPick {
+    pub id: String,
+    pub author: String,
+    pub thumb: String,
+    pub image: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCoverLibrary {
+    pub page: i64,
+    pub picks: Vec<DiscoverCoverPick>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverAccountProfile {
+    pub email: String,
+    #[serde(rename = "authProvider")]
+    pub auth_provider: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    #[serde(rename = "preferredAddress")]
+    pub preferred_address: Option<String>,
+    #[serde(rename = "avatarKind")]
+    pub avatar_kind: String,
+    #[serde(rename = "avatarEmoji")]
+    pub avatar_emoji: Option<String>,
+    #[serde(rename = "avatarColor")]
+    pub avatar_color: Option<String>,
+    #[serde(rename = "avatarImage")]
+    pub avatar_image: Option<String>,
+    #[serde(rename = "avatarUrl")]
+    pub avatar_url: Option<String>,
+    pub tone: Option<String>,
+    pub language: Option<String>,
+    pub location: Option<String>,
+    #[serde(rename = "proactiveEnabled")]
+    pub proactive_enabled: bool,
+    pub username: Option<String>,
+    pub headline: String,
+    pub bio: String,
+    pub website: String,
+    pub cover: String,
+    #[serde(rename = "coverUrl")]
+    pub cover_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverMissionWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<DiscoverVisibility>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(rename = "workToken", default, skip_serializing_if = "Option::is_none")]
+    pub work_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solves: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverProfileWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverProfileColor {
+    #[serde(rename = "indigo")]
+    Indigo,
+    #[serde(rename = "blue")]
+    Blue,
+    #[serde(rename = "teal")]
+    Teal,
+    #[serde(rename = "green")]
+    Green,
+    #[serde(rename = "orange")]
+    Orange,
+    #[serde(rename = "pink")]
+    Pink,
+    #[serde(rename = "purple")]
+    Purple,
+    #[serde(rename = "graphite")]
+    Graphite,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverAvatarKind {
+    #[serde(rename = "initial")]
+    Initial,
+    #[serde(rename = "emoji")]
+    Emoji,
+    #[serde(rename = "photo")]
+    Photo,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverProfileTone {
+    #[serde(rename = "samimi")]
+    Samimi,
+    #[serde(rename = "profesyonel")]
+    Profesyonel,
+    #[serde(rename = "kisa")]
+    Kisa,
+    #[serde(rename = "detayli")]
+    Detayli,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoverProfileLanguage {
+    #[serde(rename = "tr")]
+    Tr,
+    #[serde(rename = "en")]
+    En,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverAccountProfileWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(rename = "displayName", default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(rename = "preferredAddress", default, skip_serializing_if = "Option::is_none")]
+    pub preferred_address: Option<String>,
+    #[serde(rename = "avatarKind", default, skip_serializing_if = "Option::is_none")]
+    pub avatar_kind: Option<DiscoverAvatarKind>,
+    #[serde(rename = "avatarEmoji", default, skip_serializing_if = "Option::is_none")]
+    pub avatar_emoji: Option<String>,
+    #[serde(rename = "avatarColor", default, skip_serializing_if = "Option::is_none")]
+    pub avatar_color: Option<DiscoverProfileColor>,
+    #[serde(rename = "avatarImage", default, skip_serializing_if = "Option::is_none")]
+    pub avatar_image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<DiscoverProfileTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<DiscoverProfileLanguage>,
+    #[serde(rename = "coverImage", default, skip_serializing_if = "Option::is_none")]
+    pub cover_image: Option<String>,
+    #[serde(rename = "proactiveEnabled", default, skip_serializing_if = "Option::is_none")]
+    pub proactive_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workaround: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostMatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<DiscoverPostKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverDraftWrite {
+    pub request: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverWorkTokenWrite {
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNoticesWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ids: Option<Vec<i64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub which: Option<DiscoverNoticeDeleteMode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCommentWrite {
+    pub body: String,
+    #[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverReplyWrite {
+    pub body: String,
+    #[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<DiscoverReplyKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverReportWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverVerdictWrite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<DiscoverVerdict>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverImageWrite {
+    #[serde(rename = "dataBase64")]
+    pub data_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverLiveWrite {
+    pub html: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origins: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverFeedQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<DiscoverFeedTab>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPostFeedQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<DiscoverPostTab>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<DiscoverPostKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverProfileQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<DiscoverProfileTab>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverNoticesQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<DiscoverNoticeGroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverPeopleQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverCoverQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 /// Decodes `text` as the named type of the schema (the contract check decodes every example with it); Ok(false) for a name it does not know.
@@ -675,6 +2432,53 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "ErrorEvent" => serde_json::from_str::<ErrorEvent>(text).map(|_| true),
         "LocationRequiredEvent" => serde_json::from_str::<LocationRequiredEvent>(text).map(|_| true),
         "PcApprovalSettledEvent" => serde_json::from_str::<PcApprovalSettledEvent>(text).map(|_| true),
+        "AgentRunOutcomeState" => serde_json::from_str::<AgentRunOutcomeState>(text).map(|_| true),
+        "AgentRunOutcome" => serde_json::from_str::<AgentRunOutcome>(text).map(|_| true),
+        "AgentRunSentFile" => serde_json::from_str::<AgentRunSentFile>(text).map(|_| true),
+        "AgentRunFinishRequest" => serde_json::from_str::<AgentRunFinishRequest>(text).map(|_| true),
+        "AgentRunProgressEvent" => serde_json::from_str::<AgentRunProgressEvent>(text).map(|_| true),
+        "AgentRunProgressRequest" => serde_json::from_str::<AgentRunProgressRequest>(text).map(|_| true),
+        "LocalAgentHandoff" => serde_json::from_str::<LocalAgentHandoff>(text).map(|_| true),
+        "LocalRunResumeRequest" => serde_json::from_str::<LocalRunResumeRequest>(text).map(|_| true),
+        "AgentTaskArtifactInfoKind" => serde_json::from_str::<AgentTaskArtifactInfoKind>(text).map(|_| true),
+        "AgentTaskArtifactInfo" => serde_json::from_str::<AgentTaskArtifactInfo>(text).map(|_| true),
+        "AgentTaskArtifactKind" => serde_json::from_str::<AgentTaskArtifactKind>(text).map(|_| true),
+        "AgentTaskArtifact" => serde_json::from_str::<AgentTaskArtifact>(text).map(|_| true),
+        "AgentTaskStepArtifactPurpose" => serde_json::from_str::<AgentTaskStepArtifactPurpose>(text).map(|_| true),
+        "AgentTaskStepArtifact" => serde_json::from_str::<AgentTaskStepArtifact>(text).map(|_| true),
+        "AgentTaskStepStatus" => serde_json::from_str::<AgentTaskStepStatus>(text).map(|_| true),
+        "AgentTaskStepVerification" => serde_json::from_str::<AgentTaskStepVerification>(text).map(|_| true),
+        "AgentTaskStepRecovery" => serde_json::from_str::<AgentTaskStepRecovery>(text).map(|_| true),
+        "AgentTaskStepBuilds" => serde_json::from_str::<AgentTaskStepBuilds>(text).map(|_| true),
+        "AgentTaskStep" => serde_json::from_str::<AgentTaskStep>(text).map(|_| true),
+        "AgentTaskRecoveryRung" => serde_json::from_str::<AgentTaskRecoveryRung>(text).map(|_| true),
+        "AgentTaskSummaryState" => serde_json::from_str::<AgentTaskSummaryState>(text).map(|_| true),
+        "AgentTaskSummaryStatus" => serde_json::from_str::<AgentTaskSummaryStatus>(text).map(|_| true),
+        "AgentTaskSummaryWaitingReason" => serde_json::from_str::<AgentTaskSummaryWaitingReason>(text).map(|_| true),
+        "AgentTaskSummaryWaiting" => serde_json::from_str::<AgentTaskSummaryWaiting>(text).map(|_| true),
+        "AgentTaskSummaryUsage" => serde_json::from_str::<AgentTaskSummaryUsage>(text).map(|_| true),
+        "AgentTaskSummaryVerification" => serde_json::from_str::<AgentTaskSummaryVerification>(text).map(|_| true),
+        "AgentTaskSummaryRecovery" => serde_json::from_str::<AgentTaskSummaryRecovery>(text).map(|_| true),
+        "AgentTaskSummary" => serde_json::from_str::<AgentTaskSummary>(text).map(|_| true),
+        "AgentTaskTimelineEvent" => serde_json::from_str::<AgentTaskTimelineEvent>(text).map(|_| true),
+        "AgentTaskDetailState" => serde_json::from_str::<AgentTaskDetailState>(text).map(|_| true),
+        "AgentTaskDetailStatus" => serde_json::from_str::<AgentTaskDetailStatus>(text).map(|_| true),
+        "AgentTaskDetailWaitingReason" => serde_json::from_str::<AgentTaskDetailWaitingReason>(text).map(|_| true),
+        "AgentTaskDetailWaiting" => serde_json::from_str::<AgentTaskDetailWaiting>(text).map(|_| true),
+        "AgentTaskDetailUsage" => serde_json::from_str::<AgentTaskDetailUsage>(text).map(|_| true),
+        "AgentTaskDetailVerification" => serde_json::from_str::<AgentTaskDetailVerification>(text).map(|_| true),
+        "AgentTaskDetailRecovery" => serde_json::from_str::<AgentTaskDetailRecovery>(text).map(|_| true),
+        "AgentTaskDetail" => serde_json::from_str::<AgentTaskDetail>(text).map(|_| true),
+        "AgentTaskList" => serde_json::from_str::<AgentTaskList>(text).map(|_| true),
+        "AgentTaskTimeline" => serde_json::from_str::<AgentTaskTimeline>(text).map(|_| true),
+        "AgentTaskRetryStep" => serde_json::from_str::<AgentTaskRetryStep>(text).map(|_| true),
+        "AgentTaskSkipStep" => serde_json::from_str::<AgentTaskSkipStep>(text).map(|_| true),
+        "AgentTaskRemoveStep" => serde_json::from_str::<AgentTaskRemoveStep>(text).map(|_| true),
+        "AgentTaskEditStep" => serde_json::from_str::<AgentTaskEditStep>(text).map(|_| true),
+        "AgentTaskReassignStep" => serde_json::from_str::<AgentTaskReassignStep>(text).map(|_| true),
+        "AgentTaskAddStep" => serde_json::from_str::<AgentTaskAddStep>(text).map(|_| true),
+        "AgentTaskStepControl" => serde_json::from_str::<AgentTaskStepControl>(text).map(|_| true),
+        "AgentTaskStepControlRequest" => serde_json::from_str::<AgentTaskStepControlRequest>(text).map(|_| true),
         "DoneEvent" => serde_json::from_str::<DoneEvent>(text).map(|_| true),
         "StreamEvent" => serde_json::from_str::<StreamEvent>(text).map(|_| true),
         "RunKind" => serde_json::from_str::<RunKind>(text).map(|_| true),
@@ -683,8 +2487,6 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "RunStepState" => serde_json::from_str::<RunStepState>(text).map(|_| true),
         "RunStepTarget" => serde_json::from_str::<RunStepTarget>(text).map(|_| true),
         "RunStepBuilds" => serde_json::from_str::<RunStepBuilds>(text).map(|_| true),
-        "RunStepArtifactsItemPurpose" => serde_json::from_str::<RunStepArtifactsItemPurpose>(text).map(|_| true),
-        "RunStepArtifactsItem" => serde_json::from_str::<RunStepArtifactsItem>(text).map(|_| true),
         "RunStep" => serde_json::from_str::<RunStep>(text).map(|_| true),
         "RunApproval" => serde_json::from_str::<RunApproval>(text).map(|_| true),
         "RunProgress" => serde_json::from_str::<RunProgress>(text).map(|_| true),
@@ -698,6 +2500,111 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "SyncedRequest" => serde_json::from_str::<SyncedRequest>(text).map(|_| true),
         "RunSyncSnapshot" => serde_json::from_str::<RunSyncSnapshot>(text).map(|_| true),
         "RunSyncEvent" => serde_json::from_str::<RunSyncEvent>(text).map(|_| true),
+        "PcJobKind" => serde_json::from_str::<PcJobKind>(text).map(|_| true),
+        "PcJobStatus" => serde_json::from_str::<PcJobStatus>(text).map(|_| true),
+        "PcJobEventPhase" => serde_json::from_str::<PcJobEventPhase>(text).map(|_| true),
+        "PcJobEvent" => serde_json::from_str::<PcJobEvent>(text).map(|_| true),
+        "PcJobRecord" => serde_json::from_str::<PcJobRecord>(text).map(|_| true),
+        "PcUnitClaim" => serde_json::from_str::<PcUnitClaim>(text).map(|_| true),
+        "PcUnitDone" => serde_json::from_str::<PcUnitDone>(text).map(|_| true),
+        "DiscoverPostKind" => serde_json::from_str::<DiscoverPostKind>(text).map(|_| true),
+        "DiscoverVisibility" => serde_json::from_str::<DiscoverVisibility>(text).map(|_| true),
+        "DiscoverVerdict" => serde_json::from_str::<DiscoverVerdict>(text).map(|_| true),
+        "DiscoverReplyKind" => serde_json::from_str::<DiscoverReplyKind>(text).map(|_| true),
+        "DiscoverNoticeKind" => serde_json::from_str::<DiscoverNoticeKind>(text).map(|_| true),
+        "DiscoverNoticeGroup" => serde_json::from_str::<DiscoverNoticeGroup>(text).map(|_| true),
+        "DiscoverProfileTab" => serde_json::from_str::<DiscoverProfileTab>(text).map(|_| true),
+        "DiscoverFeedTab" => serde_json::from_str::<DiscoverFeedTab>(text).map(|_| true),
+        "DiscoverPostTab" => serde_json::from_str::<DiscoverPostTab>(text).map(|_| true),
+        "DiscoverFindingKind" => serde_json::from_str::<DiscoverFindingKind>(text).map(|_| true),
+        "DiscoverNoticeDeleteMode" => serde_json::from_str::<DiscoverNoticeDeleteMode>(text).map(|_| true),
+        "DiscoverOption" => serde_json::from_str::<DiscoverOption>(text).map(|_| true),
+        "DiscoverAvatar" => serde_json::from_str::<DiscoverAvatar>(text).map(|_| true),
+        "DiscoverAuthor" => serde_json::from_str::<DiscoverAuthor>(text).map(|_| true),
+        "DiscoverImage" => serde_json::from_str::<DiscoverImage>(text).map(|_| true),
+        "DiscoverMissionCounts" => serde_json::from_str::<DiscoverMissionCounts>(text).map(|_| true),
+        "DiscoverMissionOrigin" => serde_json::from_str::<DiscoverMissionOrigin>(text).map(|_| true),
+        "DiscoverMissionSolves" => serde_json::from_str::<DiscoverMissionSolves>(text).map(|_| true),
+        "DiscoverMissionVerdicts" => serde_json::from_str::<DiscoverMissionVerdicts>(text).map(|_| true),
+        "DiscoverMission" => serde_json::from_str::<DiscoverMission>(text).map(|_| true),
+        "DiscoverFinding" => serde_json::from_str::<DiscoverFinding>(text).map(|_| true),
+        "DiscoverPostProblem" => serde_json::from_str::<DiscoverPostProblem>(text).map(|_| true),
+        "DiscoverPostCounts" => serde_json::from_str::<DiscoverPostCounts>(text).map(|_| true),
+        "DiscoverPost" => serde_json::from_str::<DiscoverPost>(text).map(|_| true),
+        "DiscoverSimilarPost" => serde_json::from_str::<DiscoverSimilarPost>(text).map(|_| true),
+        "DiscoverPostReply" => serde_json::from_str::<DiscoverPostReply>(text).map(|_| true),
+        "DiscoverPostAlternative" => serde_json::from_str::<DiscoverPostAlternative>(text).map(|_| true),
+        "DiscoverPostInsight" => serde_json::from_str::<DiscoverPostInsight>(text).map(|_| true),
+        "DiscoverPostBriefOption" => serde_json::from_str::<DiscoverPostBriefOption>(text).map(|_| true),
+        "DiscoverPostBriefData" => serde_json::from_str::<DiscoverPostBriefData>(text).map(|_| true),
+        "DiscoverComment" => serde_json::from_str::<DiscoverComment>(text).map(|_| true),
+        "DiscoverProfileCounts" => serde_json::from_str::<DiscoverProfileCounts>(text).map(|_| true),
+        "DiscoverProfile" => serde_json::from_str::<DiscoverProfile>(text).map(|_| true),
+        "DiscoverPerson" => serde_json::from_str::<DiscoverPerson>(text).map(|_| true),
+        "DiscoverCirclePerson" => serde_json::from_str::<DiscoverCirclePerson>(text).map(|_| true),
+        "DiscoverNoticeActor" => serde_json::from_str::<DiscoverNoticeActor>(text).map(|_| true),
+        "DiscoverNoticeMission" => serde_json::from_str::<DiscoverNoticeMission>(text).map(|_| true),
+        "DiscoverNotice" => serde_json::from_str::<DiscoverNotice>(text).map(|_| true),
+        "DiscoverDraftData" => serde_json::from_str::<DiscoverDraftData>(text).map(|_| true),
+        "DiscoverFeed" => serde_json::from_str::<DiscoverFeed>(text).map(|_| true),
+        "DiscoverMe" => serde_json::from_str::<DiscoverMe>(text).map(|_| true),
+        "DiscoverMissionDetail" => serde_json::from_str::<DiscoverMissionDetail>(text).map(|_| true),
+        "DiscoverMissionMutation" => serde_json::from_str::<DiscoverMissionMutation>(text).map(|_| true),
+        "DiscoverMissionList" => serde_json::from_str::<DiscoverMissionList>(text).map(|_| true),
+        "DiscoverProfilePage" => serde_json::from_str::<DiscoverProfilePage>(text).map(|_| true),
+        "DiscoverProfileUpdate" => serde_json::from_str::<DiscoverProfileUpdate>(text).map(|_| true),
+        "DiscoverPeople" => serde_json::from_str::<DiscoverPeople>(text).map(|_| true),
+        "DiscoverCircle" => serde_json::from_str::<DiscoverCircle>(text).map(|_| true),
+        "DiscoverNotifications" => serde_json::from_str::<DiscoverNotifications>(text).map(|_| true),
+        "DiscoverComments" => serde_json::from_str::<DiscoverComments>(text).map(|_| true),
+        "DiscoverPostFeed" => serde_json::from_str::<DiscoverPostFeed>(text).map(|_| true),
+        "DiscoverPostDetail" => serde_json::from_str::<DiscoverPostDetail>(text).map(|_| true),
+        "DiscoverPostMutation" => serde_json::from_str::<DiscoverPostMutation>(text).map(|_| true),
+        "DiscoverPostReplies" => serde_json::from_str::<DiscoverPostReplies>(text).map(|_| true),
+        "DiscoverDraft" => serde_json::from_str::<DiscoverDraft>(text).map(|_| true),
+        "DiscoverPostSimilar" => serde_json::from_str::<DiscoverPostSimilar>(text).map(|_| true),
+        "DiscoverPostResearch" => serde_json::from_str::<DiscoverPostResearch>(text).map(|_| true),
+        "DiscoverPostBrief" => serde_json::from_str::<DiscoverPostBrief>(text).map(|_| true),
+        "DiscoverOk" => serde_json::from_str::<DiscoverOk>(text).map(|_| true),
+        "DiscoverCreated" => serde_json::from_str::<DiscoverCreated>(text).map(|_| true),
+        "DiscoverLike" => serde_json::from_str::<DiscoverLike>(text).map(|_| true),
+        "DiscoverSaved" => serde_json::from_str::<DiscoverSaved>(text).map(|_| true),
+        "DiscoverVerdictResponse" => serde_json::from_str::<DiscoverVerdictResponse>(text).map(|_| true),
+        "DiscoverImages" => serde_json::from_str::<DiscoverImages>(text).map(|_| true),
+        "DiscoverRecipe" => serde_json::from_str::<DiscoverRecipe>(text).map(|_| true),
+        "DiscoverCopy" => serde_json::from_str::<DiscoverCopy>(text).map(|_| true),
+        "DiscoverWorkToken" => serde_json::from_str::<DiscoverWorkToken>(text).map(|_| true),
+        "DiscoverDeleted" => serde_json::from_str::<DiscoverDeleted>(text).map(|_| true),
+        "DiscoverNeed" => serde_json::from_str::<DiscoverNeed>(text).map(|_| true),
+        "DiscoverErrorData" => serde_json::from_str::<DiscoverErrorData>(text).map(|_| true),
+        "DiscoverError" => serde_json::from_str::<DiscoverError>(text).map(|_| true),
+        "DiscoverCoverPick" => serde_json::from_str::<DiscoverCoverPick>(text).map(|_| true),
+        "DiscoverCoverLibrary" => serde_json::from_str::<DiscoverCoverLibrary>(text).map(|_| true),
+        "DiscoverAccountProfile" => serde_json::from_str::<DiscoverAccountProfile>(text).map(|_| true),
+        "DiscoverMissionWrite" => serde_json::from_str::<DiscoverMissionWrite>(text).map(|_| true),
+        "DiscoverProfileWrite" => serde_json::from_str::<DiscoverProfileWrite>(text).map(|_| true),
+        "DiscoverProfileColor" => serde_json::from_str::<DiscoverProfileColor>(text).map(|_| true),
+        "DiscoverAvatarKind" => serde_json::from_str::<DiscoverAvatarKind>(text).map(|_| true),
+        "DiscoverProfileTone" => serde_json::from_str::<DiscoverProfileTone>(text).map(|_| true),
+        "DiscoverProfileLanguage" => serde_json::from_str::<DiscoverProfileLanguage>(text).map(|_| true),
+        "DiscoverAccountProfileWrite" => serde_json::from_str::<DiscoverAccountProfileWrite>(text).map(|_| true),
+        "DiscoverPostWrite" => serde_json::from_str::<DiscoverPostWrite>(text).map(|_| true),
+        "DiscoverPostMatch" => serde_json::from_str::<DiscoverPostMatch>(text).map(|_| true),
+        "DiscoverDraftWrite" => serde_json::from_str::<DiscoverDraftWrite>(text).map(|_| true),
+        "DiscoverWorkTokenWrite" => serde_json::from_str::<DiscoverWorkTokenWrite>(text).map(|_| true),
+        "DiscoverNoticesWrite" => serde_json::from_str::<DiscoverNoticesWrite>(text).map(|_| true),
+        "DiscoverCommentWrite" => serde_json::from_str::<DiscoverCommentWrite>(text).map(|_| true),
+        "DiscoverReplyWrite" => serde_json::from_str::<DiscoverReplyWrite>(text).map(|_| true),
+        "DiscoverReportWrite" => serde_json::from_str::<DiscoverReportWrite>(text).map(|_| true),
+        "DiscoverVerdictWrite" => serde_json::from_str::<DiscoverVerdictWrite>(text).map(|_| true),
+        "DiscoverImageWrite" => serde_json::from_str::<DiscoverImageWrite>(text).map(|_| true),
+        "DiscoverLiveWrite" => serde_json::from_str::<DiscoverLiveWrite>(text).map(|_| true),
+        "DiscoverFeedQuery" => serde_json::from_str::<DiscoverFeedQuery>(text).map(|_| true),
+        "DiscoverPostFeedQuery" => serde_json::from_str::<DiscoverPostFeedQuery>(text).map(|_| true),
+        "DiscoverProfileQuery" => serde_json::from_str::<DiscoverProfileQuery>(text).map(|_| true),
+        "DiscoverNoticesQuery" => serde_json::from_str::<DiscoverNoticesQuery>(text).map(|_| true),
+        "DiscoverPeopleQuery" => serde_json::from_str::<DiscoverPeopleQuery>(text).map(|_| true),
+        "DiscoverCoverQuery" => serde_json::from_str::<DiscoverCoverQuery>(text).map(|_| true),
         _ => Ok(false),
     }
 }

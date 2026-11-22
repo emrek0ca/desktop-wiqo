@@ -1,0 +1,8 @@
+{
+  "unitId": 7,
+  "taskId": 42,
+  "stepId": "s1",
+  "requestId": "6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10",
+  "conversationId": "agent-pc-42",
+  "prompt": "Projeyi doğrula."
+}

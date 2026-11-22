@@ -9,14 +9,12 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use wiqo_contract::schema_generated::{PcJobEvent, PcJobEventPhase, PcJobKind, PcJobStatus};
 use wiqo_core::engine::JobEvents;
 
 /// A job that runs longer than this is cut (6 hours), grant or no grant: it was started on purpose, but never open-ended.
 pub const LONG_JOB_MAX_SECONDS: u64 = 6 * 60 * 60;
 const KEPT: usize = 100;
-const OUTPUT_TAIL: usize = 2000;
-pub const RESTART_NOTE: &str = "PC yeniden başladı; bu işin sonucu bilinmiyor.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,17 +66,18 @@ impl JobStore {
 
     pub fn started(&self, record: Record) {
         let mut records = self.records.lock().expect("jobs lock");
-        records.retain(|existing| existing.job_id != record.job_id);
+        if records.iter().any(|existing| existing.job_id == record.job_id) {
+            return;
+        }
         records.push(record.clone());
-        let excess = records.len().saturating_sub(KEPT);
-        records.drain(..excess);
+        prune(&mut records);
         self.save(&records);
         if record.notify {
-            self.events.emit(event(&record, "started", "", &[]));
+            self.emit(&record, PcJobEventPhase::Started);
         }
     }
 
-    pub fn finished(&self, job_id: &str, status: &str, exit_code: Option<i64>, output: &str, paths: &[String]) {
+    pub fn finished(&self, job_id: &str, status: &str, exit_code: Option<i64>) {
         let mut records = self.records.lock().expect("jobs lock");
         let Some(record) = records.iter_mut().find(|record| record.job_id == job_id) else {
             return;
@@ -90,9 +89,10 @@ impl JobStore {
         record.exit_code = exit_code;
         record.finished_at_ms = Some(Utc::now().timestamp_millis());
         let snapshot = record.clone();
+        prune(&mut records);
         self.save(&records);
         if snapshot.notify {
-            self.events.emit(event(&snapshot, "finished", output, paths));
+            self.emit(&snapshot, PcJobEventPhase::Finished);
         }
     }
 
@@ -105,10 +105,11 @@ impl JobStore {
             record.finished_at_ms = Some(Utc::now().timestamp_millis());
             changed = true;
             if record.notify {
-                self.events.emit(event(record, "finished", RESTART_NOTE, &[]));
+                self.emit(record, PcJobEventPhase::Finished);
             }
         }
         if changed {
+            prune(&mut records);
             self.save(&records);
         }
     }
@@ -117,35 +118,42 @@ impl JobStore {
     pub fn list(&self) -> Vec<Record> {
         self.records.lock().expect("jobs lock").clone()
     }
-}
 
-fn event(record: &Record, phase: &str, output: &str, paths: &[String]) -> Value {
-    let duration = record
-        .finished_at_ms
-        .map(|end| end - record.started_at_ms)
-        .unwrap_or(0)
-        .max(0);
-    json!({
-        "phase": phase,
-        "jobId": record.job_id,
-        "label": record.label,
-        "kind": record.kind,
-        "status": if phase == "started" { "running" } else { record.status.as_str() },
-        "exitCode": record.exit_code,
-        "durationMs": duration,
-        "outputTail": tail(output, OUTPUT_TAIL),
-        "paths": paths,
-        "conversationId": record.conversation_id,
-    })
-}
-
-/// The last `max` characters of `text`.
-pub fn tail(text: &str, max: usize) -> String {
-    let count = text.chars().count();
-    if count <= max {
-        return text.to_string();
+    fn emit(&self, record: &Record, phase: PcJobEventPhase) {
+        let kind = match record.kind.as_str() {
+            "file" => PcJobKind::File,
+            "process" => PcJobKind::Process,
+            _ => PcJobKind::Command,
+        };
+        let status = match record.status.as_str() {
+            "running" => PcJobStatus::Running,
+            "ok" => PcJobStatus::Ok,
+            "failed" => PcJobStatus::Failed,
+            "cancelled" => PcJobStatus::Cancelled,
+            _ => PcJobStatus::Unknown,
+        };
+        let duration_ms = record.finished_at_ms.unwrap_or(record.started_at_ms)
+            .saturating_sub(record.started_at_ms).max(0);
+        let event = PcJobEvent {
+            phase, job_id: record.job_id.clone(), kind: Some(kind), status: Some(status),
+            exit_code: record.exit_code, duration_ms: Some(duration_ms),
+        };
+        if let Ok(value) = serde_json::to_value(event) {
+            self.events.emit(value);
+        }
     }
-    text.chars().skip(count - max).collect()
+}
+
+fn prune(records: &mut Vec<Record>) {
+    let mut excess = records.len().saturating_sub(KEPT);
+    records.retain(|record| {
+        if excess > 0 && record.status != "running" {
+            excess -= 1;
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// What a watch waits for.
@@ -329,12 +337,15 @@ mod tests {
             job_id: "j1".into(), label: "Render".into(), kind: "command".into(), status: "running".into(), exit_code: None,
             started_at_ms: 0, finished_at_ms: None, notify: true, long: true, conversation_id: None,
         });
-        assert_eq!(reader.try_recv().unwrap()["phase"], "started");
+        let started = reader.try_recv().unwrap();
+        assert_eq!(started["phase"], "started");
+        assert!(started.get("label").is_none());
         let again = JobStore::open(&dir, events);
         again.recover();
         let told = reader.try_recv().unwrap();
         assert_eq!(told["status"], "unknown");
         assert_eq!(told["phase"], "finished");
         assert_eq!(again.list()[0].status, "unknown");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

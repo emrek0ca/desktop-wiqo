@@ -490,6 +490,1240 @@
       ],
       "additionalProperties": false
     },
+    "AgentRunOutcomeState": {
+      "type": "string",
+      "enum": [
+        "done",
+        "failed",
+        "cancelled",
+        "paused",
+        "unknown"
+      ]
+    },
+    "AgentRunOutcome": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/AgentRunOutcomeState"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "verified"
+      ],
+      "additionalProperties": false,
+      "description": "The outcome of a desktop run, with verification recorded independently from delivery."
+    },
+    "AgentRunSentFile": {
+      "type": "object",
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "artifactId": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "stepId",
+        "artifactId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunFinishRequest": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "reply": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "sent": {
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentRunSentFile"
+          }
+        },
+        "outcome": {
+          "$ref": "#/$defs/AgentRunOutcome"
+        }
+      },
+      "required": [
+        "runId",
+        "reply"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunProgressEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/StepUpdateEvent"
+        },
+        {
+          "$ref": "#/$defs/ActivityEvent"
+        },
+        {
+          "$ref": "#/$defs/StatusEvent"
+        },
+        {
+          "$ref": "#/$defs/DeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/ResetEvent"
+        }
+      ]
+    },
+    "AgentRunProgressRequest": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "events": {
+          "maxItems": 60,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentRunProgressEvent"
+          }
+        },
+        "seq": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "runId",
+        "events"
+      ],
+      "additionalProperties": false
+    },
+    "LocalAgentHandoff": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "resumes": {
+          "type": "boolean"
+        },
+        "untrusted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "runId",
+        "instructions",
+        "goal"
+      ],
+      "additionalProperties": false
+    },
+    "LocalRunResumeRequest": {
+      "type": "object",
+      "properties": {
+        "resumeLocalOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "resumeLocalRunId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "taskId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "deviceId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,160}$"
+        }
+      },
+      "required": [
+        "resumeLocalOnly",
+        "resumeLocalRunId",
+        "requestId",
+        "conversationId",
+        "taskId",
+        "deviceId"
+      ],
+      "additionalProperties": false,
+      "description": "A restart from an existing local checkpoint. This request has no chat messages."
+    },
+    "AgentTaskArtifactInfo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "document",
+            "spreadsheet",
+            "pdf",
+            "image",
+            "chart",
+            "table",
+            "data"
+          ]
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "byteCount": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "downloadURL": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "filename",
+        "mimeType",
+        "byteCount",
+        "sha256",
+        "downloadURL",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskArtifact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "document",
+            "spreadsheet",
+            "pdf",
+            "image",
+            "chart",
+            "table",
+            "data"
+          ]
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "byteCount": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "downloadURL": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "previews": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskArtifactInfo"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "filename",
+        "mimeType",
+        "byteCount",
+        "sha256",
+        "downloadURL",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskStepArtifact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "build_brief",
+            "site",
+            "preview",
+            "act_project",
+            "file"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "filename",
+        "mimeType",
+        "purpose"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "done",
+            "failed",
+            "running",
+            "pending"
+          ]
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "brief": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/Persona"
+        },
+        "agentId": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "verification": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "incomplete"
+          ]
+        },
+        "recovery": {
+          "type": "object",
+          "properties": {
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "method": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "used",
+            "method"
+          ],
+          "additionalProperties": false
+        },
+        "builds": {
+          "type": "string",
+          "enum": [
+            "web",
+            "desktop",
+            "mobile"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskStepArtifact"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskRecoveryRung": {
+      "type": "string",
+      "enum": [
+        "alternative",
+        "replan",
+        "reassign",
+        "ask"
+      ]
+    },
+    "AgentTaskSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "stateVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "contractVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "waiting_input",
+            "paused",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "canResume": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "persona": {
+          "$ref": "#/$defs/Persona"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskStep"
+          }
+        },
+        "estimatedSeconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "waiting": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "approval",
+                    "answer",
+                    "pc"
+                  ]
+                },
+                "confirmationId": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "modelCalls": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "inputTokens": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "outputTokens": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "cachedTokens": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "budget": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "modelCalls",
+            "inputTokens",
+            "outputTokens",
+            "cachedTokens",
+            "budget"
+          ],
+          "additionalProperties": false
+        },
+        "verification": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "checked": {
+                  "type": "boolean"
+                },
+                "unsupported": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "checked",
+                "unsupported"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revisions": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "recovery": {
+          "type": "object",
+          "properties": {
+            "budget": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "left": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "steps": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/AgentTaskRecoveryRung"
+                }
+              }
+            },
+            "asked": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "budget",
+            "used",
+            "left",
+            "steps",
+            "asked"
+          ],
+          "additionalProperties": false
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskArtifact"
+          }
+        },
+        "conversationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "stateVersion",
+        "state",
+        "canResume",
+        "title",
+        "persona",
+        "status",
+        "progress",
+        "steps",
+        "estimatedSeconds",
+        "waiting",
+        "usage",
+        "verification",
+        "revisions",
+        "recovery",
+        "summary",
+        "error",
+        "artifacts",
+        "conversationId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskTimelineEvent": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "stepId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "uncertain": {
+          "type": "boolean"
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "stepId",
+        "event",
+        "summary",
+        "errorCode",
+        "verified",
+        "uncertain",
+        "durationMs",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskDetail": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "stateVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "contractVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "waiting_input",
+            "paused",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "canResume": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "persona": {
+          "$ref": "#/$defs/Persona"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskStep"
+          }
+        },
+        "estimatedSeconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "waiting": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "approval",
+                    "answer",
+                    "pc"
+                  ]
+                },
+                "confirmationId": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "modelCalls": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "inputTokens": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "outputTokens": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "cachedTokens": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "budget": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "modelCalls",
+            "inputTokens",
+            "outputTokens",
+            "cachedTokens",
+            "budget"
+          ],
+          "additionalProperties": false
+        },
+        "verification": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "checked": {
+                  "type": "boolean"
+                },
+                "unsupported": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "checked",
+                "unsupported"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revisions": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "recovery": {
+          "type": "object",
+          "properties": {
+            "budget": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "left": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "steps": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/AgentTaskRecoveryRung"
+                }
+              }
+            },
+            "asked": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "budget",
+            "used",
+            "left",
+            "steps",
+            "asked"
+          ],
+          "additionalProperties": false
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskArtifact"
+          }
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskTimelineEvent"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "stateVersion",
+        "state",
+        "canResume",
+        "title",
+        "persona",
+        "status",
+        "progress",
+        "steps",
+        "estimatedSeconds",
+        "waiting",
+        "usage",
+        "verification",
+        "revisions",
+        "recovery",
+        "summary",
+        "error",
+        "artifacts",
+        "conversationId",
+        "events"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskList": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskSummary"
+          }
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskTimeline": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTaskTimelineEvent"
+          }
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskRetryStep": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "retry"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "stepId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskSkipStep": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "skip"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "op",
+        "stepId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskRemoveStep": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "remove"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "op",
+        "stepId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskEditStep": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "edit"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 800
+        }
+      },
+      "required": [
+        "op",
+        "stepId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskReassignStep": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "reassign"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "agentId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "stepId",
+        "agentId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskAddStep": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "add"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800
+        },
+        "dependsOn": {
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "agentId": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "op",
+        "title",
+        "goal"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTaskStepControl": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentTaskRetryStep"
+        },
+        {
+          "$ref": "#/$defs/AgentTaskSkipStep"
+        },
+        {
+          "$ref": "#/$defs/AgentTaskRemoveStep"
+        },
+        {
+          "$ref": "#/$defs/AgentTaskEditStep"
+        },
+        {
+          "$ref": "#/$defs/AgentTaskReassignStep"
+        },
+        {
+          "$ref": "#/$defs/AgentTaskAddStep"
+        }
+      ]
+    },
+    "AgentTaskStepControlRequest": {
+      "type": "object",
+      "properties": {
+        "expectedStateVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "control": {
+          "$ref": "#/$defs/AgentTaskStepControl"
+        }
+      },
+      "required": [
+        "expectedStateVersion",
+        "control"
+      ],
+      "additionalProperties": false
+    },
     "DoneEvent": {
       "type": "object",
       "properties": {
@@ -535,6 +1769,18 @@
         },
         "localRun": {
           "type": "string"
+        },
+        "localAgent": {
+          "$ref": "#/$defs/LocalAgentHandoff"
+        },
+        "continueTask": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/AgentRunOutcome"
+        },
+        "agentTask": {
+          "$ref": "#/$defs/AgentTaskSummary"
         },
         "privateKept": {
           "type": "integer",
@@ -679,35 +1925,7 @@
         "artifacts": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "filename": {
-                "type": "string"
-              },
-              "mimeType": {
-                "type": "string"
-              },
-              "purpose": {
-                "type": "string",
-                "enum": [
-                  "build_brief",
-                  "site",
-                  "preview",
-                  "act_project",
-                  "file"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "filename",
-              "mimeType",
-              "purpose"
-            ],
-            "additionalProperties": false
+            "$ref": "#/$defs/AgentTaskStepArtifact"
           }
         }
       },
@@ -1002,6 +2220,9 @@
         "executionState": {
           "type": "string"
         },
+        "outcome": {
+          "$ref": "#/$defs/AgentRunOutcome"
+        },
         "steps": {
           "type": "array",
           "items": {
@@ -1014,7 +2235,7 @@
           "maximum": 9007199254740991
         },
         "agentTask": {
-          "$ref": "#/$defs/JsonObject"
+          "$ref": "#/$defs/AgentTaskSummary"
         }
       },
       "required": [
@@ -1131,6 +2352,3019 @@
           "$ref": "#/$defs/RunSyncSnapshot"
         }
       ]
+    },
+    "PcJobKind": {
+      "type": "string",
+      "enum": [
+        "command",
+        "file",
+        "process"
+      ]
+    },
+    "PcJobStatus": {
+      "type": "string",
+      "enum": [
+        "running",
+        "ok",
+        "failed",
+        "cancelled",
+        "unknown"
+      ]
+    },
+    "PcJobEvent": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "started",
+            "finished"
+          ]
+        },
+        "jobId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "kind": {
+          "$ref": "#/$defs/PcJobKind"
+        },
+        "status": {
+          "$ref": "#/$defs/PcJobStatus"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "phase",
+        "jobId"
+      ],
+      "additionalProperties": false
+    },
+    "PcJobRecord": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PcJobKind"
+        },
+        "status": {
+          "$ref": "#/$defs/PcJobStatus"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "finishedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "jobId",
+        "label",
+        "kind",
+        "status",
+        "exitCode",
+        "summary",
+        "startedAt",
+        "finishedAt"
+      ],
+      "additionalProperties": false
+    },
+    "PcUnitClaim": {
+      "type": "object",
+      "properties": {
+        "unitId": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "taskId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "stepId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "unitId",
+        "taskId",
+        "stepId",
+        "requestId",
+        "conversationId",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "PcUnitDone": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "agentStepDone"
+        },
+        "unitId": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "type",
+        "unitId"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostKind": {
+      "type": "string",
+      "enum": [
+        "problem",
+        "idea"
+      ]
+    },
+    "DiscoverVisibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "link",
+        "public"
+      ]
+    },
+    "DiscoverVerdict": {
+      "type": "string",
+      "enum": [
+        "worked",
+        "partly",
+        "failed"
+      ]
+    },
+    "DiscoverReplyKind": {
+      "type": "string",
+      "enum": [
+        "comment",
+        "experience",
+        "alternative",
+        "feedback",
+        "suggestion"
+      ]
+    },
+    "DiscoverNoticeKind": {
+      "type": "string",
+      "enum": [
+        "like",
+        "comment",
+        "reply",
+        "follow",
+        "copy",
+        "remix",
+        "published",
+        "succeeded",
+        "need",
+        "idea",
+        "solution",
+        "post_reply",
+        "verdict"
+      ]
+    },
+    "DiscoverNoticeGroup": {
+      "type": "string",
+      "enum": [
+        "activity",
+        "people",
+        "problems"
+      ]
+    },
+    "DiscoverProfileTab": {
+      "type": "string",
+      "enum": [
+        "missions",
+        "remixes",
+        "liked",
+        "saved"
+      ]
+    },
+    "DiscoverFeedTab": {
+      "type": "string",
+      "enum": [
+        "new",
+        "popular",
+        "following",
+        "saved"
+      ]
+    },
+    "DiscoverPostTab": {
+      "type": "string",
+      "enum": [
+        "open",
+        "new",
+        "solved",
+        "foryou",
+        "following",
+        "needed"
+      ]
+    },
+    "DiscoverFindingKind": {
+      "type": "string",
+      "enum": [
+        "secret",
+        "personal",
+        "path"
+      ]
+    },
+    "DiscoverNoticeDeleteMode": {
+      "type": "string",
+      "enum": [
+        "read",
+        "all"
+      ]
+    },
+    "DiscoverOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverAvatar": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "emoji": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "emoji",
+        "color",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverAuthor": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bio": {
+          "type": "string"
+        },
+        "headline": {
+          "type": "string"
+        },
+        "avatar": {
+          "$ref": "#/$defs/DiscoverAvatar"
+        }
+      },
+      "required": [
+        "username",
+        "displayName",
+        "bio",
+        "headline",
+        "avatar"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverImage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "url": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "height": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "width",
+        "height"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionCounts": {
+      "type": "object",
+      "properties": {
+        "likes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "comments": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "copies": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "remixes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "succeeded": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "likes",
+        "comments",
+        "copies",
+        "remixes",
+        "succeeded"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionOrigin": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedSince": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "name",
+        "author",
+        "updatedSince"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionSolves": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverPostKind"
+        }
+      },
+      "required": [
+        "code",
+        "title",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionVerdicts": {
+      "type": "object",
+      "properties": {
+        "worked": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "partly": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "mine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "worked",
+        "partly",
+        "failed",
+        "mine"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMission": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preview": {
+          "type": "string"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverImage"
+          }
+        },
+        "visibility": {
+          "$ref": "#/$defs/DiscoverVisibility"
+        },
+        "url": {
+          "type": "string"
+        },
+        "publishedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverAuthor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverMissionOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "counts": {
+          "$ref": "#/$defs/DiscoverMissionCounts"
+        },
+        "liked": {
+          "type": "boolean"
+        },
+        "saved": {
+          "type": "boolean"
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "solves": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverMissionSolves"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdicts": {
+          "$ref": "#/$defs/DiscoverMissionVerdicts"
+        },
+        "liveUrl": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "hidden": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "name",
+        "description",
+        "prompt",
+        "icon",
+        "category",
+        "tags",
+        "inputs",
+        "needs",
+        "steps",
+        "preview",
+        "images",
+        "visibility",
+        "url",
+        "publishedAt",
+        "updatedAt",
+        "author",
+        "origin",
+        "counts",
+        "liked",
+        "saved",
+        "mine",
+        "solves",
+        "verdicts"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverFinding": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverFindingKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "sample": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "kind",
+        "label",
+        "sample"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostProblem": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostCounts": {
+      "type": "object",
+      "properties": {
+        "needs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "validated": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "replies": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "experiences": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "alternatives": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ideas": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "solutions": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "worked": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "workedAffected": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "echoes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "needs",
+        "validated",
+        "replies",
+        "experiences",
+        "alternatives",
+        "ideas",
+        "solutions",
+        "worked",
+        "workedAffected",
+        "echoes"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPost": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverPostKind"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "workaround": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverAuthor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPostProblem"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "counts": {
+          "$ref": "#/$defs/DiscoverPostCounts"
+        },
+        "solved": {
+          "type": "boolean"
+        },
+        "needed": {
+          "type": "boolean"
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "kind",
+        "title",
+        "body",
+        "audience",
+        "workaround",
+        "topic",
+        "tags",
+        "url",
+        "createdAt",
+        "updatedAt",
+        "author",
+        "problem",
+        "counts",
+        "solved",
+        "needed",
+        "mine"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverSimilarPost": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverPostKind"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "workaround": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverAuthor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPostProblem"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "counts": {
+          "$ref": "#/$defs/DiscoverPostCounts"
+        },
+        "solved": {
+          "type": "boolean"
+        },
+        "needed": {
+          "type": "boolean"
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "score": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "code",
+        "kind",
+        "title",
+        "body",
+        "audience",
+        "workaround",
+        "topic",
+        "tags",
+        "url",
+        "createdAt",
+        "updatedAt",
+        "author",
+        "problem",
+        "counts",
+        "solved",
+        "needed",
+        "mine",
+        "score"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostReply": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverReplyKind"
+        },
+        "body": {
+          "type": "string"
+        },
+        "deleted": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverAuthor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "canDelete": {
+          "type": "boolean"
+        },
+        "affected": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "parentId",
+        "kind",
+        "body",
+        "deleted",
+        "createdAt",
+        "author",
+        "mine",
+        "canDelete",
+        "affected"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostAlternative": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "gap": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "gap"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostInsight": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "ai"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPostAlternative"
+          }
+        },
+        "audience": {
+          "type": "string"
+        },
+        "benefit": {
+          "type": "string"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "createdAt",
+        "summary",
+        "alternatives",
+        "audience",
+        "benefit",
+        "gaps"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostBriefOption": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "approach": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "approach",
+        "effort",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostBriefData": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "ai"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPostBriefOption"
+          }
+        },
+        "plan": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "createdAt",
+        "summary",
+        "needs",
+        "options",
+        "plan",
+        "acceptance"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverComment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body": {
+          "type": "string"
+        },
+        "deleted": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "editedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverAuthor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "canDelete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "parentId",
+        "body",
+        "deleted",
+        "createdAt",
+        "editedAt",
+        "author",
+        "mine",
+        "canDelete"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverProfileCounts": {
+      "type": "object",
+      "properties": {
+        "followers": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "following": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "missions": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "remixed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "likes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "uses": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "followers",
+        "following",
+        "missions",
+        "remixed",
+        "likes",
+        "uses"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverProfile": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bio": {
+          "type": "string"
+        },
+        "headline": {
+          "type": "string"
+        },
+        "place": {
+          "type": "string"
+        },
+        "website": {
+          "type": "string"
+        },
+        "cover": {
+          "type": "string"
+        },
+        "coverUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatar": {
+          "$ref": "#/$defs/DiscoverAvatar"
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "following": {
+          "type": "boolean"
+        },
+        "blocked": {
+          "type": "boolean"
+        },
+        "counts": {
+          "$ref": "#/$defs/DiscoverProfileCounts"
+        }
+      },
+      "required": [
+        "username",
+        "displayName",
+        "bio",
+        "headline",
+        "place",
+        "website",
+        "cover",
+        "coverUrl",
+        "avatar"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPerson": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "type": "string"
+        },
+        "avatar": {
+          "$ref": "#/$defs/DiscoverAvatar"
+        },
+        "following": {
+          "type": "boolean"
+        },
+        "mine": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "username",
+        "displayName",
+        "headline",
+        "avatar",
+        "following",
+        "mine"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverCirclePerson": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "type": "string"
+        },
+        "avatar": {
+          "$ref": "#/$defs/DiscoverAvatar"
+        },
+        "following": {
+          "type": "boolean"
+        },
+        "mine": {
+          "type": "boolean"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "username",
+        "displayName",
+        "headline",
+        "avatar",
+        "following",
+        "mine",
+        "count"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverNoticeActor": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverAvatar"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "following": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "username",
+        "displayName",
+        "avatar",
+        "following"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverNoticeMission": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverNotice": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverNoticeKind"
+        },
+        "group": {
+          "$ref": "#/$defs/DiscoverNoticeGroup"
+        },
+        "text": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "actor": {
+          "$ref": "#/$defs/DiscoverNoticeActor"
+        },
+        "others": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "mission": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverNoticeMission"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "post": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverMissionSolves"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "ids",
+        "kind",
+        "group",
+        "text",
+        "createdAt",
+        "read",
+        "actor",
+        "others",
+        "mission",
+        "post",
+        "preview"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverDraftData": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preview": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "prompt",
+        "category",
+        "tags",
+        "inputs",
+        "needs",
+        "steps",
+        "preview"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverFeed": {
+      "type": "object",
+      "properties": {
+        "missions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverMission"
+          }
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        }
+      },
+      "required": [
+        "missions",
+        "next",
+        "categories"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMe": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/DiscoverProfile"
+        },
+        "missions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverMission"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        },
+        "covers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "profile",
+        "missions",
+        "categories",
+        "needs",
+        "covers"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionDetail": {
+      "type": "object",
+      "properties": {
+        "mission": {
+          "$ref": "#/$defs/DiscoverMission"
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        }
+      },
+      "required": [
+        "mission",
+        "needs",
+        "categories"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionMutation": {
+      "type": "object",
+      "properties": {
+        "mission": {
+          "$ref": "#/$defs/DiscoverMission"
+        }
+      },
+      "required": [
+        "mission"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionList": {
+      "type": "object",
+      "properties": {
+        "missions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverMission"
+          }
+        }
+      },
+      "required": [
+        "missions"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverProfilePage": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/DiscoverProfile"
+        },
+        "tab": {
+          "$ref": "#/$defs/DiscoverProfileTab"
+        },
+        "missions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverMission"
+          }
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "tab",
+        "missions",
+        "next"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverProfileUpdate": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/DiscoverProfile"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPeople": {
+      "type": "object",
+      "properties": {
+        "people": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPerson"
+          }
+        }
+      },
+      "required": [
+        "people"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverCircle": {
+      "type": "object",
+      "properties": {
+        "builtOn": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverCirclePerson"
+          }
+        },
+        "builtOnThem": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverCirclePerson"
+          }
+        }
+      },
+      "required": [
+        "builtOn",
+        "builtOnThem"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverNotifications": {
+      "type": "object",
+      "properties": {
+        "notices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverNotice"
+          }
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "next": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "notices",
+        "unread",
+        "next"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverComments": {
+      "type": "object",
+      "properties": {
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverComment"
+          }
+        }
+      },
+      "required": [
+        "comments"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostFeed": {
+      "type": "object",
+      "properties": {
+        "posts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPost"
+          }
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        }
+      },
+      "required": [
+        "posts",
+        "next",
+        "topics"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostDetail": {
+      "type": "object",
+      "properties": {
+        "post": {
+          "$ref": "#/$defs/DiscoverPost"
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPost"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ideas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPost"
+          }
+        },
+        "solutions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverMission"
+          }
+        },
+        "similar": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPost"
+          }
+        },
+        "insight": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPostInsight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        }
+      },
+      "required": [
+        "post",
+        "problem",
+        "ideas",
+        "solutions",
+        "similar",
+        "insight",
+        "topics"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostMutation": {
+      "type": "object",
+      "properties": {
+        "post": {
+          "$ref": "#/$defs/DiscoverPost"
+        }
+      },
+      "required": [
+        "post"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostReplies": {
+      "type": "object",
+      "properties": {
+        "replies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverPostReply"
+          }
+        }
+      },
+      "required": [
+        "replies"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverDraft": {
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/DiscoverDraftData"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverFinding"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverOption"
+          }
+        },
+        "workToken": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "solves": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPost"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "draft",
+        "findings",
+        "categories",
+        "needs",
+        "workToken",
+        "solves"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostSimilar": {
+      "type": "object",
+      "properties": {
+        "similar": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverSimilarPost"
+          }
+        }
+      },
+      "required": [
+        "similar"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostResearch": {
+      "type": "object",
+      "properties": {
+        "insight": {
+          "$ref": "#/$defs/DiscoverPostInsight"
+        }
+      },
+      "required": [
+        "insight"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverPostBrief": {
+      "type": "object",
+      "properties": {
+        "brief": {
+          "$ref": "#/$defs/DiscoverPostBriefData"
+        },
+        "insight": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPostInsight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "post": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverPost"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "brief",
+        "insight",
+        "post"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverOk": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverCreated": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverLike": {
+      "type": "object",
+      "properties": {
+        "likes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "liked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "likes",
+        "liked"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverSaved": {
+      "type": "object",
+      "properties": {
+        "saved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "saved"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverVerdictResponse": {
+      "type": "object",
+      "properties": {
+        "verdicts": {
+          "$ref": "#/$defs/DiscoverMissionVerdicts"
+        }
+      },
+      "required": [
+        "verdicts"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverImages": {
+      "type": "object",
+      "properties": {
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverImage"
+          }
+        }
+      },
+      "required": [
+        "images"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverRecipe": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "name": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverCopy": {
+      "type": "object",
+      "properties": {
+        "recipe": {
+          "$ref": "#/$defs/DiscoverRecipe"
+        },
+        "mission": {
+          "$ref": "#/$defs/DiscoverMission"
+        }
+      },
+      "required": [
+        "recipe",
+        "mission"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverWorkToken": {
+      "type": "object",
+      "properties": {
+        "workToken": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workToken"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverDeleted": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "deleted"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverNeed": {
+      "type": "object",
+      "properties": {
+        "needs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "needed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "needs",
+        "needed"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverErrorData": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverFinding"
+          }
+        },
+        "similar": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverSimilarPost"
+          }
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverError": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/DiscoverErrorData"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverCoverPick": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "thumb": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "thumb",
+        "image"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverCoverLibrary": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "picks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiscoverCoverPick"
+          }
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "page",
+        "picks",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverAccountProfile": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "authProvider": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preferredAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatarKind": {
+          "type": "string"
+        },
+        "avatarEmoji": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatarColor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatarImage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatarUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proactiveEnabled": {
+          "type": "boolean"
+        },
+        "username": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "type": "string"
+        },
+        "bio": {
+          "type": "string"
+        },
+        "website": {
+          "type": "string"
+        },
+        "cover": {
+          "type": "string"
+        },
+        "coverUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "email",
+        "authProvider",
+        "createdAt",
+        "displayName",
+        "preferredAddress",
+        "avatarKind",
+        "avatarEmoji",
+        "avatarColor",
+        "avatarImage",
+        "avatarUrl",
+        "tone",
+        "language",
+        "location",
+        "proactiveEnabled",
+        "username",
+        "headline",
+        "bio",
+        "website",
+        "cover",
+        "coverUrl"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverMissionWrite": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preview": {
+          "type": "string"
+        },
+        "visibility": {
+          "$ref": "#/$defs/DiscoverVisibility"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "workToken": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "solves": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverProfileWrite": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "bio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "place": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "website": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverProfileColor": {
+      "type": "string",
+      "enum": [
+        "indigo",
+        "blue",
+        "teal",
+        "green",
+        "orange",
+        "pink",
+        "purple",
+        "graphite"
+      ]
+    },
+    "DiscoverAvatarKind": {
+      "type": "string",
+      "enum": [
+        "initial",
+        "emoji",
+        "photo"
+      ]
+    },
+    "DiscoverProfileTone": {
+      "type": "string",
+      "enum": [
+        "samimi",
+        "profesyonel",
+        "kisa",
+        "detayli"
+      ]
+    },
+    "DiscoverProfileLanguage": {
+      "type": "string",
+      "enum": [
+        "tr",
+        "en"
+      ]
+    },
+    "DiscoverAccountProfileWrite": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "bio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 80
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "website": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preferredAddress": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "avatarKind": {
+          "$ref": "#/$defs/DiscoverAvatarKind"
+        },
+        "avatarEmoji": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 16
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "avatarColor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverProfileColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "avatarImage": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 400000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tone": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverProfileTone"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverProfileLanguage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverImage": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 8000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proactiveEnabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverPostWrite": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "workaround": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "force": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverPostMatch": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverPostKind"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverDraftWrite": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverWorkTokenWrite": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "project"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverNoticesWrite": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "which": {
+          "$ref": "#/$defs/DiscoverNoticeDeleteMode"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverCommentWrite": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverReplyWrite": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverReplyKind"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverReportWrite": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverVerdictWrite": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscoverVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverImageWrite": {
+      "type": "object",
+      "properties": {
+        "dataBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataBase64"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverLiveWrite": {
+      "type": "object",
+      "properties": {
+        "html": {
+          "type": "string"
+        },
+        "origins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "html"
+      ],
+      "additionalProperties": false
+    },
+    "DiscoverFeedQuery": {
+      "type": "object",
+      "properties": {
+        "tab": {
+          "$ref": "#/$defs/DiscoverFeedTab"
+        },
+        "category": {
+          "type": "string"
+        },
+        "q": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverPostFeedQuery": {
+      "type": "object",
+      "properties": {
+        "tab": {
+          "$ref": "#/$defs/DiscoverPostTab"
+        },
+        "kind": {
+          "$ref": "#/$defs/DiscoverPostKind"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "q": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverProfileQuery": {
+      "type": "object",
+      "properties": {
+        "tab": {
+          "$ref": "#/$defs/DiscoverProfileTab"
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverNoticesQuery": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/$defs/DiscoverNoticeGroup"
+        },
+        "before": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverPeopleQuery": {
+      "type": "object",
+      "properties": {
+        "q": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiscoverCoverQuery": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

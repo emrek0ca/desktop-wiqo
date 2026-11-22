@@ -277,7 +277,14 @@ impl TerminalStep {
                 }
                 // An install, a clone or a build outlives the minute a plain command gets: started as a background job instead of being cut off and
                 // reported as unknown. The answer says it runs; wait_job reads its end.
-                let promoted = action == "run" && mode == "full" && value["command"].as_str().is_some_and(takes_long);
+                let command = value["command"].as_str().unwrap_or("");
+                let server = starts_server(command);
+                if server && (command.replace("&&", "").contains('&')
+                    || command.split_ascii_whitespace().any(|word| ["nohup", "disown", "start-process"].iter().any(|detacher| word.eq_ignore_ascii_case(detacher))))
+                {
+                    return refused("TERMINAL_COMMAND_INVALID", "Sunucu komutunu ön planda çalıştır. Wiqo onu durdurulabilir bir arka plan işi olarak izleyecek.");
+                }
+                let promoted = action == "run" && mode == "full" && (server || takes_long(command));
                 let action = if promoted { "start_job".to_string() } else { action };
                 if promoted {
                     request["action"] = json!("start_job");
@@ -309,6 +316,15 @@ impl TerminalStep {
             }
         }
     }
+}
+
+/// Development server commands use the same job tracking as other long-running terminal commands.
+pub fn starts_server(command: &str) -> bool {
+    static SERVER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    SERVER.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)\b|\bvite(?:\s+(?:dev|preview|serve)\b|\s*$|\s+--)|\bnext\s+(?:dev|start)\b|http\.server|\bflask\s+run\b|\buvicorn\b|\bphp\s+-S\b|\bnodemon\b|\bnpx\s+(?:serve|http-server)\b|\bpython3?\s+(?:-m\s+)?(?:app|server|manage)\.?py?\b.*runserver")
+            .expect("development server pattern")
+    }).is_match(command)
 }
 
 /// A command that installs, clones or builds: it usually takes longer than a plain step may wait.
