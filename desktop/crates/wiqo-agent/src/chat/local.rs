@@ -883,6 +883,24 @@ fn join_pieces(events: Vec<Value>) -> Vec<Value> {
     joined
 }
 
+/// The end of a model call's event stream read as a whole text: `{done, message}` is the answer, `{error}` a refusal; None when the text is not an event stream.
+fn sse_outcome(text: &str) -> Option<Result<Value, Value>> {
+    if !text.trim_start().starts_with("data:") {
+        return None;
+    }
+    let mut last = None;
+    for frame in text.split("\n\n") {
+        let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) else { continue };
+        let Ok(event) = serde_json::from_str::<Value>(data) else { continue };
+        if event["done"] == true {
+            last = Some(Ok(event["message"].clone()));
+        } else if event["error"].is_object() {
+            last = Some(Err(json!({ "error": event["error"].clone() })));
+        }
+    }
+    last
+}
+
 /// What a model call shows while it is written: a piece of the answer, or the pieces so far taken back (a tool call followed them, or the call started over).
 enum Live {
     Text(String),
@@ -1658,7 +1676,16 @@ impl Chat {
                     }
                 }
             } else {
-                response.json().await.unwrap_or(Value::Null)
+                // A pipe that carries the answer whole (the evals' relay labels every answer application/json) hands the event stream over as text: read as one.
+                let text = response.text().await.unwrap_or_default();
+                match sse_outcome(&text) {
+                    Some(Ok(message)) => return Ok(message),
+                    Some(Err(error)) => {
+                        status = error["error"]["status"].as_u64().unwrap_or(502) as u16;
+                        error
+                    }
+                    None => serde_json::from_str(&text).unwrap_or(Value::Null),
+                }
             };
             if (200..300).contains(&status) {
                 return Ok(value["message"].clone());
@@ -2049,6 +2076,17 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_event_stream_handed_over_as_text_still_gives_its_answer() {
+        use super::sse_outcome;
+        use serde_json::json;
+        let text = "data: {\"delta\":\"Merha\"}\n\ndata: {\"delta\":\"ba\"}\n\ndata: {\"done\":true,\"message\":{\"role\":\"assistant\",\"content\":\"Merhaba\",\"tool_calls\":[]}}\n\n";
+        assert_eq!(sse_outcome(text).expect("an outcome").expect("an answer")["content"], "Merhaba");
+        let refused = "data: {\"error\":{\"status\":503,\"code\":\"MODEL_BUSY\",\"message\":\"x\"}}\n\n";
+        assert_eq!(sse_outcome(refused).expect("an outcome").expect_err("a refusal")["error"]["code"], json!("MODEL_BUSY"));
+        assert!(sse_outcome("{\"message\":{}}").is_none());
+    }
+
     #[test]
     fn a_project_says_how_its_work_is_checked() {
         use super::verify_commands;
