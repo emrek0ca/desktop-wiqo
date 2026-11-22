@@ -505,7 +505,7 @@ pub struct RunApproval {
     pub kind: String,
     pub title: String,
     pub summary: String,
-    pub details: serde_json::Value,
+    pub details: std::collections::HashMap<String, String>,
     #[serde(rename = "isDestructive")]
     pub is_destructive: bool,
     #[serde(rename = "requiresUserPresence")]
@@ -586,6 +586,16 @@ pub struct Run {
     pub r#ref: Option<RunRef>,
 }
 
+/// What the activity list shows: runs that wait for the person, runs that are due, and the recent ones.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunFeed {
+    pub v: i64,
+    #[serde(rename = "needsAttention")]
+    pub needs_attention: Vec<Run>,
+    pub upcoming: Vec<Run>,
+    pub recent: Vec<Run>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSyncCopilot {
     #[serde(rename = "requestId")]
@@ -641,7 +651,7 @@ pub struct SyncedRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSyncSnapshot {
     pub cursor: i64,
-    pub runs: serde_json::Value,
+    pub runs: RunFeed,
     pub conversations: Vec<serde_json::Value>,
     pub devices: Vec<serde_json::Value>,
     pub requests: Vec<SyncedRequest>,
@@ -705,6 +715,7 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "RunWaiting" => serde_json::from_str::<RunWaiting>(text).map(|_| true),
         "RunRef" => serde_json::from_str::<RunRef>(text).map(|_| true),
         "Run" => serde_json::from_str::<Run>(text).map(|_| true),
+        "RunFeed" => serde_json::from_str::<RunFeed>(text).map(|_| true),
         "RunSyncCopilot" => serde_json::from_str::<RunSyncCopilot>(text).map(|_| true),
         "SyncedReply" => serde_json::from_str::<SyncedReply>(text).map(|_| true),
         "SyncedRequest" => serde_json::from_str::<SyncedRequest>(text).map(|_| true),

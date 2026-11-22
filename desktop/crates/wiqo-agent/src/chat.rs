@@ -19,6 +19,7 @@ use wiqo_core::wire::{CommandStatus, Request};
 
 use crate::Event;
 
+mod digest;
 mod ledger;
 mod local;
 mod progress;

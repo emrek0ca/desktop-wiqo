@@ -81,7 +81,7 @@ pub fn running(id: &str, summary: &str, tool: &str, args: &Value, seal: &mut dyn
 }
 
 /// What the tool printed, as one text, and the exit code when it was a command: the tool's result is JSON with `stdout`, `stderr` and `exitCode`, or a plain text.
-fn printed(output: &str) -> (String, Option<i64>) {
+pub(super) fn printed(output: &str) -> (String, Option<i64>) {
     match serde_json::from_str::<Value>(output) {
         Ok(Value::Object(object)) => {
             let exit = object.get("exitCode").and_then(Value::as_i64);

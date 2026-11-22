@@ -937,6 +937,41 @@
       ],
       "additionalProperties": false
     },
+    "RunFeed": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "needsAttention": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Run"
+          }
+        },
+        "upcoming": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Run"
+          }
+        },
+        "recent": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Run"
+          }
+        }
+      },
+      "required": [
+        "v",
+        "needsAttention",
+        "upcoming",
+        "recent"
+      ],
+      "additionalProperties": false,
+      "description": "What the activity list shows: runs that wait for the person, runs that are due, and the recent ones."
+    },
     "RunSyncCopilot": {
       "type": "object",
       "properties": {
@@ -1090,7 +1125,7 @@
           "maximum": 9007199254740991
         },
         "runs": {
-          "$ref": "#/$defs/JsonObject"
+          "$ref": "#/$defs/RunFeed"
         },
         "conversations": {
           "type": "array",

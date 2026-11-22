@@ -743,6 +743,10 @@ fn project_brief(root: &Path, notes: Option<String>) -> String {
             parts.push(format!("Betikler ({} run <ad>):\n{}", manager.unwrap_or("npm"), lines.join("\n")));
         }
     }
+    let checks = verify_commands(root, manager);
+    if !checks.is_empty() {
+        parts.push(format!("Doğrulama (her değişiklikten sonra çalıştır, hataları dosya:satır olarak oku, yeşil olana kadar döngüyü sürdür):\n{}", checks.iter().map(|command| format!("  {command}")).collect::<Vec<_>>().join("\n")));
+    }
     if root.join(".git").exists() {
         let status = std::process::Command::new("git").args(["-C", &root.to_string_lossy(), "status", "--porcelain=v1", "-b"]).stdin(std::process::Stdio::null()).output();
         if let Some(out) = status.ok().filter(|out| out.status.success()) {
@@ -769,6 +773,53 @@ fn project_brief(root: &Path, notes: Option<String>) -> String {
         parts.push(format!("Wiqo notların:\n{}", notes.chars().take(3_000).collect::<String>()));
     }
     clip(&parts.join("\n\n"), 8_000)
+}
+
+/// The commands that check a project's work, found from what is in its folder: the type check, the tests, the build. They are the second half of every edit, and
+/// a model that has to guess them runs a build that is not there or skips the one that is. Light ones first.
+fn verify_commands(root: &Path, manager: Option<&str>) -> Vec<String> {
+    let has = |name: &str| root.join(name).exists();
+    let mut commands: Vec<String> = Vec::new();
+    if let Some(package) = std::fs::read_to_string(root.join("package.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()) {
+        let run = manager.unwrap_or("npm");
+        let scripts = package["scripts"].as_object().cloned().unwrap_or_default();
+        let script = |names: &[&str]| names.iter().find(|name| scripts.contains_key(**name)).map(|name| format!("{run} run {name}"));
+        if let Some(command) = script(&["typecheck", "type-check", "tsc", "check-types"]) {
+            commands.push(command);
+        } else if has("tsconfig.json") {
+            commands.push("npx tsc --noEmit".into());
+        }
+        commands.extend(script(&["lint"]));
+        commands.extend(script(&["test", "test:unit"]));
+        commands.extend(script(&["build"]));
+    }
+    if has("Cargo.toml") {
+        commands.extend(["cargo check".to_string(), "cargo test".to_string()]);
+    }
+    if has("go.mod") {
+        commands.push("go build ./... && go vet ./... && go test ./...".into());
+    }
+    if has("pyproject.toml") || has("pytest.ini") || has("setup.py") || has("requirements.txt") || root.join("tests").is_dir() {
+        commands.push("python3 -m pytest -q".into());
+    }
+    if has("Package.swift") {
+        commands.push("swift build".into());
+    }
+    if has("pom.xml") {
+        commands.push("mvn -q test".into());
+    }
+    if has("gradlew") {
+        commands.push("./gradlew test".into());
+    }
+    if let Ok(makefile) = std::fs::read_to_string(root.join("Makefile")) {
+        for target in ["test", "check", "lint"] {
+            if makefile.lines().any(|line| line.starts_with(&format!("{target}:"))) {
+                commands.push(format!("make {target}"));
+            }
+        }
+    }
+    commands.dedup();
+    commands
 }
 
 /// This computer's tools beyond the terminal (screen, system, file chores). The server describes them and turns a call into a step, by the one
@@ -1170,6 +1221,7 @@ impl Chat {
         let started = Instant::now();
         let stopped = |work: &Work| format!("Durduruldu. {}", work.done_so_far());
         let mut thinking = 0usize;
+        let mut note_id = 0usize;
         let mut gates = 0usize;
         let mut malformed = 0usize;
         let mut too_large = 0usize;
@@ -1298,6 +1350,15 @@ impl Chat {
                 call["type"] = json!("function");
             }
             work.messages.push(json!({ "role": "assistant", "content": content, "tool_calls": calls }));
+            // What the model says before it acts (what it is about to do and why) is the thinking of the work: shown on the task as a line of its timeline,
+            // so the person reads "komutu şunun için çalıştırıyorum" step by step, not only the commands. The words that streamed as the reply are taken back
+            // by the `reset` the call brings (the model's server side), so they are not said twice.
+            let note = content.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !note.is_empty() {
+                note_id += 1;
+                let label: String = note.chars().take(180).collect();
+                say(json!({ "type": "activity", "activity": { "id": format!("local-note-{note_id}"), "phase": "plan", "label": label, "state": "done", "persona": "developer" } }));
+            }
             let mut turn_changed = false;
             for call in &calls {
                 let id = text_of(&call["id"]);
@@ -1351,6 +1412,15 @@ impl Chat {
                 };
                 // What this call printed, before the notes below are added for the model.
                 let printed = outcome.output.clone();
+                // A build or a test run that failed: its errors first, as `file:line message`, read from the whole output (the model sees it shortened to start and end).
+                if matches!(name.as_str(), "shell" | "job") {
+                    let (text, exit) = super::progress::printed(&outcome.output);
+                    if exit.is_none_or(|code| code != 0) {
+                        if let Some(errors) = super::digest::errors_of(&text) {
+                            outcome.output = format!("{errors}\n\n{}", outcome.output);
+                        }
+                    }
+                }
                 if name == "shell" {
                     if let Some(app) = denied_app(&text_of(&told_args["command"]), &outcome.output) {
                         // macOS refused the script: the permission is asked for right here (its own dialog on this computer, or the Settings page when it
@@ -1953,6 +2023,20 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_project_says_how_its_work_is_checked() {
+        use super::verify_commands;
+        let root = std::env::temp_dir().join(format!("wiqo-verify-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("tests")).expect("folder");
+        std::fs::write(root.join("package.json"), r#"{"scripts":{"lint":"biome lint","test":"node --test","build":"tsc"}}"#).expect("package.json");
+        std::fs::write(root.join("tsconfig.json"), "{}").expect("tsconfig");
+        std::fs::write(root.join("Cargo.toml"), "[package]").expect("cargo");
+        let commands = verify_commands(&root, Some("pnpm"));
+        assert_eq!(commands, vec!["npx tsc --noEmit", "pnpm run lint", "pnpm run test", "pnpm run build", "cargo check", "cargo test", "python3 -m pytest -q"]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(verify_commands(&std::env::temp_dir().join("wiqo-no-such-project"), None).is_empty());
+    }
+
     #[test]
     fn a_refused_apple_event_names_the_app_and_the_answer_decides_what_the_model_is_told() {
         use super::{automation_note, denied_app};
