@@ -100,12 +100,27 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
             // a menu that is open is the answer. Only when none opened is the secondary button pressed on the control, as a hand would.
             if args[0] == "right-click" {
                 return match call(engine, &args) {
-                    Err(error) if matches!(error.code.as_str(), "COMMAND_TIMEOUT" | "OUTCOME_UNKNOWN") => {
+                    Err(error)
+                        if matches!(error.code.as_str(), "COMMAND_TIMEOUT" | "OUTCOME_UNKNOWN") =>
+                    {
                         let menu_open = engine
-                            .call(&["wait".into(), "--menu".into(), "--app".into(), scene.application.clone(), "--timeout".into(), "900".into()])
+                            .call(&[
+                                "wait".into(),
+                                "--menu".into(),
+                                "--app".into(),
+                                scene.application.clone(),
+                                "--timeout".into(),
+                                "900".into(),
+                            ])
                             .is_ok_and(|answer| answer.ok);
                         if menu_open {
-                            Ok(Answer { ok: true, data: json!({ "readBack": true }), code: String::new(), message: String::new(), delivery: Some("delivered_verified".into()) })
+                            Ok(Answer {
+                                ok: true,
+                                data: json!({ "readBack": true }),
+                                code: String::new(),
+                                message: String::new(),
+                                delivery: Some("delivered_verified".into()),
+                            })
                         } else {
                             forward(engine, scene);
                             let mut physical = args.clone();
@@ -140,7 +155,12 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
         "type" => return type_text(engine, step, scene),
         "fill" => return fill_field(engine, step, scene),
         // With words it scrolls until they are on the screen.
-        "scroll" if step.text.as_deref().is_some_and(|text| !text.trim().is_empty()) => {
+        "scroll"
+            if step
+                .text
+                .as_deref()
+                .is_some_and(|text| !text.trim().is_empty()) =>
+        {
             return scroll_until(engine, step, scene)
         }
         "setValue" => {
@@ -276,7 +296,9 @@ pub(super) fn perform(engine: &dyn Engine, step: &Request, scene: &Scene) -> Res
 /// window that is behind only brings it forward, and what was meant for its control is lost.
 pub(super) fn forward(engine: &dyn Engine, scene: &Scene) {
     if !scene.application.is_empty()
-        && engine.frontmost().is_some_and(|front| !front.eq_ignore_ascii_case(&scene.application))
+        && engine
+            .frontmost()
+            .is_some_and(|front| !front.eq_ignore_ascii_case(&scene.application))
         && engine.bring_to_front(&scene.application)
     {
         std::thread::sleep(Duration::from_millis(450));
@@ -372,15 +394,12 @@ pub(super) fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> R
         .filter(|text| !text.is_empty())
         .ok_or_else(|| tool_failure("DESKTOP_ACTION_INVALID", "Yazılacak metin yok."))?;
     let target = match step.target_ref.as_ref() {
-        Some(reference) => Some(
-            named_target(scene, Some(reference))
-                .ok_or_else(|| {
-                    tool_failure(
-                        "DESKTOP_TARGET_NOT_FOUND",
-                        format!("{reference} hedefi güncel görünümde yok."),
-                    )
-                })?,
-        ),
+        Some(reference) => Some(named_target(scene, Some(reference)).ok_or_else(|| {
+            tool_failure(
+                "DESKTOP_TARGET_NOT_FOUND",
+                format!("{reference} hedefi güncel görünümde yok."),
+            )
+        })?),
         None => scene.targets.iter().find(|target| target.focused),
     };
     if target.is_some_and(|target| target.secure) {
@@ -410,7 +429,12 @@ pub(super) fn type_text(engine: &dyn Engine, step: &Request, scene: &Scene) -> R
             Err(error) if error.code == "OUTCOME_UNKNOWN" => {
                 let holds = call(
                     engine,
-                    &["get".into(), target.helper.clone(), "--property".into(), "value".into()],
+                    &[
+                        "get".into(),
+                        target.helper.clone(),
+                        "--property".into(),
+                        "value".into(),
+                    ],
                 )
                 .ok()
                 .and_then(|read| read.data["value"].as_str().map(str::to_string));
@@ -474,11 +498,27 @@ pub(super) fn field_for<'a>(step: &Request, scene: &'a Scene) -> Result<&'a Targ
         target.enabled
             && matches!(
                 target.role.as_str(),
-                "textfield" | "textarea" | "searchfield" | "combobox" | "checkbox" | "switch" | "radiobutton"
-                    | "popupbutton" | "slider" | "stepper" | "datefield" | "timefield" | "incrementor"
+                "textfield"
+                    | "textarea"
+                    | "searchfield"
+                    | "combobox"
+                    | "checkbox"
+                    | "switch"
+                    | "radiobutton"
+                    | "popupbutton"
+                    | "slider"
+                    | "stepper"
+                    | "datefield"
+                    | "timefield"
+                    | "incrementor"
             )
     };
-    let fields: Vec<&Target> = scene.targets.iter().chain(&scene.hidden).filter(takes_input).collect();
+    let fields: Vec<&Target> = scene
+        .targets
+        .iter()
+        .chain(&scene.hidden)
+        .filter(takes_input)
+        .collect();
     let one = |found: Vec<&'a Target>| -> Option<Result<&'a Target>> {
         match found.len() {
             0 => None,
@@ -490,19 +530,23 @@ pub(super) fn field_for<'a>(step: &Request, scene: &'a Scene) -> Result<&'a Targ
         }
     };
     let called = |target: &Target| plain(&target.name);
-    if let Some(found) = one(fields.iter().copied().filter(|target| called(target) == wanted).collect()) {
+    if let Some(found) = one(fields
+        .iter()
+        .copied()
+        .filter(|target| called(target) == wanted)
+        .collect())
+    {
         return found;
     }
-    if let Some(found) = one(
-        fields
-            .iter()
-            .copied()
-            .filter(|target| {
-                let name = called(target);
-                name.len() >= 3 && (name.contains(&wanted) || wanted.contains(&name))
-            })
-            .collect(),
-    ) {
+    if let Some(found) = one(fields
+        .iter()
+        .copied()
+        .filter(|target| {
+            let name = called(target);
+            name.len() >= 3 && (name.contains(&wanted) || wanted.contains(&name))
+        })
+        .collect())
+    {
         return found;
     }
     // A field with no name of its own: the nearest one to the right of, or under, the words that label it on the screen.
@@ -526,9 +570,14 @@ pub(super) fn field_for<'a>(step: &Request, scene: &'a Scene) -> Result<&'a Targ
             .copied()
             .filter_map(|field| {
                 let (x, y) = middle(field.frame);
-                let same_row = (y - label_y).abs() <= field.frame[3].max(words.frame[3]) && x > label_x;
-                let under = y > label_y && y - label_y <= 0.12 && field.frame[0] <= label_x && label_x <= field.frame[0] + field.frame[2].max(0.02);
-                (same_row || under).then(|| (field, (x - label_x).abs() + (y - label_y).abs() * 2.0))
+                let same_row =
+                    (y - label_y).abs() <= field.frame[3].max(words.frame[3]) && x > label_x;
+                let under = y > label_y
+                    && y - label_y <= 0.12
+                    && field.frame[0] <= label_x
+                    && label_x <= field.frame[0] + field.frame[2].max(0.02);
+                (same_row || under)
+                    .then(|| (field, (x - label_x).abs() + (y - label_y).abs() * 2.0))
             })
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         if let Some((field, _)) = beside {
@@ -544,8 +593,12 @@ pub(super) fn field_for<'a>(step: &Request, scene: &'a Scene) -> Result<&'a Targ
 /// "evet", "açık", "true"... for a box that is ticked or not.
 fn ticked(value: &str) -> Option<bool> {
     match plain(value).as_str() {
-        "true" | "evet" | "acik" | "on" | "yes" | "1" | "isaretli" | "secili" | "checked" => Some(true),
-        "false" | "hayir" | "kapali" | "off" | "no" | "0" | "isaretsiz" | "bos" | "unchecked" => Some(false),
+        "true" | "evet" | "acik" | "on" | "yes" | "1" | "isaretli" | "secili" | "checked" => {
+            Some(true)
+        }
+        "false" | "hayir" | "kapali" | "off" | "no" | "0" | "isaretsiz" | "bos" | "unchecked" => {
+            Some(false)
+        }
         _ => None,
     }
 }
@@ -587,13 +640,16 @@ pub(super) fn fill_field(engine: &dyn Engine, step: &Request, scene: &Scene) -> 
                 )
             })?;
             let command = if on { "check" } else { "uncheck" };
-            return call(engine, &[command.into(), target.helper.clone()]).map(|answer| read_back(answer, false));
+            return call(engine, &[command.into(), target.helper.clone()])
+                .map(|answer| read_back(answer, false));
         }
         "popupbutton" => {
-            return call(engine, &["select".into(), target.helper.clone(), text]).map(|answer| read_back(answer, false));
+            return call(engine, &["select".into(), target.helper.clone(), text])
+                .map(|answer| read_back(answer, false));
         }
         "slider" | "stepper" | "incrementor" => {
-            return call(engine, &["set-value".into(), target.helper.clone(), text]).map(|answer| read_back(answer, false));
+            return call(engine, &["set-value".into(), target.helper.clone(), text])
+                .map(|answer| read_back(answer, false));
         }
         _ => {}
     }
@@ -605,7 +661,11 @@ pub(super) fn fill_field(engine: &dyn Engine, step: &Request, scene: &Scene) -> 
         click.push("--headed".into());
         forward(engine, scene);
         call(engine, &click)?;
-        let modifier = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
         press(engine, &format!("{modifier}+a"), &scene.application)?;
         paste(engine, &text, &scene.application)?
     } else {
@@ -613,7 +673,12 @@ pub(super) fn fill_field(engine: &dyn Engine, step: &Request, scene: &Scene) -> 
     };
     let held = call(
         engine,
-        &["get".into(), target.helper.clone(), "--property".into(), "value".into()],
+        &[
+            "get".into(),
+            target.helper.clone(),
+            "--property".into(),
+            "value".into(),
+        ],
     )
     .ok()
     .and_then(|read| read.data["value"].as_str().map(str::to_string))
@@ -645,13 +710,22 @@ fn shows(engine: &dyn Engine, scene: &Scene, wanted: &str, text: &str) -> bool {
         .filter(|answer| answer.ok);
     let [screen_x, screen_y, screen_w, screen_h] = scene.screen;
     let window = scene.window.unwrap_or([0.0, 0.0, 1.0, 1.0]);
-    let (left, top) = (screen_x + window[0] * screen_w, screen_y + window[1] * screen_h);
+    let (left, top) = (
+        screen_x + window[0] * screen_w,
+        screen_y + window[1] * screen_h,
+    );
     let (right, bottom) = (left + window[2] * screen_w, top + window[3] * screen_h);
-    for item in found.iter().flat_map(|answer| answer.data["matches"].as_array().into_iter().flatten()) {
+    for item in found
+        .iter()
+        .flat_map(|answer| answer.data["matches"].as_array().into_iter().flatten())
+    {
         // The helper also lists what holds a match (the window, the page, the groups around it): only a thing that is itself called by the words counts.
         let called = |key: &str| plain(item[key].as_str().unwrap_or_default()).contains(wanted);
         if !(called("name") || called("value"))
-            || matches!(item["role"].as_str().unwrap_or_default(), "window" | "application" | "webarea")
+            || matches!(
+                item["role"].as_str().unwrap_or_default(),
+                "window" | "application" | "webarea"
+            )
         {
             continue;
         }
@@ -679,7 +753,12 @@ fn shows(engine: &dyn Engine, scene: &Scene, wanted: &str, text: &str) -> bool {
         ) {
             (Some(x), Some(y), Some(w), Some(h)) => {
                 let (middle_x, middle_y) = (x + w / 2.0, y + h / 2.0);
-                if h > 1.0 && middle_x >= left && middle_x <= right && middle_y >= top && middle_y <= bottom {
+                if h > 1.0
+                    && middle_x >= left
+                    && middle_x <= right
+                    && middle_y >= top
+                    && middle_y <= bottom
+                {
                     return true;
                 }
             }
@@ -689,9 +768,9 @@ fn shows(engine: &dyn Engine, scene: &Scene, wanted: &str, text: &str) -> bool {
         }
     }
     observe(engine, Some(&scene.application)).is_ok_and(|look| {
-        look.targets
-            .iter()
-            .any(|target| plain(&target.name).contains(wanted) || plain(&target.value).contains(wanted))
+        look.targets.iter().any(|target| {
+            plain(&target.name).contains(wanted) || plain(&target.value).contains(wanted)
+        })
     })
 }
 
@@ -710,7 +789,14 @@ pub(super) fn scroll_until(engine: &dyn Engine, step: &Request, scene: &Scene) -
         data: json!({ "readBack": true, "pages": pages }),
         code: String::new(),
         message: String::new(),
-        delivery: Some(if pages == 0 { "not_delivered" } else { "delivered_verified" }.into()),
+        delivery: Some(
+            if pages == 0 {
+                "not_delivered"
+            } else {
+                "delivered_verified"
+            }
+            .into(),
+        ),
     };
     let pages = step.amount.unwrap_or(8).clamp(1, 15);
     let page = Request {
@@ -724,7 +810,12 @@ pub(super) fn scroll_until(engine: &dyn Engine, step: &Request, scene: &Scene) -
         observe(engine, Some(&scene.application)).ok().map(|look| {
             look.targets
                 .iter()
-                .map(|target| (target.name.clone(), (target.frame[1] * 1000.0).round() as i64))
+                .map(|target| {
+                    (
+                        target.name.clone(),
+                        (target.frame[1] * 1000.0).round() as i64,
+                    )
+                })
                 .collect::<Vec<_>>()
         })
     };
@@ -742,7 +833,10 @@ pub(super) fn scroll_until(engine: &dyn Engine, step: &Request, scene: &Scene) -
         if before.is_some() && before == places(engine) {
             return Err(tool_failure(
                 "DESKTOP_TARGET_NOT_FOUND",
-                format!("“{text}” bulunamadı: {} sayfa kaydırıldı ve listenin sonuna gelindi.", turned + 1),
+                format!(
+                    "“{text}” bulunamadı: {} sayfa kaydırıldı ve listenin sonuna gelindi.",
+                    turned + 1
+                ),
             ));
         }
     }
@@ -751,7 +845,9 @@ pub(super) fn scroll_until(engine: &dyn Engine, step: &Request, scene: &Scene) -
     }
     Err(tool_failure(
         "DESKTOP_TARGET_NOT_FOUND",
-        format!("“{text}” {pages} sayfa kaydırmada görünmedi; daha fazla kaydırmak için yeniden çağır."),
+        format!(
+            "“{text}” {pages} sayfa kaydırmada görünmedi; daha fazla kaydırmak için yeniden çağır."
+        ),
     ))
 }
 

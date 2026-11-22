@@ -279,17 +279,31 @@ impl TerminalStep {
                 // reported as unknown. The answer says it runs; wait_job reads its end.
                 let command = value["command"].as_str().unwrap_or("");
                 let server = starts_server(command);
-                if server && (command.replace("&&", "").contains('&')
-                    || command.split_ascii_whitespace().any(|word| ["nohup", "disown", "start-process"].iter().any(|detacher| word.eq_ignore_ascii_case(detacher))))
+                if server
+                    && (command.replace("&&", "").contains('&')
+                        || command.split_ascii_whitespace().any(|word| {
+                            ["nohup", "disown", "start-process"]
+                                .iter()
+                                .any(|detacher| word.eq_ignore_ascii_case(detacher))
+                        }))
                 {
                     return refused("TERMINAL_COMMAND_INVALID", "Sunucu komutunu ön planda çalıştır. Wiqo onu durdurulabilir bir arka plan işi olarak izleyecek.");
                 }
                 let promoted = action == "run" && mode == "full" && (server || takes_long(command));
-                let action = if promoted { "start_job".to_string() } else { action };
+                let action = if promoted {
+                    "start_job".to_string()
+                } else {
+                    action
+                };
                 if promoted {
                     request["action"] = json!("start_job");
                     request["long"] = json!(true);
-                    request["label"] = json!(value["command"].as_str().unwrap_or("").chars().take(80).collect::<String>());
+                    request["label"] = json!(value["command"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect::<String>());
                     if let Some(object) = request.as_object_mut() {
                         object.remove("timeoutSeconds");
                     }
@@ -373,10 +387,23 @@ mod tests {
 
     #[test]
     fn installs_clones_and_builds_are_long_and_a_listing_is_not() {
-        for command in ["npm install", "cd app && pnpm i", "pip install requests", "brew install ffmpeg", "git clone https://x/y.git", "cargo build --release", "winget install Git.Git"] {
+        for command in [
+            "npm install",
+            "cd app && pnpm i",
+            "pip install requests",
+            "brew install ffmpeg",
+            "git clone https://x/y.git",
+            "cargo build --release",
+            "winget install Git.Git",
+        ] {
             assert!(takes_long(command), "{command}");
         }
-        for command in ["ls -lS ~/Downloads | head", "git status", "npm --version", "python3 main.py"] {
+        for command in [
+            "ls -lS ~/Downloads | head",
+            "git status",
+            "npm --version",
+            "python3 main.py",
+        ] {
             assert!(!takes_long(command), "{command}");
         }
     }

@@ -16,7 +16,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 const LOAD_WAIT: Duration = Duration::from_secs(20);
 const MOST_STEPS: usize = 25;
@@ -34,15 +35,31 @@ impl Cdp {
         self.next += 1;
         let id = self.next;
         let text = json!({ "id": id, "method": method, "params": params }).to_string();
-        self.socket.send(Message::text(text)).await.map_err(|error| format!("tarayıcıya yazılamadı: {error}"))?;
+        self.socket
+            .send(Message::text(text))
+            .await
+            .map_err(|error| format!("tarayıcıya yazılamadı: {error}"))?;
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let message = tokio::time::timeout(left, self.socket.next()).await.map_err(|_| format!("{method} yanıtsız kaldı"))?;
-            let Some(Ok(Message::Text(text))) = message else { return Err("tarayıcı bağlantısı koptu".into()) };
-            let Ok(value) = serde_json::from_str::<Value>(text.as_str()) else { continue };
+            let message = tokio::time::timeout(left, self.socket.next())
+                .await
+                .map_err(|_| format!("{method} yanıtsız kaldı"))?;
+            let Some(Ok(Message::Text(text))) = message else {
+                return Err("tarayıcı bağlantısı koptu".into());
+            };
+            let Ok(value) = serde_json::from_str::<Value>(text.as_str()) else {
+                continue;
+            };
             if value["id"] == id {
-                return if value["error"].is_null() { Ok(value["result"].clone()) } else { Err(format!("{method}: {}", value["error"]["message"].as_str().unwrap_or("hata"))) };
+                return if value["error"].is_null() {
+                    Ok(value["result"].clone())
+                } else {
+                    Err(format!(
+                        "{method}: {}",
+                        value["error"]["message"].as_str().unwrap_or("hata")
+                    ))
+                };
             }
             self.keep(value).await;
         }
@@ -81,9 +98,21 @@ impl Cdp {
     }
 
     async fn eval(&mut self, expression: &str) -> Result<Value, String> {
-        let reply = self.call("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true, "awaitPromise": true })).await?;
+        let reply = self
+            .call(
+                "Runtime.evaluate",
+                json!({ "expression": expression, "returnByValue": true, "awaitPromise": true }),
+            )
+            .await?;
         if reply["exceptionDetails"].is_object() {
-            return Err(reply["exceptionDetails"]["exception"]["description"].as_str().or(reply["exceptionDetails"]["text"].as_str()).unwrap_or("betik hatası").lines().next().unwrap_or("").to_string());
+            return Err(reply["exceptionDetails"]["exception"]["description"]
+                .as_str()
+                .or(reply["exceptionDetails"]["text"].as_str())
+                .unwrap_or("betik hatası")
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string());
         }
         Ok(reply["result"]["value"].clone())
     }
@@ -99,7 +128,11 @@ async fn run_step(cdp: &mut Cdp, step: &Value) -> (String, bool, String) {
         let result = cdp.eval(&format!("(() => {{ const e = document.querySelector({}); if (!e) return 'no element'; e.click(); return 'ok'; }})()", js(selector))).await;
         return match result {
             Ok(value) if value == "ok" => (format!("click {selector}"), true, String::new()),
-            Ok(value) => (format!("click {selector}"), false, value.as_str().unwrap_or("olmadı").to_string()),
+            Ok(value) => (
+                format!("click {selector}"),
+                false,
+                value.as_str().unwrap_or("olmadı").to_string(),
+            ),
             Err(error) => (format!("click {selector}"), false, error),
         };
     }
@@ -110,7 +143,11 @@ async fn run_step(cdp: &mut Cdp, step: &Value) -> (String, bool, String) {
             .await;
         return match result {
             Ok(value) if value == "ok" => (format!("type {selector}"), true, String::new()),
-            Ok(value) => (format!("type {selector}"), false, value.as_str().unwrap_or("olmadı").to_string()),
+            Ok(value) => (
+                format!("type {selector}"),
+                false,
+                value.as_str().unwrap_or("olmadı").to_string(),
+            ),
             Err(error) => (format!("type {selector}"), false, error),
         };
     }
@@ -119,32 +156,67 @@ async fn run_step(cdp: &mut Cdp, step: &Value) -> (String, bool, String) {
         return (format!("wait {ms} ms"), true, String::new());
     }
     if let Some(wanted) = step["expect_text"].as_str() {
-        let found = cdp.eval(&format!("document.body.innerText.includes({})", js(wanted))).await;
+        let found = cdp
+            .eval(&format!("document.body.innerText.includes({})", js(wanted)))
+            .await;
         return match found {
             Ok(value) if value == true => (format!("expect_text {wanted:?}"), true, String::new()),
             Ok(_) => {
-                let body = cdp.eval("document.body.innerText.slice(0, 300)").await.ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
-                (format!("expect_text {wanted:?}"), false, format!("sayfada yok; sayfa metni: {}", body.replace('\n', " ⏎ ")))
+                let body = cdp
+                    .eval("document.body.innerText.slice(0, 300)")
+                    .await
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_default();
+                (
+                    format!("expect_text {wanted:?}"),
+                    false,
+                    format!("sayfada yok; sayfa metni: {}", body.replace('\n', " ⏎ ")),
+                )
             }
             Err(error) => (format!("expect_text {wanted:?}"), false, error),
         };
     }
     if let Some(selector) = step["expect_selector"].as_str() {
-        let found = cdp.eval(&format!("!!document.querySelector({})", js(selector))).await;
+        let found = cdp
+            .eval(&format!("!!document.querySelector({})", js(selector)))
+            .await;
         return match found {
-            Ok(value) if value == true => (format!("expect_selector {selector}"), true, String::new()),
-            Ok(_) => (format!("expect_selector {selector}"), false, "öğe yok".into()),
+            Ok(value) if value == true => {
+                (format!("expect_selector {selector}"), true, String::new())
+            }
+            Ok(_) => (
+                format!("expect_selector {selector}"),
+                false,
+                "öğe yok".into(),
+            ),
             Err(error) => (format!("expect_selector {selector}"), false, error),
         };
     }
     if let Some(code) = step["eval"].as_str() {
         return match cdp.eval(code).await {
-            Ok(value) if value.is_null() || value == false || value == "" || value == 0 => (format!("eval {}", code.chars().take(60).collect::<String>()), false, format!("sonuç boş/yanlış: {value}")),
-            Ok(value) => (format!("eval {}", code.chars().take(60).collect::<String>()), true, value.to_string().chars().take(200).collect()),
-            Err(error) => (format!("eval {}", code.chars().take(60).collect::<String>()), false, error),
+            Ok(value) if value.is_null() || value == false || value == "" || value == 0 => (
+                format!("eval {}", code.chars().take(60).collect::<String>()),
+                false,
+                format!("sonuç boş/yanlış: {value}"),
+            ),
+            Ok(value) => (
+                format!("eval {}", code.chars().take(60).collect::<String>()),
+                true,
+                value.to_string().chars().take(200).collect(),
+            ),
+            Err(error) => (
+                format!("eval {}", code.chars().take(60).collect::<String>()),
+                false,
+                error,
+            ),
         };
     }
-    ("bilinmeyen adım".into(), false, "click, type, wait_ms, expect_text, expect_selector ya da eval ver".into())
+    (
+        "bilinmeyen adım".into(),
+        false,
+        "click, type, wait_ms, expect_text, expect_selector ya da eval ver".into(),
+    )
 }
 
 /// What the console and the network showed, from the events kept.
@@ -155,26 +227,73 @@ fn problems(events: &[Value]) -> (Vec<String>, Vec<String>, Vec<String>) {
         match event["method"].as_str().unwrap_or("") {
             "Runtime.exceptionThrown" => {
                 let details = &params["exceptionDetails"];
-                let what = details["exception"]["description"].as_str().or(details["text"].as_str()).unwrap_or("hata").lines().next().unwrap_or("").to_string();
-                let place = details["url"].as_str().map(|url| format!(" ({}:{})", url.rsplit('/').next().unwrap_or(url), details["lineNumber"].as_i64().unwrap_or(0) + 1)).unwrap_or_default();
+                let what = details["exception"]["description"]
+                    .as_str()
+                    .or(details["text"].as_str())
+                    .unwrap_or("hata")
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                let place = details["url"]
+                    .as_str()
+                    .map(|url| {
+                        format!(
+                            " ({}:{})",
+                            url.rsplit('/').next().unwrap_or(url),
+                            details["lineNumber"].as_i64().unwrap_or(0) + 1
+                        )
+                    })
+                    .unwrap_or_default();
                 errors.push(format!("{what}{place}"));
             }
-            "Runtime.consoleAPICalled" if matches!(params["type"].as_str(), Some("error") | Some("assert")) => {
-                let text: Vec<String> = params["args"].as_array().into_iter().flatten().map(|arg| arg["value"].as_str().map(str::to_string).or_else(|| arg["description"].as_str().map(str::to_string)).unwrap_or_default()).collect();
-                errors.push(format!("console.error: {}", text.join(" ").chars().take(200).collect::<String>()));
+            "Runtime.consoleAPICalled"
+                if matches!(params["type"].as_str(), Some("error") | Some("assert")) =>
+            {
+                let text: Vec<String> = params["args"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|arg| {
+                        arg["value"]
+                            .as_str()
+                            .map(str::to_string)
+                            .or_else(|| arg["description"].as_str().map(str::to_string))
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                errors.push(format!(
+                    "console.error: {}",
+                    text.join(" ").chars().take(200).collect::<String>()
+                ));
             }
             "Network.responseReceived" => {
                 let status = params["response"]["status"].as_i64().unwrap_or(0);
                 let url = params["response"]["url"].as_str().unwrap_or("");
                 if status >= 400 && !url.ends_with("favicon.ico") {
-                    requests.push(format!("{status} {}", url.rsplit('/').next().unwrap_or(url)));
+                    requests.push(format!(
+                        "{status} {}",
+                        url.rsplit('/').next().unwrap_or(url)
+                    ));
                 }
             }
             "Network.loadingFailed" if params["canceled"] != true => {
-                requests.push(format!("yüklenemedi: {}", params["errorText"].as_str().unwrap_or("")));
+                requests.push(format!(
+                    "yüklenemedi: {}",
+                    params["errorText"].as_str().unwrap_or("")
+                ));
             }
             "Page.javascriptDialogOpening" => {
-                dialogs.push(format!("{}: {}", params["type"].as_str().unwrap_or("alert"), params["message"].as_str().unwrap_or("").chars().take(160).collect::<String>()));
+                dialogs.push(format!(
+                    "{}: {}",
+                    params["type"].as_str().unwrap_or("alert"),
+                    params["message"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(160)
+                        .collect::<String>()
+                ));
             }
             _ => {}
         }
@@ -190,7 +309,11 @@ async fn browser_ready(child: &mut tokio::process::Child) -> Result<u16, String>
     let waited = tokio::time::timeout(Duration::from_secs(15), async {
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(rest) = line.split("ws://127.0.0.1:").nth(1) {
-                if let Some(port) = rest.split('/').next().and_then(|port| port.parse::<u16>().ok()) {
+                if let Some(port) = rest
+                    .split('/')
+                    .next()
+                    .and_then(|port| port.parse::<u16>().ok())
+                {
                     return Some(port);
                 }
             }
@@ -200,7 +323,10 @@ async fn browser_ready(child: &mut tokio::process::Child) -> Result<u16, String>
     .await;
     // Keeps reading what the browser prints, so its pipe never fills.
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-    waited.ok().flatten().ok_or_else(|| "tarayıcı 15 sn içinde hazır olmadı".into())
+    waited
+        .ok()
+        .flatten()
+        .ok_or_else(|| "tarayıcı 15 sn içinde hazır olmadı".into())
 }
 
 /// Opens `args.url`, runs `args.steps`, and returns the report (`ok` is true when nothing went wrong).
@@ -209,10 +335,22 @@ pub async fn check(args: &Value) -> Result<Value, String> {
     if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://")) {
         return Err("url http://, https:// ya da file:// ile başlamalı (örn. http://localhost:8000 ya da file:///Users/…/index.html).".into());
     }
-    let browser: PathBuf = wiqo_ops::installed_browsers().into_iter().next().ok_or("Chrome ya da Edge kurulu değil; sayfa denenemedi.")?;
+    let browser: PathBuf = wiqo_ops::installed_browsers()
+        .into_iter()
+        .next()
+        .ok_or("Chrome ya da Edge kurulu değil; sayfa denenemedi.")?;
     let profile = std::env::temp_dir().join(format!("wiqo-page-{}", uuid::Uuid::new_v4().simple()));
     let mut child = Command::new(&browser)
-        .args(["--headless=new", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--mute-audio", "--window-size=1280,900", "--allow-file-access-from-files"])
+        .args([
+            "--headless=new",
+            "--remote-debugging-port=0",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-gpu",
+            "--mute-audio",
+            "--window-size=1280,900",
+            "--allow-file-access-from-files",
+        ])
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("about:blank")
         .stdin(Stdio::null())
@@ -227,26 +365,66 @@ pub async fn check(args: &Value) -> Result<Value, String> {
     outcome
 }
 
-async fn drive(child: &mut tokio::process::Child, url: &str, args: &Value) -> Result<Value, String> {
+async fn drive(
+    child: &mut tokio::process::Child,
+    url: &str,
+    args: &Value,
+) -> Result<Value, String> {
     let port = browser_ready(child).await?;
-    let list = reqwest::get(format!("http://127.0.0.1:{port}/json/list")).await.map_err(|error| format!("tarayıcıya ulaşılamadı: {error}"))?.json::<Value>().await.map_err(|error| error.to_string())?;
-    let target = list.as_array().into_iter().flatten().find(|item| item["type"] == "page").and_then(|item| item["webSocketDebuggerUrl"].as_str()).ok_or("açık sayfa bulunamadı")?.to_string();
-    let (socket, _) = tokio_tungstenite::connect_async(target.as_str()).await.map_err(|error| format!("tarayıcıya bağlanılamadı: {error}"))?;
-    let mut cdp = Cdp { socket, next: 0, events: Vec::new() };
-    for domain in ["Page.enable", "Runtime.enable", "Network.enable", "Log.enable"] {
+    let list = reqwest::get(format!("http://127.0.0.1:{port}/json/list"))
+        .await
+        .map_err(|error| format!("tarayıcıya ulaşılamadı: {error}"))?
+        .json::<Value>()
+        .await
+        .map_err(|error| error.to_string())?;
+    let target = list
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| item["type"] == "page")
+        .and_then(|item| item["webSocketDebuggerUrl"].as_str())
+        .ok_or("açık sayfa bulunamadı")?
+        .to_string();
+    let (socket, _) = tokio_tungstenite::connect_async(target.as_str())
+        .await
+        .map_err(|error| format!("tarayıcıya bağlanılamadı: {error}"))?;
+    let mut cdp = Cdp {
+        socket,
+        next: 0,
+        events: Vec::new(),
+    };
+    for domain in [
+        "Page.enable",
+        "Runtime.enable",
+        "Network.enable",
+        "Log.enable",
+    ] {
         cdp.call(domain, json!({})).await?;
     }
     cdp.call("Page.navigate", json!({ "url": url })).await?;
     // The page is loaded when the browser says so (or after the wait); a script that runs late gets its moment.
     let loaded = Instant::now() + LOAD_WAIT;
-    while Instant::now() < loaded && !cdp.events.iter().any(|event| event["method"] == "Page.loadEventFired") {
+    while Instant::now() < loaded
+        && !cdp
+            .events
+            .iter()
+            .any(|event| event["method"] == "Page.loadEventFired")
+    {
         cdp.settle(Duration::from_millis(250)).await;
     }
-    cdp.settle(Duration::from_millis(args["wait_ms"].as_u64().unwrap_or(800).min(10_000))).await;
+    cdp.settle(Duration::from_millis(
+        args["wait_ms"].as_u64().unwrap_or(800).min(10_000),
+    ))
+    .await;
 
     let mut steps: Vec<Value> = Vec::new();
     let mut all_held = true;
-    for step in args["steps"].as_array().into_iter().flatten().take(MOST_STEPS) {
+    for step in args["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(MOST_STEPS)
+    {
         let (what, held, detail) = run_step(&mut cdp, step).await;
         cdp.settle(Duration::from_millis(250)).await;
         all_held &= held;
@@ -256,15 +434,35 @@ async fn drive(child: &mut tokio::process::Child, url: &str, args: &Value) -> Re
         }
     }
 
-    let title = cdp.eval("document.title").await.ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
-    let text = cdp.eval("document.body ? document.body.innerText.slice(0, 500) : ''").await.ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
+    let title = cdp
+        .eval("document.title")
+        .await
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let text = cdp
+        .eval("document.body ? document.body.innerText.slice(0, 500) : ''")
+        .await
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
     let shot = args["screenshot"].as_str().filter(|path| !path.is_empty());
     let mut saved = None;
     if let Some(path) = shot {
-        if let Ok(reply) = cdp.call("Page.captureScreenshot", json!({ "format": "png" })).await {
+        if let Ok(reply) = cdp
+            .call("Page.captureScreenshot", json!({ "format": "png" }))
+            .await
+        {
             use base64::Engine;
-            if let Some(bytes) = reply["data"].as_str().and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok()) {
-                let target = std::path::PathBuf::from(path.replacen('~', &dirs::home_dir().unwrap_or_default().to_string_lossy(), 1));
+            if let Some(bytes) = reply["data"]
+                .as_str()
+                .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok())
+            {
+                let target = std::path::PathBuf::from(path.replacen(
+                    '~',
+                    &dirs::home_dir().unwrap_or_default().to_string_lossy(),
+                    1,
+                ));
                 if target.is_absolute() && std::fs::write(&target, bytes).is_ok() {
                     saved = Some(target.display().to_string());
                 }
@@ -273,7 +471,8 @@ async fn drive(child: &mut tokio::process::Child, url: &str, args: &Value) -> Re
     }
     let (errors, requests, dialogs) = problems(&cdp.events);
     let ok = errors.is_empty() && requests.is_empty() && all_held;
-    let list = |items: &[String]| -> Vec<String> { items.iter().take(MOST_LISTED).cloned().collect() };
+    let list =
+        |items: &[String]| -> Vec<String> { items.iter().take(MOST_LISTED).cloned().collect() };
     Ok(json!({
         "ok": ok, "url": url, "title": title, "consoleErrors": list(&errors), "failedRequests": list(&requests), "dialogs": list(&dialogs),
         "steps": steps, "pageText": text, "screenshot": saved,
@@ -295,8 +494,15 @@ mod tests {
             json!({ "method": "Page.javascriptDialogOpening", "params": { "type": "alert", "message": "Matris yok." } }),
         ];
         let (errors, requests, dialogs) = problems(&events);
-        assert_eq!(errors, vec!["SyntaxError: Identifier 'matrix' has already been declared (script.js:116)"]);
-        assert_eq!(requests, vec!["404 app.css"], "the favicon is not the page's fault");
+        assert_eq!(
+            errors,
+            vec!["SyntaxError: Identifier 'matrix' has already been declared (script.js:116)"]
+        );
+        assert_eq!(
+            requests,
+            vec!["404 app.css"],
+            "the favicon is not the page's fault"
+        );
         assert_eq!(dialogs, vec!["alert: Matris yok."]);
     }
 }

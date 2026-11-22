@@ -37,7 +37,11 @@ pub(super) fn organize(ctx: &Context, request: &Request, limit: usize) -> Result
         let mut planned = Vec::new();
         let mut new_folders = std::collections::BTreeSet::new();
         for file in regular_files(&folder, false, limit) {
-            let bucket = if by_month { date(modified(&file), "%Y-%m") } else { bucket_for(&extension_of(&file)).to_string() };
+            let bucket = if by_month {
+                date(modified(&file), "%Y-%m")
+            } else {
+                bucket_for(&extension_of(&file)).to_string()
+            };
             let destination = folder.join(&bucket);
             if !destination.exists() {
                 new_folders.insert(destination.clone());
@@ -45,9 +49,15 @@ pub(super) fn organize(ctx: &Context, request: &Request, limit: usize) -> Result
             planned.push((file.clone(), destination.join(name_of(&file))));
         }
         if planned.is_empty() {
-            return Err(fail("NOTHING_TO_ORGANIZE", "Düzenlenecek dosya yok (alt klasörlerdekilere dokunulmaz)."));
+            return Err(fail(
+                "NOTHING_TO_ORGANIZE",
+                "Düzenlenecek dosya yok (alt klasörlerdekilere dokunulmaz).",
+            ));
         }
-        return Ok(preview_of(&planned, &new_folders.into_iter().collect::<Vec<_>>()));
+        return Ok(preview_of(
+            &planned,
+            &new_folders.into_iter().collect::<Vec<_>>(),
+        ));
     }
     for file in regular_files(&folder, false, limit) {
         let bucket = if by_month {

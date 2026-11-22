@@ -74,7 +74,11 @@ fn catastrophic() -> &'static [Regex] {
 }
 
 pub fn is_forbidden(command: &str) -> bool {
-    let patterns = if full_access() { catastrophic() } else { forbidden() };
+    let patterns = if full_access() {
+        catastrophic()
+    } else {
+        forbidden()
+    };
     patterns.iter().any(|pattern| pattern.is_match(command))
 }
 
@@ -139,6 +143,63 @@ const READ_ONLY_PROGRAMS: &[&str] = &[
     "get-process",
     "get-date",
     "dir",
+    // Windows: inspection cmdlets and the tools cmd.exe has; reading the state of the computer needs no approval, as `pmset -g batt` does on a Mac.
+    "get-item",
+    "get-itemproperty",
+    "get-help",
+    "get-computerinfo",
+    "get-service",
+    "get-command",
+    "get-filehash",
+    "get-member",
+    "get-ciminstance",
+    "get-wmiobject",
+    "get-volume",
+    "get-disk",
+    "get-physicaldisk",
+    "get-psdrive",
+    "get-netipaddress",
+    "get-netipconfiguration",
+    "get-netadapter",
+    "get-netconnectionprofile",
+    "get-nettcpconnection",
+    "get-clipboard",
+    "get-timezone",
+    "get-culture",
+    "get-hotfix",
+    "get-appxpackage",
+    "get-executionpolicy",
+    "get-random",
+    "select-string",
+    "select-object",
+    "where-object",
+    "sort-object",
+    "measure-object",
+    "format-table",
+    "format-list",
+    "out-string",
+    "convertto-json",
+    "write-output",
+    "test-path",
+    "test-connection",
+    "resolve-dnsname",
+    "tasklist",
+    "systeminfo",
+    "findstr",
+    "where",
+    "ver",
+    "netstat",
+    // macOS and Linux extras.
+    "printenv",
+    "id",
+    "who",
+    "w",
+    "last",
+    "nproc",
+    "locale",
+    "getconf",
+    "lspci",
+    "lsusb",
 ];
 const VERSION_ONLY_PROGRAMS: &[&str] = &[
     "node", "npm", "npx", "python", "python3", "pip", "pip3", "brew", "java", "swift", "go",
@@ -170,6 +231,10 @@ fn package_read(program: &str) -> &'static [&'static str] {
         "docker" => &["ps", "images", "version", "info"],
         // System readings: read-only only with these first arguments (`defaults read` is, `defaults write` is not).
         "pmset" => &["-g"],
+        "winget" => &["list", "search", "show", "source"],
+        "diskutil" => &["list", "info"],
+        "launchctl" => &["list", "print"],
+        "softwareupdate" => &["-l", "--list"],
         "defaults" => &["read", "domains", "read-type", "find"],
         "scutil" => &["--get", "--dns", "--proxy", "--nwi"],
         "ipconfig" => &[
@@ -197,8 +262,133 @@ fn package_read(program: &str) -> &'static [&'static str] {
     }
 }
 
+/// PowerShell inspection pipelines such as `Get-CimInstance Win32_Battery | Select EstimatedChargeRemaining` or
+/// `(Get-CimInstance Win32_OperatingSystem).LastBootUpTime`. They use `$_`, braces and parentheses, which the plain rule keeps out of a read, so they are
+/// judged here: every stage is a known inspection cmdlet, and nothing in the text may change, start, stop, write or call a method.
+fn is_powershell_read(command: &str) -> bool {
+    static RULES: OnceLock<(Regex, Regex, Regex, Regex)> = OnceLock::new();
+    let (mutating, method, assign, outside) = RULES.get_or_init(|| {
+        (
+            Regex::new(r"(?i)\b(?:invoke|start|stop|restart|remove|set|new|add|clear|copy|move|rename|export|import|register|unregister|enable|disable|install|uninstall|update|tee|expand|compress|save|send|push|mount|dismount|initialize|repair|reset|resume|suspend|grant|revoke|block|unblock|restore|enter|exit|connect|disconnect|use|out-file|out-printer|out-gridview|write-error|write-eventlog)-|\b(?:iex|icm|saps|sal|sv|si|ni|ri|rm|rd|del|erase|cp|mv|mi|rni|ac|sc|kill|spps|spsv|sasv|sleep|start|call)\b").unwrap(),
+            Regex::new(r"\.\s*[A-Za-z_]\w*\s*\(|::|\[\s*system\.|\bnew-object\b").unwrap(),
+            Regex::new(r"\$[\w:]+\s*[+\-*/]?=").unwrap(),
+            Regex::new(r"(^|[\s\x22\x27=])/|[A-Za-z]:[\\/]|\\\\|\.\.|~|\$[A-Za-z]").unwrap(),
+        )
+    });
+    const STAGES: &[&str] = &[
+        "select",
+        "select-object",
+        "where",
+        "where-object",
+        "sort-object",
+        "measure",
+        "measure-object",
+        "ft",
+        "format-table",
+        "fl",
+        "format-list",
+        "out-string",
+        "convertto-json",
+        "write-output",
+        "first",
+        "gps",
+        "gcim",
+        "gwmi",
+        "gsv",
+        "gc",
+        "gci",
+        "gi",
+        "gp",
+        "gcm",
+        "gtz",
+    ];
+    const FILE_READERS: &[&str] = &[
+        "get-content",
+        "gc",
+        "type",
+        "cat",
+        "get-childitem",
+        "gci",
+        "ls",
+        "dir",
+        "get-item",
+        "gi",
+        "get-itemproperty",
+        "gp",
+        "get-filehash",
+        "select-string",
+        "test-path",
+    ];
+    let lead = command
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    if !(lead.starts_with("get-")
+        || lead.starts_with('(')
+        || STAGES.contains(&lead.as_str())
+        || matches!(lead.as_str(), "test-connection" | "resolve-dnsname"))
+    {
+        return false;
+    }
+    if command.contains(['`', '<', '>', '&', '%', ';'])
+        || mutating.is_match(command)
+        || method.is_match(command)
+        || assign.is_match(command)
+    {
+        return false;
+    }
+    // A group or script block may only start with a value, an operator, a variable or another inspection cmdlet: `(taskkill ...)` or `{ cmd /c ... }` would
+    // run a program from inside an argument, which is what the plain rule keeps out of a read.
+    let opens_known = |word: &str| {
+        let word = word.to_lowercase();
+        word.is_empty()
+            || word.starts_with(['$', '-', '\'', '"', '@', '!', '[', ')', '}'])
+            || word.chars().next().is_some_and(|c| c.is_ascii_digit())
+            || word.starts_with("get-")
+            || STAGES.contains(&word.as_str())
+            || READ_ONLY_PROGRAMS.contains(&word.as_str())
+    };
+    for (at, _) in command.match_indices(['(', '{']) {
+        let word = command[at + 1..]
+            .trim_start()
+            .split(|c: char| c.is_whitespace() || "(){}|,".contains(c))
+            .next()
+            .unwrap_or("");
+        if !opens_known(word) {
+            return false;
+        }
+    }
+    // Quotes inside a pipe stage are fine, but a pipe inside braces or parentheses is not split here: its stages would not start with a cmdlet and the read is refused.
+    let stages: Vec<String> = command
+        .split('|')
+        .map(|stage| stage.trim().trim_start_matches(['(', ' ']).to_string())
+        .filter(|stage| !stage.is_empty())
+        .collect();
+    if stages.is_empty() {
+        return false;
+    }
+    stages.iter().all(|stage| {
+        let first = stage.split_whitespace().next().unwrap_or("").to_lowercase();
+        let first = first.trim_start_matches('(');
+        let known = first.starts_with("get-")
+            || STAGES.contains(&first)
+            || READ_ONLY_PROGRAMS.contains(&first);
+        // A cmdlet that opens files keeps the strict rule: no path outside the session folder, no variable that could name one.
+        known && !(FILE_READERS.contains(&first) && outside.is_match(stage))
+    })
+}
+
 /// Conservative: anything that is not clearly an inspection needs a "full" grant.
 pub fn is_read_only(command: &str) -> bool {
+    // `/all` looks like an absolute path to the rule below, so the two harmless spellings of the Windows command are named here.
+    if matches!(
+        command.trim().to_lowercase().as_str(),
+        "ipconfig" | "ipconfig /all"
+    ) || is_powershell_read(command)
+    {
+        return true;
+    }
     static SHAPES: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
     let (absolute, redirect_ok, flags) = SHAPES.get_or_init(|| {
         (
@@ -251,7 +441,9 @@ pub fn is_read_only(command: &str) -> bool {
                 | "--stable" | "--check" | "-k" | "-t" => true,
                 _ => {
                     if let Some(flags) = word.strip_prefix('-') {
-                        flags.bytes().all(|flag| b"bCcdfghiMnRrsuVz".contains(&flag))
+                        flags
+                            .bytes()
+                            .all(|flag| b"bCcdfghiMnRrsuVz".contains(&flag))
                     } else {
                         // Quoting, escapes and globs can change the arguments the shell passes.
                         word.bytes()
@@ -263,20 +455,38 @@ pub fn is_read_only(command: &str) -> bool {
                 let Some(sub) = rest.first() else {
                     return false;
                 };
-                if !GIT_READ.contains(sub) || rest.iter().any(|word| {
-                    matches!(word.split('=').next(), Some("--output" | "--ext-diff" | "--textconv"))
-                }) {
+                if !GIT_READ.contains(sub)
+                    || rest.iter().any(|word| {
+                        matches!(
+                            word.split('=').next(),
+                            Some("--output" | "--ext-diff" | "--textconv")
+                        )
+                    })
+                {
                     return false;
                 }
                 match *sub {
                     "config" => rest
                         .iter()
                         .any(|word| matches!(*word, "--get" | "--list" | "-l")),
-                    "branch" => rest[1..].iter().all(|word| matches!(*word,
-                        "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current"
-                    )),
-                    "tag" => rest[1..].iter().all(|word| matches!(*word, "-l" | "--list")),
-                    "remote" => rest[1..].iter().all(|word| matches!(*word, "-v" | "--verbose")),
+                    "branch" => rest[1..].iter().all(|word| {
+                        matches!(
+                            *word,
+                            "-a" | "-r"
+                                | "-v"
+                                | "-vv"
+                                | "--all"
+                                | "--remotes"
+                                | "--list"
+                                | "--show-current"
+                        )
+                    }),
+                    "tag" => rest[1..]
+                        .iter()
+                        .all(|word| matches!(*word, "-l" | "--list")),
+                    "remote" => rest[1..]
+                        .iter()
+                        .all(|word| matches!(*word, "-v" | "--verbose")),
                     _ => true,
                 }
             }
@@ -514,10 +724,54 @@ mod tests {
 
     #[test]
     fn a_read_never_runs_code_from_inside_an_argument() {
-        for command in ["ls *(e:'touch pwned':)", "cat =(touch pwned)", "echo (New-Item pwned)", "echo {a,b}"] {
+        for command in [
+            "ls *(e:'touch pwned':)",
+            "cat =(touch pwned)",
+            "echo (New-Item pwned)",
+            "echo {a,b}",
+        ] {
             assert!(!is_read_only(command), "{command}");
         }
         assert!(is_read_only("ls -la"));
+    }
+
+    #[test]
+    fn powershell_inspection_is_a_read_and_anything_that_changes_is_not() {
+        for command in [
+            "Get-CimInstance Win32_Battery | Select EstimatedChargeRemaining,BatteryStatus",
+            "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime",
+            "Get-Process | Where-Object { $_.MainWindowTitle } | Select Name,MainWindowTitle",
+            "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5",
+            "Get-PSDrive -PSProvider FileSystem | Select Name,Used,Free",
+            "Get-NetIPConfiguration",
+            "Get-Service | Where-Object Status -eq Running",
+            "Get-Content notes.txt | Select-String error",
+            "winget list",
+            "ipconfig /all",
+            "tasklist",
+            "systeminfo",
+        ] {
+            assert!(is_read_only(command), "{command}");
+        }
+        for command in [
+            "Get-Process | ForEach-Object { taskkill /f /im x }",
+            "Get-Process | Where-Object { taskkill /f /im x }",
+            "Get-Content (cmd /c del x)",
+            "Get-Process | Stop-Process",
+            "(Get-Item a.txt).Delete()",
+            "Get-ChildItem | Remove-Item",
+            "Get-Date; Remove-Item a",
+            "Get-Content $env:USERPROFILE\\secret.txt",
+            "Get-Content C:\\Users\\x\\a.txt",
+            "Get-Process > out.txt",
+            "Get-Process | Out-File out.txt",
+            "[IO.File]::Delete('a')",
+            "$x = Get-Date",
+            "winget install x",
+            "ipconfig /release",
+        ] {
+            assert!(!is_read_only(command), "{command}");
+        }
     }
 
     #[test]

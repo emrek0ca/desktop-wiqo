@@ -383,7 +383,11 @@ fn open_browser(url: &str) {
 
 fn parse_discover_link(link: &str) -> Option<DiscoverLink> {
     let url = tauri::Url::parse(link).ok()?;
-    if url.scheme() != "wiqo" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+    if url.scheme() != "wiqo"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
         return None;
     }
     let code = url.path().strip_prefix('/')?;
@@ -509,8 +513,33 @@ async fn artifact_save(
         clean
     };
     // Only document and picture types are opened with the system handler; a script, shortcut or app file is saved but never launched.
-    let extension = name.rsplit_once('.').map(|(_, ext)| ext.to_lowercase()).unwrap_or_default();
-    let open = open && matches!(extension.as_str(), "pdf" | "docx" | "doc" | "xlsx" | "xls" | "pptx" | "ppt" | "csv" | "txt" | "md" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "rtf" | "json" | "zip");
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_lowercase())
+        .unwrap_or_default();
+    let open = open
+        && matches!(
+            extension.as_str(),
+            "pdf"
+                | "docx"
+                | "doc"
+                | "xlsx"
+                | "xls"
+                | "pptx"
+                | "ppt"
+                | "csv"
+                | "txt"
+                | "md"
+                | "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "webp"
+                | "heic"
+                | "rtf"
+                | "json"
+                | "zip"
+        );
     let mut path = folder.join(&name);
     let (stem, ext) = match name.rsplit_once('.') {
         Some((stem, ext)) => (stem.to_string(), format!(".{ext}")),
@@ -599,13 +628,26 @@ async fn skills_list(app: State<'_, App>) -> Reply<serde_json::Value> {
 
 #[tauri::command]
 async fn skill_action(app: State<'_, App>, id: u64, action: String) -> Reply<serde_json::Value> {
-    app.desktop.chat.skill_action(id, &action).await.map_err(text)
+    app.desktop
+        .chat
+        .skill_action(id, &action)
+        .await
+        .map_err(text)
 }
 
 /// Keşfet: one call to the server's `missions/` API (the feed, a Mission, publishing, likes, comments, people, notices).
 #[tauri::command]
-async fn missions_call(app: State<'_, App>, method: String, path: String, body: Option<serde_json::Value>) -> Reply<serde_json::Value> {
-    app.desktop.chat.missions(&method, &path, body).await.map_err(text)
+async fn missions_call(
+    app: State<'_, App>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Reply<serde_json::Value> {
+    app.desktop
+        .chat
+        .missions(&method, &path, body)
+        .await
+        .map_err(text)
 }
 
 #[tauri::command]
@@ -624,7 +666,11 @@ fn take_discover_link(app: State<'_, App>) -> Reply<Option<DiscoverLink>> {
 /// Recipe packs: the list (no id) or one pack added to the person's recipes.
 #[tauri::command]
 async fn skill_packs(app: State<'_, App>, import: Option<String>) -> Reply<serde_json::Value> {
-    app.desktop.chat.skill_packs(import.as_deref()).await.map_err(text)
+    app.desktop
+        .chat
+        .skill_packs(import.as_deref())
+        .await
+        .map_err(text)
 }
 
 /// "Bir kez göster": start, stop (the steps come back to be read), cancel, and the steps sent to become a recipe.
@@ -649,8 +695,16 @@ fn recording_since(app: State<'_, App>) -> Option<String> {
 }
 
 #[tauri::command]
-async fn record_to_skill(app: State<'_, App>, events: serde_json::Value, note: Option<String>) -> Reply<serde_json::Value> {
-    app.desktop.chat.skill_from_recording(events, note.as_deref()).await.map_err(text)
+async fn record_to_skill(
+    app: State<'_, App>,
+    events: serde_json::Value,
+    note: Option<String>,
+) -> Reply<serde_json::Value> {
+    app.desktop
+        .chat
+        .skill_from_recording(events, note.as_deref())
+        .await
+        .map_err(text)
 }
 
 /// This computer's screen memory: its state, on/off (here only), pause/resume/forget and the applications never read.
@@ -675,8 +729,15 @@ fn set_screen_memory(app: State<'_, App>, on: bool) -> Reply<serde_json::Value> 
 }
 
 #[tauri::command]
-fn screen_memory_action(app: State<'_, App>, action: String, hours: Option<i64>, excluded: Option<Vec<String>>) -> Reply<serde_json::Value> {
-    app.desktop.screen_memory_action(&action, hours, excluded).map_err(text)
+fn screen_memory_action(
+    app: State<'_, App>,
+    action: String,
+    hours: Option<i64>,
+    excluded: Option<Vec<String>>,
+) -> Reply<serde_json::Value> {
+    app.desktop
+        .screen_memory_action(&action, hours, excluded)
+        .map_err(text)
 }
 
 /// The Ajanlar list: reminders, routines, watches, jobs, to-dos, goals and helpers.

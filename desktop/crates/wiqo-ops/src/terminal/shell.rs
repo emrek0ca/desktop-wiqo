@@ -482,18 +482,33 @@ pub fn windows_powershell() -> &'static str {
     static FOUND: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
     FOUND.get_or_init(|| {
         let on_path = std::env::var_os("PATH")
-            .map(|path| std::env::split_paths(&path).any(|dir| dir.join("pwsh.exe").is_file() || dir.join("pwsh").is_file()))
+            .map(|path| {
+                std::env::split_paths(&path)
+                    .any(|dir| dir.join("pwsh.exe").is_file() || dir.join("pwsh").is_file())
+            })
             .unwrap_or(false);
-        let installed = std::env::var_os("ProgramFiles").is_some_and(|dir| PathBuf::from(dir).join("PowerShell").join("7").join("pwsh.exe").is_file());
-        if on_path || installed { "pwsh" } else { "powershell" }
+        let installed = std::env::var_os("ProgramFiles").is_some_and(|dir| {
+            PathBuf::from(dir)
+                .join("PowerShell")
+                .join("7")
+                .join("pwsh.exe")
+                .is_file()
+        });
+        if on_path || installed {
+            "pwsh"
+        } else {
+            "powershell"
+        }
     })
 }
 
 /// A small set of inspections with no quoting or shell state runs as a native process.
 fn direct_inspection(command: &str) -> Option<(&str, impl Iterator<Item = &str>)> {
-    if !command.bytes().all(|byte| {
-        byte.is_ascii_alphanumeric() || b" ._-/=:+@".contains(&byte)
-    }) || !super::policy::is_read_only(command) {
+    if !command
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b" ._-/=:+@".contains(&byte))
+        || !super::policy::is_read_only(command)
+    {
         return None;
     }
     let mut words = command.split_ascii_whitespace();
@@ -501,7 +516,10 @@ fn direct_inspection(command: &str) -> Option<(&str, impl Iterator<Item = &str>)
     let supported = if cfg!(windows) {
         program == "git"
     } else {
-        matches!(program, "git" | "ls" | "cat" | "head" | "tail" | "wc" | "grep" | "rg" | "stat")
+        matches!(
+            program,
+            "git" | "ls" | "cat" | "head" | "tail" | "wc" | "grep" | "rg" | "stat"
+        )
     };
     supported.then_some((program, words))
 }
@@ -517,27 +535,47 @@ pub fn run_tracked(
     control: &Control,
 ) -> Outcome {
     let interactive = control.input.is_some();
-    if !interactive && shell.is_none() && exports.is_none_or(str::is_empty)
+    if !interactive
+        && shell.is_none()
+        && exports.is_none_or(str::is_empty)
         && matches!(scope, Some(WriteScope::ReadOnly))
     {
         if let Some((program, args)) = direct_inspection(command) {
             let env = environment(working);
-            let executable = env.get("PATH").or_else(|| env.get("Path"))
+            let executable = env
+                .get("PATH")
+                .or_else(|| env.get("Path"))
                 .into_iter()
                 .flat_map(std::env::split_paths)
                 .filter(|directory| directory.is_absolute())
-                .map(|directory| directory.join(if cfg!(windows) { format!("{program}.exe") } else { program.to_string() }))
+                .map(|directory| {
+                    directory.join(if cfg!(windows) {
+                        format!("{program}.exe")
+                    } else {
+                        program.to_string()
+                    })
+                })
                 .find(|path| path.is_file());
             if let Some(executable) = executable {
                 let mut process = if cfg!(target_os = "macos") {
                     let mut sandboxed = crate::process::command("/usr/bin/sandbox-exec");
-                    sandboxed.args(["-p", &sandbox_profile(&WriteScope::ReadOnly)]).arg(executable);
+                    sandboxed
+                        .args(["-p", &sandbox_profile(&WriteScope::ReadOnly)])
+                        .arg(executable);
                     sandboxed
                 } else {
                     crate::process::command(executable)
                 };
-                process.args(args).current_dir(working).env_clear().envs(env);
-                return finish(run(process, seconds, control), Some(working.to_path_buf()), None);
+                process
+                    .args(args)
+                    .current_dir(working)
+                    .env_clear()
+                    .envs(env);
+                return finish(
+                    run(process, seconds, control),
+                    Some(working.to_path_buf()),
+                    None,
+                );
             }
         }
     }
@@ -722,7 +760,12 @@ mod tests {
         let (program, args) = direct_inspection("git status --short").unwrap();
         assert_eq!(program, "git");
         assert_eq!(args.collect::<Vec<_>>(), ["status", "--short"]);
-        for command in ["git status && git log", "git status\nls", "git diff --output=a", "git status 'a b'"] {
+        for command in [
+            "git status && git log",
+            "git status\nls",
+            "git diff --output=a",
+            "git status 'a b'",
+        ] {
             assert!(direct_inspection(command).is_none(), "{command}");
         }
     }
@@ -825,11 +868,27 @@ mod live_output_tests {
         let seen: Arc<Mutex<Vec<String>>> = Arc::default();
         let sink = seen.clone();
         let control = Control {
-            progress: Some(Arc::new(move |output: Value| sink.lock().expect("seen").push(output["stdout"].as_str().unwrap_or("").to_string()))),
+            progress: Some(Arc::new(move |output: Value| {
+                sink.lock()
+                    .expect("seen")
+                    .push(output["stdout"].as_str().unwrap_or("").to_string())
+            })),
             ..Control::default()
         };
-        let _ = run_tracked("echo one; sleep 2; echo two", &std::env::temp_dir(), 20, None, None, None, &control);
+        let _ = run_tracked(
+            "echo one; sleep 2; echo two",
+            &std::env::temp_dir(),
+            20,
+            None,
+            None,
+            None,
+            &control,
+        );
         let seen = seen.lock().expect("seen");
-        assert!(seen.iter().any(|text| text.contains("one") && !text.contains("two")), "the first part was told while the command still ran: {seen:?}");
+        assert!(
+            seen.iter()
+                .any(|text| text.contains("one") && !text.contains("two")),
+            "the first part was told while the command still ran: {seen:?}"
+        );
     }
 }

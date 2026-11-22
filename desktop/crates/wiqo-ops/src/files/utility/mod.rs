@@ -108,7 +108,10 @@ fn preview_of(moves: &[(PathBuf, PathBuf)], made: &[PathBuf]) -> Done {
         .collect();
     Done::new(
         format!("{} dosya değişecek; hiçbirine dokunulmadı.", moves.len()),
-        Some(data("filePreview", json!({ "moves": lines, "count": moves.len(), "newFolders": made.iter().map(|path| fsx::abbreviate(path)).collect::<Vec<_>>() }))),
+        Some(data(
+            "filePreview",
+            json!({ "moves": lines, "count": moves.len(), "newFolders": made.iter().map(|path| fsx::abbreviate(path)).collect::<Vec<_>>() }),
+        )),
     )
 }
 

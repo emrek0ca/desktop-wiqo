@@ -44,7 +44,9 @@ pub struct Memory {
 }
 
 fn day(at: i64) -> String {
-    chrono::DateTime::from_timestamp(at, 0).map(|time| time.format("%Y-%m-%d").to_string()).unwrap_or_default()
+    chrono::DateTime::from_timestamp(at, 0)
+        .map(|time| time.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
 }
 
 fn clip(text: &str, most: usize) -> String {
@@ -53,16 +55,34 @@ fn clip(text: &str, most: usize) -> String {
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("git").arg("-C").arg(root).args(args).stdin(std::process::Stdio::null()).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 impl Memory {
     /// The memory of one project: `<data>/project-memory/<folder name>-<hash of its path>/`, outside the project so its files and its git stay as they are.
     pub fn of(data: &Path, root: &Path) -> Option<Memory> {
         let digest = sha2::Sha256::digest(root.to_string_lossy().as_bytes());
-        let hash: String = digest.iter().take(4).map(|byte| format!("{byte:02x}")).collect();
-        let name: String = root.file_name()?.to_string_lossy().chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').take(40).collect();
+        let hash: String = digest
+            .iter()
+            .take(4)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let name: String = root
+            .file_name()?
+            .to_string_lossy()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .take(40)
+            .collect();
         let folder = data.join("project-memory").join(format!("{name}-{hash}"));
         std::fs::create_dir_all(&folder).ok()?;
         Some(Memory { folder })
@@ -77,11 +97,18 @@ impl Memory {
     }
 
     fn runs(&self) -> Vec<Value> {
-        std::fs::read_to_string(self.folder.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|line| serde_json::from_str(line).ok()).collect()
+        std::fs::read_to_string(self.folder.join("runs.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
     }
 
     fn commands(&self) -> BTreeMap<String, Value> {
-        std::fs::read_to_string(self.folder.join("commands.json")).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+        std::fs::read_to_string(self.folder.join("commands.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
     }
 
     /// Writes a finished run: the line, the command counts, and the commit the project was left at.
@@ -99,23 +126,40 @@ impl Memory {
 
         let mut commands = self.commands();
         for (label, passed) in &run.checks {
-            let entry = commands.entry(label.clone()).or_insert_with(|| json!({ "ok": 0, "fail": 0 }));
+            let entry = commands
+                .entry(label.clone())
+                .or_insert_with(|| json!({ "ok": 0, "fail": 0 }));
             let key = if *passed { "ok" } else { "fail" };
             entry[key] = json!(entry[key].as_i64().unwrap_or(0) + 1);
             entry[if *passed { "last_ok" } else { "last_fail" }] = json!(now);
             if !*passed {
-                entry["last_error"] = json!(run.errors.first().map(|error| clip(error, 160)).unwrap_or_default());
+                entry["last_error"] = json!(run
+                    .errors
+                    .first()
+                    .map(|error| clip(error, 160))
+                    .unwrap_or_default());
             }
         }
         // The least used are dropped first when there are too many.
         if commands.len() > 40 {
-            let mut keys: Vec<(String, i64)> = commands.iter().map(|(label, entry)| (label.clone(), entry["ok"].as_i64().unwrap_or(0) + entry["fail"].as_i64().unwrap_or(0))).collect();
+            let mut keys: Vec<(String, i64)> = commands
+                .iter()
+                .map(|(label, entry)| {
+                    (
+                        label.clone(),
+                        entry["ok"].as_i64().unwrap_or(0) + entry["fail"].as_i64().unwrap_or(0),
+                    )
+                })
+                .collect();
             keys.sort_by_key(|(_, uses)| *uses);
             for (label, _) in keys.into_iter().take(commands.len() - 40) {
                 commands.remove(&label);
             }
         }
-        let _ = std::fs::write(self.folder.join("commands.json"), serde_json::to_string_pretty(&commands).unwrap_or_default());
+        let _ = std::fs::write(
+            self.folder.join("commands.json"),
+            serde_json::to_string_pretty(&commands).unwrap_or_default(),
+        );
     }
 
     /// The commands that have passed here, best first (passes minus failures, then the newest): what a project's own checks turned out to be.
@@ -123,24 +167,50 @@ impl Memory {
         let mut found: Vec<(i64, i64, String)> = self
             .commands()
             .into_iter()
-            .filter(|(label, entry)| entry["ok"].as_i64().unwrap_or(0) > entry["fail"].as_i64().unwrap_or(0) && !label.contains("curl ") && !label.contains("hiç test çalışmadı"))
-            .map(|(label, entry)| (entry["ok"].as_i64().unwrap_or(0) - entry["fail"].as_i64().unwrap_or(0), entry["last_ok"].as_i64().unwrap_or(0), label))
+            .filter(|(label, entry)| {
+                entry["ok"].as_i64().unwrap_or(0) > entry["fail"].as_i64().unwrap_or(0)
+                    && !label.contains("curl ")
+                    && !label.contains("hiç test çalışmadı")
+            })
+            .map(|(label, entry)| {
+                (
+                    entry["ok"].as_i64().unwrap_or(0) - entry["fail"].as_i64().unwrap_or(0),
+                    entry["last_ok"].as_i64().unwrap_or(0),
+                    label,
+                )
+            })
             .collect();
         found.sort_by(|a, b| b.cmp(a));
-        found.into_iter().map(|(_, _, label)| label).take(SHOWN_COMMANDS).collect()
+        found
+            .into_iter()
+            .map(|(_, _, label)| label)
+            .take(SHOWN_COMMANDS)
+            .collect()
     }
 
     /// The files this project's runs touched most (relative to the project), most first: where the work tends to be.
     pub fn hot_files(&self, most: usize) -> Vec<String> {
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for run in self.runs() {
-            for file in run["files"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            for file in run["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 *counts.entry(file.to_string()).or_insert(0) += 1;
             }
         }
-        let mut ranked: Vec<(usize, String)> = counts.into_iter().map(|(file, count)| (count, file)).collect();
+        let mut ranked: Vec<(usize, String)> = counts
+            .into_iter()
+            .map(|(file, count)| (count, file))
+            .collect();
         ranked.sort_by(|a, b| b.cmp(a));
-        ranked.into_iter().map(|(_, file)| file).take(most).collect()
+        ranked
+            .into_iter()
+            .map(|(_, file)| file)
+            .take(most)
+            .collect()
     }
 
     /// Adds what the person said to do or not do, once each (the same words are not written twice); the ones that were new.
@@ -153,7 +223,10 @@ impl Memory {
         let mut added = Vec::new();
         for rule in rules {
             if !text.to_lowercase().contains(&rule.to_lowercase()) {
-                text.push_str(&format!("- {rule} ({})\n", day(chrono::Utc::now().timestamp())));
+                text.push_str(&format!(
+                    "- {rule} ({})\n",
+                    day(chrono::Utc::now().timestamp())
+                ));
                 added.push(rule.clone());
             }
         }
@@ -165,7 +238,10 @@ impl Memory {
 
     pub fn rules(&self) -> String {
         let text = std::fs::read_to_string(self.rules_file()).unwrap_or_default();
-        let lines: Vec<&str> = text.lines().filter(|line| line.trim_start().starts_with("- ")).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- "))
+            .collect();
         lines.join("\n").chars().take(RULES_CHARS).collect()
     }
 
@@ -174,7 +250,9 @@ impl Memory {
         let mut parts: Vec<String> = Vec::new();
         let rules = self.rules();
         if !rules.is_empty() {
-            parts.push(format!("SENİN KURALLARIN (kurallar.md; her zaman uy, değiştirmek için sor):\n{rules}"));
+            parts.push(format!(
+                "SENİN KURALLARIN (kurallar.md; her zaman uy, değiştirmek için sor):\n{rules}"
+            ));
         }
         let runs = self.runs();
         if !runs.is_empty() {
@@ -183,37 +261,87 @@ impl Memory {
                 .rev()
                 .take(SHOWN_RUNS)
                 .map(|run| {
-                    let files: Vec<&str> = run["files"].as_array().into_iter().flatten().filter_map(Value::as_str).take(4).collect();
-                    let errors: Vec<&str> = run["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).take(1).collect();
+                    let files: Vec<&str> = run["files"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .take(4)
+                        .collect();
+                    let errors: Vec<&str> = run["errors"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .take(1)
+                        .collect();
                     format!(
                         "- {}: {} → {}{}{}",
                         day(run["at"].as_i64().unwrap_or(0)),
                         clip(run["goal"].as_str().unwrap_or(""), 90),
                         run["outcome"].as_str().unwrap_or(""),
-                        if files.is_empty() { String::new() } else { format!("; dosyalar: {}", files.join(", ")) },
-                        if errors.is_empty() { String::new() } else { format!("; son hata: {}", errors[0]) }
+                        if files.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; dosyalar: {}", files.join(", "))
+                        },
+                        if errors.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; son hata: {}", errors[0])
+                        }
                     )
                 })
                 .collect();
-            parts.push(format!("BU PROJEDE ÖNCEKİ ÇALIŞMALAR (bir ipucu: bugün yeniden doğrula):\n{}", lines.join("\n")));
+            parts.push(format!(
+                "BU PROJEDE ÖNCEKİ ÇALIŞMALAR (bir ipucu: bugün yeniden doğrula):\n{}",
+                lines.join("\n")
+            ));
         }
         let hot = self.hot_files(8);
         if !hot.is_empty() {
-            parts.push(format!("BU PROJEDE EN ÇOK DOKUNULAN DOSYALAR (önceki çalışmalardan): {}", hot.join(", ")));
+            parts.push(format!(
+                "BU PROJEDE EN ÇOK DOKUNULAN DOSYALAR (önceki çalışmalardan): {}",
+                hot.join(", ")
+            ));
         }
         let proven = self.proven_commands();
         if !proven.is_empty() {
-            parts.push(format!("BU PROJEDE DAHA ÖNCE GEÇEN KOMUTLAR (önce bunları dene):\n{}", proven.iter().map(|command| format!("  {command}")).collect::<Vec<_>>().join("\n")));
+            parts.push(format!(
+                "BU PROJEDE DAHA ÖNCE GEÇEN KOMUTLAR (önce bunları dene):\n{}",
+                proven
+                    .iter()
+                    .map(|command| format!("  {command}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
         }
         let mut cautions: Vec<String> = self
             .commands()
             .into_iter()
-            .filter(|(_, entry)| entry["fail"].as_i64().unwrap_or(0) >= 2 && entry["last_fail"].as_i64().unwrap_or(0) >= entry["last_ok"].as_i64().unwrap_or(0))
-            .map(|(label, entry)| format!("  {label}: {} kez başarısız{}", entry["fail"], entry["last_error"].as_str().filter(|error| !error.is_empty()).map(|error| format!(" ({error})")).unwrap_or_default()))
+            .filter(|(_, entry)| {
+                entry["fail"].as_i64().unwrap_or(0) >= 2
+                    && entry["last_fail"].as_i64().unwrap_or(0)
+                        >= entry["last_ok"].as_i64().unwrap_or(0)
+            })
+            .map(|(label, entry)| {
+                format!(
+                    "  {label}: {} kez başarısız{}",
+                    entry["fail"],
+                    entry["last_error"]
+                        .as_str()
+                        .filter(|error| !error.is_empty())
+                        .map(|error| format!(" ({error})"))
+                        .unwrap_or_default()
+                )
+            })
             .collect();
         cautions.truncate(3);
         if !cautions.is_empty() {
-            parts.push(format!("DİKKAT (son denemelerde hep başarısız; aynısını körlemesine yineleme):\n{}", cautions.join("\n")));
+            parts.push(format!(
+                "DİKKAT (son denemelerde hep başarısız; aynısını körlemesine yineleme):\n{}",
+                cautions.join("\n")
+            ));
         }
         if let Some(since) = self.since_last_run(root, &runs) {
             parts.push(since);
@@ -228,11 +356,25 @@ impl Memory {
         let now = git(root, &["rev-parse", "--short", "HEAD"])?;
         let mut lines: Vec<String> = Vec::new();
         if now != head {
-            if let Some(log) = git(root, &["log", "--oneline", "-n", "6", &format!("{head}..HEAD")]).filter(|log| !log.is_empty()) {
-                lines.push(format!("{} yeni commit:\n{}", log.lines().count(), log.lines().map(|line| format!("  {line}")).collect::<Vec<_>>().join("\n")));
+            if let Some(log) = git(
+                root,
+                &["log", "--oneline", "-n", "6", &format!("{head}..HEAD")],
+            )
+            .filter(|log| !log.is_empty())
+            {
+                lines.push(format!(
+                    "{} yeni commit:\n{}",
+                    log.lines().count(),
+                    log.lines()
+                        .map(|line| format!("  {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ));
             }
         }
-        if let Some(stat) = git(root, &["diff", "--stat", "--stat-width=100", &head]).filter(|stat| !stat.is_empty()) {
+        if let Some(stat) = git(root, &["diff", "--stat", "--stat-width=100", &head])
+            .filter(|stat| !stat.is_empty())
+        {
             let last = stat.lines().last().unwrap_or("").trim().to_string();
             lines.push(format!("Son çalışmadan bu yana dosya değişikliği: {last}"));
         }
@@ -283,22 +425,53 @@ mod tests {
         memory.add_rules(&["testlere dokunma".to_string()]);
         memory.add_rules(&["Testlere dokunma".to_string()]);
         for _ in 0..2 {
-            memory.record(&root, &RunRecord { goal: "testleri düzelt".into(), outcome: "doğrulanmadı", files: vec!["a.js".into()], checks: vec![("npm test".into(), false), ("npx tsc --noEmit".into(), true)], errors: vec!["a.js:3 TS2322: tip".into()], minutes: 2 });
+            memory.record(
+                &root,
+                &RunRecord {
+                    goal: "testleri düzelt".into(),
+                    outcome: "doğrulanmadı",
+                    files: vec!["a.js".into()],
+                    checks: vec![
+                        ("npm test".into(), false),
+                        ("npx tsc --noEmit".into(), true),
+                    ],
+                    errors: vec!["a.js:3 TS2322: tip".into()],
+                    minutes: 2,
+                },
+            );
         }
         let brief = memory.brief(&root);
-        assert!(brief.contains("testlere dokunma") && brief.matches("testlere dokunma").count() == 1, "{brief}");
-        assert!(brief.contains("testleri düzelt") && brief.contains("doğrulanmadı"), "{brief}");
+        assert!(
+            brief.contains("testlere dokunma") && brief.matches("testlere dokunma").count() == 1,
+            "{brief}"
+        );
+        assert!(
+            brief.contains("testleri düzelt") && brief.contains("doğrulanmadı"),
+            "{brief}"
+        );
         assert!(brief.contains("npx tsc --noEmit"), "{brief}");
-        assert!(brief.contains("npm test: 2 kez başarısız (a.js:3 TS2322: tip)"), "{brief}");
-        assert_eq!(memory.proven_commands(), vec!["npx tsc --noEmit".to_string()]);
+        assert!(
+            brief.contains("npm test: 2 kez başarısız (a.js:3 TS2322: tip)"),
+            "{brief}"
+        );
+        assert_eq!(
+            memory.proven_commands(),
+            vec!["npx tsc --noEmit".to_string()]
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn the_sentences_that_set_a_limit_are_pinned() {
         let pins = constraints_of("Bu projede testleri düzelt, testlere dokunma. Sadece src klasöründe çalış. Güzel bir arayüz yap.");
-        assert!(pins.iter().any(|pin| pin.contains("testlere dokunma")) && pins.iter().any(|pin| pin.contains("Sadece src")), "{pins:?}");
+        assert!(
+            pins.iter().any(|pin| pin.contains("testlere dokunma"))
+                && pins.iter().any(|pin| pin.contains("Sadece src")),
+            "{pins:?}"
+        );
         assert!(!pins.iter().any(|pin| pin.contains("arayüz")), "{pins:?}");
-        assert!(constraints_of("Please do not touch the lockfile").iter().any(|pin| pin.contains("lockfile")));
+        assert!(constraints_of("Please do not touch the lockfile")
+            .iter()
+            .any(|pin| pin.contains("lockfile")));
     }
 }

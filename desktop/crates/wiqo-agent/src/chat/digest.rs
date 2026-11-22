@@ -31,9 +31,21 @@ fn located(line: &str) -> Option<Problem> {
     }
     // path(12,5): error TS2322: ...
     if let (Some(open), Some(close)) = (line.find('('), line.find("): ")) {
-        if open < close && line[open + 1..close].chars().all(|c| c.is_ascii_digit() || c == ',') && !line[..open].contains(' ') {
-            let place = format!("{}:{}", &line[..open], line[open + 1..close].split(',').next().unwrap_or(""));
-            return Some(Problem { place, message: short(line[close + 3..].trim_start_matches("error "), 160) });
+        if open < close
+            && line[open + 1..close]
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == ',')
+            && !line[..open].contains(' ')
+        {
+            let place = format!(
+                "{}:{}",
+                &line[..open],
+                line[open + 1..close].split(',').next().unwrap_or("")
+            );
+            return Some(Problem {
+                place,
+                message: short(line[close + 3..].trim_start_matches("error "), 160),
+            });
         }
     }
     // path:12:5: error: ...   (the path may contain a drive letter: C:\x\y.ts:12:5)
@@ -49,7 +61,10 @@ fn located(line: &str) -> Option<Problem> {
     }
     let mut rest: Vec<&str> = parts.collect();
     // The column, when the tool gives one.
-    if rest.first().is_some_and(|column| !column.is_empty() && column.chars().all(|c| c.is_ascii_digit())) {
+    if rest
+        .first()
+        .is_some_and(|column| !column.is_empty() && column.chars().all(|c| c.is_ascii_digit()))
+    {
         rest.remove(0);
     }
     let message = rest.join(":");
@@ -58,7 +73,13 @@ fn located(line: &str) -> Option<Problem> {
     if !(lower.starts_with("error") || lower.starts_with("fatal error")) {
         return None;
     }
-    Some(Problem { place: format!("{path}:{row}"), message: short(message.trim_start_matches(|c: char| c.is_ascii_digit() || c == ':' || c == ' '), 160) })
+    Some(Problem {
+        place: format!("{path}:{row}"),
+        message: short(
+            message.trim_start_matches(|c: char| c.is_ascii_digit() || c == ':' || c == ' '),
+            160,
+        ),
+    })
 }
 
 fn problems_in(output: &str) -> (Vec<Problem>, usize) {
@@ -72,26 +93,70 @@ fn problems_in(output: &str) -> (Vec<Problem>, usize) {
         let trimmed = line.trim_start();
         let mut problem: Option<Problem> = None;
         // Rust: `error[E0599]: message` and, on the next lines, `--> src/main.rs:12:5`
-        if (trimmed.starts_with("error[") || trimmed.starts_with("error:")) && !trimmed.starts_with("error: aborting") && !trimmed.starts_with("error: could not compile") {
-            let message = trimmed.split_once("]: ").map(|(_, rest)| rest).or_else(|| trimmed.strip_prefix("error: ")).unwrap_or(trimmed);
-            let place = lines.iter().skip(index + 1).take(4).find_map(|next| next.trim_start().strip_prefix("--> ").map(|at| at.trim().to_string()));
-            problem = Some(Problem { place: place.unwrap_or_default(), message: short(message, 160) });
+        if (trimmed.starts_with("error[") || trimmed.starts_with("error:"))
+            && !trimmed.starts_with("error: aborting")
+            && !trimmed.starts_with("error: could not compile")
+        {
+            let message = trimmed
+                .split_once("]: ")
+                .map(|(_, rest)| rest)
+                .or_else(|| trimmed.strip_prefix("error: "))
+                .unwrap_or(trimmed);
+            let place = lines.iter().skip(index + 1).take(4).find_map(|next| {
+                next.trim_start()
+                    .strip_prefix("--> ")
+                    .map(|at| at.trim().to_string())
+            });
+            problem = Some(Problem {
+                place: place.unwrap_or_default(),
+                message: short(message, 160),
+            });
         // pytest: `FAILED tests/test_a.py::test_b - AssertionError: assert 5 == 6`
-        } else if let Some(rest) = trimmed.strip_prefix("FAILED ").or_else(|| trimmed.strip_prefix("ERROR ")).filter(|rest| rest.contains("::") || rest.contains(".py")) {
+        } else if let Some(rest) = trimmed
+            .strip_prefix("FAILED ")
+            .or_else(|| trimmed.strip_prefix("ERROR "))
+            .filter(|rest| rest.contains("::") || rest.contains(".py"))
+        {
             let (place, message) = rest.split_once(" - ").unwrap_or((rest, ""));
-            problem = Some(Problem { place: place.trim().to_string(), message: short(message, 160) });
+            problem = Some(Problem {
+                place: place.trim().to_string(),
+                message: short(message, 160),
+            });
         // Jest / Vitest: `FAIL src/a.test.ts` and `● suite › test`
-        } else if let Some(rest) = trimmed.strip_prefix("FAIL ").filter(|rest| rest.contains('.') && !rest.contains(' ')) {
-            problem = Some(Problem { place: rest.to_string(), message: "testler düştü".to_string() });
+        } else if let Some(rest) = trimmed
+            .strip_prefix("FAIL ")
+            .filter(|rest| rest.contains('.') && !rest.contains(' '))
+        {
+            problem = Some(Problem {
+                place: rest.to_string(),
+                message: "testler düştü".to_string(),
+            });
         // Python traceback: the last line names the error, the line before the frame names the place.
         } else if trimmed.starts_with("File \"") && trimmed.contains(", line ") {
-            let place = trimmed.trim_start_matches("File \"").split('"').next().unwrap_or("").to_string() + ":" + trimmed.split(", line ").nth(1).and_then(|row| row.split(',').next()).unwrap_or("");
+            let place = trimmed
+                .trim_start_matches("File \"")
+                .split('"')
+                .next()
+                .unwrap_or("")
+                .to_string()
+                + ":"
+                + trimmed
+                    .split(", line ")
+                    .nth(1)
+                    .and_then(|row| row.split(',').next())
+                    .unwrap_or("");
             let message = lines.iter().skip(index + 1).take(6).find(|next| {
                 let t = next.trim_start();
-                !t.is_empty() && !t.starts_with("File \"") && next.chars().next().is_some_and(|c| !c.is_whitespace()) && t.contains("Error")
+                !t.is_empty()
+                    && !t.starts_with("File \"")
+                    && next.chars().next().is_some_and(|c| !c.is_whitespace())
+                    && t.contains("Error")
             });
             if let Some(message) = message {
-                problem = Some(Problem { place, message: short(message, 160) });
+                problem = Some(Problem {
+                    place,
+                    message: short(message, 160),
+                });
             }
         } else if let Some(found) = located(line) {
             problem = Some(found);
@@ -113,14 +178,28 @@ pub fn errors_of(output: &str) -> Option<String> {
     if problems.is_empty() {
         return None;
     }
-    let files: BTreeSet<&str> = problems.iter().filter_map(|problem| problem.place.rsplit_once(':').map(|(path, _)| path).or(Some(problem.place.as_str())).filter(|path| !path.is_empty())).collect();
+    let files: BTreeSet<&str> = problems
+        .iter()
+        .filter_map(|problem| {
+            problem
+                .place
+                .rsplit_once(':')
+                .map(|(path, _)| path)
+                .or(Some(problem.place.as_str()))
+                .filter(|path| !path.is_empty())
+        })
+        .collect();
     let mut lines = vec![format!(
         "HATA ÖZETİ: {total} hata satırı, {} ayrı hata, {} dosya. İlkleri sırayla (çıktının ortası kısaltılmış olabilir; bunlar tam taranmış çıktıdan):",
         problems.len(),
         files.len()
     )];
     for problem in problems.iter().take(MOST_LISTED) {
-        lines.push(if problem.place.is_empty() { format!("  - {}", problem.message) } else { format!("  - {}  {}", problem.place, problem.message) });
+        lines.push(if problem.place.is_empty() {
+            format!("  - {}", problem.message)
+        } else {
+            format!("  - {}  {}", problem.place, problem.message)
+        });
     }
     if problems.len() > MOST_LISTED {
         lines.push(format!("  … ve {} hata daha", problems.len() - MOST_LISTED));
@@ -136,7 +215,10 @@ mod tests {
     fn typescript_errors_are_listed_with_file_and_line() {
         let output = "src/a.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.\nsrc/b.ts(3,1): error TS2304: Cannot find name 'x'.\nFound 2 errors.";
         let digest = errors_of(output).expect("a digest");
-        assert!(digest.contains("src/a.ts:12  TS2322: Type 'string' is not assignable") && digest.contains("src/b.ts:3  TS2304: Cannot find name 'x'"));
+        assert!(
+            digest.contains("src/a.ts:12  TS2322: Type 'string' is not assignable")
+                && digest.contains("src/b.ts:3  TS2304: Cannot find name 'x'")
+        );
         assert!(digest.contains("2 ayrı hata, 2 dosya"));
     }
 
@@ -159,14 +241,21 @@ mod tests {
     #[test]
     fn pytest_failures_and_python_tracebacks_are_listed() {
         let output = "FAILED tests/test_hesap.py::test_toplam - assert 5 == 6\n1 failed, 3 passed in 0.31s\n";
-        assert!(errors_of(output).expect("a digest").contains("tests/test_hesap.py::test_toplam  assert 5 == 6"));
+        assert!(errors_of(output)
+            .expect("a digest")
+            .contains("tests/test_hesap.py::test_toplam  assert 5 == 6"));
         let trace = "Traceback (most recent call last):\n  File \"/tmp/a.py\", line 7, in <module>\n    boom()\nZeroDivisionError: division by zero\n";
-        assert!(errors_of(trace).expect("a digest").contains("/tmp/a.py:7  ZeroDivisionError: division by zero"));
+        assert!(errors_of(trace)
+            .expect("a digest")
+            .contains("/tmp/a.py:7  ZeroDivisionError: division by zero"));
     }
 
     #[test]
     fn a_search_hit_that_mentions_error_is_not_an_error() {
-        assert!(errors_of("src/a.rs:12:    let error = parse(x);\nsrc/b.rs:3:// error handling lives here\n").is_none());
+        assert!(errors_of(
+            "src/a.rs:12:    let error = parse(x);\nsrc/b.rs:3:// error handling lives here\n"
+        )
+        .is_none());
     }
 
     #[test]

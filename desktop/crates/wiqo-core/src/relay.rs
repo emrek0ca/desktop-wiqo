@@ -78,21 +78,53 @@ pub struct RemoteSession {
 }
 
 /// The phone's remoteScreen frame, when its signature holds: the session to join, with its key derived from the signing phone's pairing token.
-fn remote_session(runtime: &Runtime, request: &Request, raw_payload: &Value) -> Option<RemoteSession> {
+fn remote_session(
+    runtime: &Runtime,
+    request: &Request,
+    raw_payload: &Value,
+) -> Option<RemoteSession> {
     let phones = runtime.phones.list();
-    let signer = signer_of(request, raw_payload, phones.iter().map(|phone| (phone.pairing_id.as_str(), phone.token.as_str())), &runtime.nonces, Utc::now()).ok()?;
-    let token = phones.iter().find(|phone| phone.pairing_id == signer)?.token.clone();
+    let signer = signer_of(
+        request,
+        raw_payload,
+        phones
+            .iter()
+            .map(|phone| (phone.pairing_id.as_str(), phone.token.as_str())),
+        &runtime.nonces,
+        Utc::now(),
+    )
+    .ok()?;
+    let token = phones
+        .iter()
+        .find(|phone| phone.pairing_id == signer)?
+        .token
+        .clone();
     let value = &raw_payload["value"];
-    let session = value["sessionId"].as_str().filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))?;
-    let nonce = value["nonce"].as_str().filter(|nonce| (16..=128).contains(&nonce.len()))?;
+    let session = value["sessionId"].as_str().filter(|id| {
+        id.len() == 32
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    })?;
+    let nonce = value["nonce"]
+        .as_str()
+        .filter(|nonce| (16..=128).contains(&nonce.len()))?;
     let credentials = runtime.credentials.get()?;
     let base = credentials.api_base.trim_end_matches('/');
-    let socket = if let Some(rest) = base.strip_prefix("https://") { format!("wss://{rest}") } else if let Some(rest) = base.strip_prefix("http://") { format!("ws://{rest}") } else { base.to_string() };
+    let socket = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        base.to_string()
+    };
     Some(RemoteSession {
         socket_url: format!("{socket}/remote/socket?session={session}&role=host"),
         access_token: credentials.access_token,
         session_key: wiqo_contract::remote_session_key(&token, session, nonce),
-        max_width: value["maxWidth"].as_u64().map_or(1600, |width| width.clamp(480, 2560) as u32),
+        max_width: value["maxWidth"]
+            .as_u64()
+            .map_or(1600, |width| width.clamp(480, 2560) as u32),
     })
 }
 
@@ -123,7 +155,12 @@ fn registration(runtime: &Runtime) -> Value {
     // Only what this desktop really does: saving into a sub-folder of the Desktop.
     // "desktop.approvalGate": this companion asks before a press that cannot be taken back. The server sends desktop actions only to one that does.
     // "agent-pc-steps-v1": this desktop takes background tasks' PC steps with its automation pull and runs them as its own chat turns.
-    let mut features: Vec<&str> = vec!["artifact-directory-v1", "desktop.approvalGate", "agent-pc-steps-v1", "pc-jobs-v1"];
+    let mut features: Vec<&str> = vec![
+        "artifact-directory-v1",
+        "desktop.approvalGate",
+        "agent-pc-steps-v1",
+        "pc-jobs-v1",
+    ];
     let names = engine.operation_names();
     // fileUtility's inspect and moveDocuments actions: the server only plans them for a desktop that says it has them.
     if names.contains(&"fileUtility") {
@@ -181,7 +218,12 @@ fn parse_incoming(text: &str) -> Incoming {
                 .map(|watches| {
                     watches
                         .iter()
-                        .filter(|watch| watch["triggerId"].is_i64() && watch["url"].as_str().is_some_and(|url| url.starts_with("https://")))
+                        .filter(|watch| {
+                            watch["triggerId"].is_i64()
+                                && watch["url"]
+                                    .as_str()
+                                    .is_some_and(|url| url.starts_with("https://"))
+                        })
                         .cloned()
                         .collect()
                 })
@@ -193,9 +235,15 @@ fn parse_incoming(text: &str) -> Incoming {
                         .iter()
                         .filter(|unit| {
                             unit["unitId"].is_i64()
-                                && unit["requestId"].as_str().is_some_and(|id| !id.is_empty() && id.len() <= 128)
-                                && unit["conversationId"].as_str().is_some_and(|id| id.starts_with("agent-pc-"))
-                                && unit["prompt"].as_str().is_some_and(|text| !text.trim().is_empty())
+                                && unit["requestId"]
+                                    .as_str()
+                                    .is_some_and(|id| !id.is_empty() && id.len() <= 128)
+                                && unit["conversationId"]
+                                    .as_str()
+                                    .is_some_and(|id| id.starts_with("agent-pc-"))
+                                && unit["prompt"]
+                                    .as_str()
+                                    .is_some_and(|text| !text.trim().is_empty())
                         })
                         .cloned()
                         .collect()
@@ -267,7 +315,10 @@ async fn phone_frame(runtime: &Runtime, observer: &dyn Observer, frame: Value) {
     if request.kind == wiqo_contract::frames::REMOTE_SCREEN {
         match remote_session(runtime, &request, &frame["payload"]) {
             Some(session) => observer.remote_screen(session),
-            None => tracing::warn!("frame {} (remoteScreen): refused (signature, session or sign-in)", request.id),
+            None => tracing::warn!(
+                "frame {} (remoteScreen): refused (signature, session or sign-in)",
+                request.id
+            ),
         }
         return;
     }
@@ -684,7 +735,11 @@ mod frame_tests {
             r#"{"type":"automationSteps","steps":[{"stepId":4,"step":{"id":"c"}},{"step":{}}]}"#,
         ) {
             Incoming::AutomationSteps(steps, watches, units) => {
-                assert_eq!(steps, vec![(4, json!({ "id": "c" }))], "a step without its id is dropped");
+                assert_eq!(
+                    steps,
+                    vec![(4, json!({ "id": "c" }))],
+                    "a step without its id is dropped"
+                );
                 assert!(watches.is_empty());
                 assert!(units.is_empty());
             }
@@ -693,14 +748,22 @@ mod frame_tests {
         match parse_incoming(
             r#"{"type":"automationSteps","steps":[],"watches":[{"triggerId":7,"kind":"page","url":"https://mhrs.gov.tr/"},{"triggerId":8,"url":"http://x.test"}]}"#,
         ) {
-            Incoming::AutomationSteps(_, watches, _) => assert_eq!(watches.len(), 1, "only an https page with its trigger is read"),
+            Incoming::AutomationSteps(_, watches, _) => assert_eq!(
+                watches.len(),
+                1,
+                "only an https page with its trigger is read"
+            ),
             _ => panic!("automationSteps"),
         }
         match parse_incoming(
             r#"{"type":"automationSteps","steps":[],"agentSteps":[{"unitId":3,"requestId":"r1","conversationId":"agent-pc-9","prompt":"Raporu kaydet"},{"unitId":4,"requestId":"r2","conversationId":"phone-chat","prompt":"x"},{"unitId":5,"requestId":"","conversationId":"agent-pc-9","prompt":"x"}]}"#,
         ) {
             Incoming::AutomationSteps(_, _, units) => {
-                assert_eq!(units.len(), 1, "only a background task's own conversation, with an id and a prompt");
+                assert_eq!(
+                    units.len(),
+                    1,
+                    "only a background task's own conversation, with an id and a prompt"
+                );
                 assert_eq!(units[0]["unitId"], 3);
             }
             _ => panic!("automationSteps"),

@@ -245,7 +245,10 @@ fn steps_stop_when_one_cannot_be_seen_to_work() {
     assert_eq!(code, None);
     assert_eq!(data["value"]["verified"], false);
     assert_eq!(data["value"]["stepsLeft"], 1);
-    assert!(data["value"]["note"].as_str().unwrap().contains("kalan 1 adım"));
+    assert!(data["value"]["note"]
+        .as_str()
+        .unwrap()
+        .contains("kalan 1 adım"));
     assert_eq!(
         data["value"]["evidence"].as_array().unwrap().len(),
         1,
@@ -287,13 +290,31 @@ fn a_form_is_filled_field_by_field_by_name_and_read_back_with_one_look_at_the_en
         inner: Script::new(vec![
             displays(),
             (vec!["snapshot"], form("f1", "", "eski@ornek.com", false)),
-            (vec!["mouse-click"], json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_unverified" } } })),
-            (vec!["press"], json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_unverified" } } })),
+            (
+                vec!["mouse-click"],
+                json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_unverified" } } }),
+            ),
+            (
+                vec!["press"],
+                json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_unverified" } } }),
+            ),
             (vec!["type", "@f1:e1"], typed.clone()),
-            (vec!["get", "@f1:e1"], json!({ "ok": true, "data": { "property": "value", "value": "Ayşe Yılmaz" } })),
-            (vec!["get", "@f1:e2"], json!({ "ok": true, "data": { "property": "value", "value": "ayse@ornek.com" } })),
-            (vec!["check", "@f1:e3"], json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } })),
-            (vec!["snapshot"], form("f1", "Ayşe Yılmaz", "ayse@ornek.com", true)),
+            (
+                vec!["get", "@f1:e1"],
+                json!({ "ok": true, "data": { "property": "value", "value": "Ayşe Yılmaz" } }),
+            ),
+            (
+                vec!["get", "@f1:e2"],
+                json!({ "ok": true, "data": { "property": "value", "value": "ayse@ornek.com" } }),
+            ),
+            (
+                vec!["check", "@f1:e3"],
+                json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } }),
+            ),
+            (
+                vec!["snapshot"],
+                form("f1", "Ayşe Yılmaz", "ayse@ornek.com", true),
+            ),
         ]),
         sent: Mutex::new(Vec::new()),
     };
@@ -312,11 +333,23 @@ fn a_form_is_filled_field_by_field_by_name_and_read_back_with_one_look_at_the_en
     let sent = engine.sent.lock().unwrap().clone();
     let place = |start: &str| sent.iter().position(|line| line.starts_with(start));
     // What the field held is typed over as a hand would: clicked into, all selected, the text put in.
-    assert!(place("mouse-click").unwrap() < place("press cmd+a").unwrap() && place("press cmd+a").unwrap() < place("press cmd+v").unwrap(), "{sent:?}");
-    assert!(!sent.iter().any(|line| line.starts_with("clear")), "the app's own empty-the-field call is not used");
-    assert!(sent.iter().any(|line| line.starts_with("type @f1:e1")), "an empty field is simply typed into");
+    assert!(
+        place("mouse-click").unwrap() < place("press cmd+a").unwrap()
+            && place("press cmd+a").unwrap() < place("press cmd+v").unwrap(),
+        "{sent:?}"
+    );
+    assert!(
+        !sent.iter().any(|line| line.starts_with("clear")),
+        "the app's own empty-the-field call is not used"
+    );
+    assert!(
+        sent.iter().any(|line| line.starts_with("type @f1:e1")),
+        "an empty field is simply typed into"
+    );
     assert_eq!(
-        sent.iter().filter(|line| line.starts_with("snapshot")).count(),
+        sent.iter()
+            .filter(|line| line.starts_with("snapshot"))
+            .count(),
         1,
         "the window is read once, after the last field: {sent:?}"
     );
@@ -324,16 +357,31 @@ fn a_form_is_filled_field_by_field_by_name_and_read_back_with_one_look_at_the_en
 
 #[test]
 fn a_form_never_fills_a_password_and_does_not_guess_between_two_fields() {
-    let engine = Script::new(vec![displays(), (vec!["snapshot"], form("f2", "", "", false))]);
+    let engine = Script::new(vec![
+        displays(),
+        (vec!["snapshot"], form("f2", "", "", false)),
+    ]);
     control(engine.as_ref(), &request("t-form2", "observe", json!({}))).unwrap();
     let secret = result(control(
         engine.as_ref(),
-        &request("t-form2", "fillForm", json!({ "fields": [{ "label": "Parola", "value": "gizli" }] })),
+        &request(
+            "t-form2",
+            "fillForm",
+            json!({ "fields": [{ "label": "Parola", "value": "gizli" }] }),
+        ),
     ));
-    assert_eq!(secret.1.as_deref(), Some("DESKTOP_TARGET_NOT_FOUND"), "a secure field has no name to be found by");
+    assert_eq!(
+        secret.1.as_deref(),
+        Some("DESKTOP_TARGET_NOT_FOUND"),
+        "a secure field has no name to be found by"
+    );
     let missing = result(control(
         engine.as_ref(),
-        &request("t-form2", "fillForm", json!({ "fields": [{ "label": "Telefon", "value": "5551112233" }] })),
+        &request(
+            "t-form2",
+            "fillForm",
+            json!({ "fields": [{ "label": "Telefon", "value": "5551112233" }] }),
+        ),
     ));
     assert_eq!(missing.1.as_deref(), Some("DESKTOP_TARGET_NOT_FOUND"));
     let scene = acting_scene(&["Gönder"]);
@@ -355,7 +403,10 @@ fn a_form_never_fills_a_password_and_does_not_guess_between_two_fields() {
         });
     }
     let asked = step(json!({ "action": "fill", "label": "Adres", "text": "x" }));
-    assert!(field_for(&asked, &two).is_err(), "two fields fit the name: neither is picked");
+    assert!(
+        field_for(&asked, &two).is_err(),
+        "two fields fit the name: neither is picked"
+    );
     let exact = step(json!({ "action": "fill", "label": "adres 2", "text": "x" }));
     assert_eq!(field_for(&exact, &two).unwrap().reference, "d-a1");
 }
@@ -367,7 +418,8 @@ fn a_scroll_with_words_goes_on_until_they_are_on_the_screen_and_says_when_the_li
         { "role": "window", "name": "Fiyatlar - Tarayıcı", "ref_id": null, "bounds": { "x": 0.0, "y": 0.0, "width": 1000.0, "height": 500.0 } },
         { "role": "statictext", "name": "Fiyatlar", "ref_id": null, "bounds": { "x": 100.0, "y": 200.0, "width": 80.0, "height": 20.0 } }
     ] } });
-    let wheel = json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_unverified" } } });
+    let wheel =
+        json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_unverified" } } });
     let engine = Script::new(vec![
         displays(),
         (vec!["find"], nothing.clone()),
@@ -382,10 +434,17 @@ fn a_scroll_with_words_goes_on_until_they_are_on_the_screen_and_says_when_the_li
     control(engine.as_ref(), &request("t-scroll", "observe", json!({}))).unwrap();
     let (data, code) = result(control(
         engine.as_ref(),
-        &request("t-scroll", "scroll", json!({ "direction": "down", "text": "Fiyatlar" })),
+        &request(
+            "t-scroll",
+            "scroll",
+            json!({ "direction": "down", "text": "Fiyatlar" }),
+        ),
     ));
     assert_eq!(code, None);
-    assert_eq!(data["value"]["verified"], true, "the words were seen on the screen");
+    assert_eq!(
+        data["value"]["verified"], true,
+        "the words were seen on the screen"
+    );
 
     // A list that does not move any more has ended: said so, instead of scrolling on.
     let stuck = Script::new(vec![
@@ -397,7 +456,11 @@ fn a_scroll_with_words_goes_on_until_they_are_on_the_screen_and_says_when_the_li
     control(stuck.as_ref(), &request("t-end", "observe", json!({}))).unwrap();
     let (_, code) = result(control(
         stuck.as_ref(),
-        &request("t-end", "scroll", json!({ "direction": "down", "text": "Yok Böyle Bir Şey" })),
+        &request(
+            "t-end",
+            "scroll",
+            json!({ "direction": "down", "text": "Yok Böyle Bir Şey" }),
+        ),
     ));
     assert_eq!(code.as_deref(), Some("DESKTOP_TARGET_NOT_FOUND"));
 }
@@ -415,10 +478,19 @@ fn a_long_window_says_how_much_was_left_out_and_a_narrowed_look_reaches_it_by_th
     let engine = Script::new(vec![
         displays(),
         (vec!["snapshot"], crowded("c1", 150)),
-        (vec!["click", "@c1:e140"], json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } })),
+        (
+            vec!["click", "@c1:e140"],
+            json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } }),
+        ),
     ]);
-    let (all, _) = result(control(engine.as_ref(), &request("t-long", "observe", json!({}))));
-    assert_eq!(all["value"]["targets"].as_array().unwrap().len(), MAX_TARGETS);
+    let (all, _) = result(control(
+        engine.as_ref(),
+        &request("t-long", "observe", json!({})),
+    ));
+    assert_eq!(
+        all["value"]["targets"].as_array().unwrap().len(),
+        MAX_TARGETS
+    );
     assert_eq!(all["value"]["moreTargets"], 150 - MAX_TARGETS);
     let (narrowed, _) = result(control(
         engine.as_ref(),
@@ -426,17 +498,25 @@ fn a_long_window_says_how_much_was_left_out_and_a_narrowed_look_reaches_it_by_th
     ));
     let found = narrowed["value"]["targets"].as_array().unwrap();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0]["ref"], contract_ref("button|Düğme 140|0"), "the ref it would have had in the full list");
+    assert_eq!(
+        found[0]["ref"],
+        contract_ref("button|Düğme 140|0"),
+        "the ref it would have had in the full list"
+    );
     let (_, code) = result(control(
         engine.as_ref(),
         &request("t-long", "click", json!({ "targetRef": found[0]["ref"] })),
     ));
-    assert_eq!(code, None, "a control beyond the cut is still pressed by its ref");
+    assert_eq!(
+        code, None,
+        "a control beyond the cut is still pressed by its ref"
+    );
 }
 
 #[test]
 fn one_yes_is_for_one_press_and_a_wait_does_not_end_the_list() {
-    let pressed = json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } });
+    let pressed =
+        json!({ "ok": true, "data": { "disposition": { "delivery": "delivered_verified" } } });
     let engine = Script::new(vec![
         displays(),
         (vec!["snapshot"], screen("y1", "Gönder")),
@@ -450,11 +530,21 @@ fn one_yes_is_for_one_press_and_a_wait_does_not_end_the_list() {
         { "action": "click", "targetRef": send },
         { "action": "click", "targetRef": send }
     ] });
-    let (data, code) = result(control(engine.as_ref(), &request("t-yes", "runSteps", steps)));
-    assert_eq!(code.as_deref(), Some("DESKTOP_APPROVAL_REQUIRED"), "the second press asks again");
+    let (data, code) = result(control(
+        engine.as_ref(),
+        &request("t-yes", "runSteps", steps),
+    ));
+    assert_eq!(
+        code.as_deref(),
+        Some("DESKTOP_APPROVAL_REQUIRED"),
+        "the second press asks again"
+    );
     let evidence = data["value"]["evidence"].as_array().unwrap();
     assert_eq!(evidence.len(), 3);
-    assert_eq!(evidence[0]["verified"], true, "a wait has no effect to look for");
+    assert_eq!(
+        evidence[0]["verified"], true,
+        "a wait has no effect to look for"
+    );
     assert_eq!(evidence[1]["ok"], true);
     assert_eq!(evidence[2]["ok"], false);
 }
@@ -462,13 +552,26 @@ fn one_yes_is_for_one_press_and_a_wait_does_not_end_the_list() {
 #[test]
 fn a_drag_takes_its_length_and_its_rest_over_the_drop() {
     let scene = acting_scene(&["Dosya", "Klasör"]);
-    let plain_drag = sent(&step(json!({ "action": "dragDrop", "sourceRef": "d-0", "destinationRef": "d-1" })), &scene);
-    assert!(plain_drag.contains("--duration 350") && !plain_drag.contains("--drop-delay"), "{plain_drag}");
-    let slow = sent(
-        &step(json!({ "action": "dragDrop", "sourceRef": "d-0", "toNormalizedX": 0.5, "toNormalizedY": 0.5, "durationMs": 1200, "holdMs": 900 })),
+    let plain_drag = sent(
+        &step(json!({ "action": "dragDrop", "sourceRef": "d-0", "destinationRef": "d-1" })),
         &scene,
     );
-    assert!(slow.contains("--duration 1200") && slow.contains("--drop-delay 900") && slow.contains("--timeout-ms 7100"), "{slow}");
+    assert!(
+        plain_drag.contains("--duration 350") && !plain_drag.contains("--drop-delay"),
+        "{plain_drag}"
+    );
+    let slow = sent(
+        &step(
+            json!({ "action": "dragDrop", "sourceRef": "d-0", "toNormalizedX": 0.5, "toNormalizedY": 0.5, "durationMs": 1200, "holdMs": 900 }),
+        ),
+        &scene,
+    );
+    assert!(
+        slow.contains("--duration 1200")
+            && slow.contains("--drop-delay 900")
+            && slow.contains("--timeout-ms 7100"),
+        "{slow}"
+    );
 }
 
 #[test]
@@ -485,13 +588,25 @@ fn a_window_that_says_little_sends_its_picture_only_when_the_server_can_look() {
             self.0.call(args)
         }
     }
-    let engine = Camera(Script::new(vec![displays(), (vec!["snapshot"], screen("p1", "7"))]));
+    let engine = Camera(Script::new(vec![
+        displays(),
+        (vec!["snapshot"], screen("p1", "7")),
+    ]));
     let (without, _) = result(control(&engine, &request("t-pic", "observe", json!({}))));
     assert!(without["value"]["picture"].is_null());
-    let (with, _) = result(control(&engine, &request("t-pic", "observe", json!({ "sight": true }))));
+    let (with, _) = result(control(
+        &engine,
+        &request("t-pic", "observe", json!({ "sight": true })),
+    ));
     assert_eq!(with["value"]["picture"]["mimeType"], "image/jpeg");
     assert_eq!(with["value"]["picture"]["width"], 400);
-    assert!(with["value"]["picture"]["dataBase64"].as_str().unwrap().len() > 100);
+    assert!(
+        with["value"]["picture"]["dataBase64"]
+            .as_str()
+            .unwrap()
+            .len()
+            > 100
+    );
 }
 
 #[test]
@@ -1080,7 +1195,10 @@ fn an_app_with_several_windows_and_none_in_front_is_read_from_the_one_it_used_la
             json!({ "ok": true, "data": [{ "id": "w-3", "is_focused": false }, { "id": "w-7", "is_focused": true }] }),
         ),
     ]);
-    let (data, code) = result(control(engine.as_ref(), &request("t-many", "observe", json!({ "text": "Hesap" }))));
+    let (data, code) = result(control(
+        engine.as_ref(),
+        &request("t-many", "observe", json!({ "text": "Hesap" })),
+    ));
     assert_eq!(code, None);
     assert_eq!(data["value"]["targets"].as_array().unwrap().len(), 2);
 }

@@ -92,9 +92,17 @@ $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult]
 foreach ($line in $result.Lines) { foreach ($word in $line.Words) { $r = $word.BoundingRect; "{0}`t{1}`t{2}`t{3}`t{4}" -f $r.X, $r.Y, $r.Width, $r.Height, $word.Text } }
 "#;
     let mut command = crate::process::command("powershell");
-    command.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", SCRIPT]);
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        SCRIPT,
+    ]);
     command.env("WIQO_OCR_FILE", png);
-    let Some(out) = crate::process::run_with_timeout(command, std::time::Duration::from_secs(20)) else {
+    let Some(out) = crate::process::run_with_timeout(command, std::time::Duration::from_secs(20))
+    else {
         return Vec::new();
     };
     if !out.status.success() {
@@ -108,7 +116,10 @@ foreach ($line in $result.Lines) { foreach ($word in $line.Words) { $r = $word.B
 fn parse_windows(text: &str) -> Vec<Word> {
     let mut lines = text.lines();
     let Some((width, height)) = lines.next().and_then(|first| {
-        let mut size = first.trim().split('\t').map(|part| part.parse::<f64>().ok());
+        let mut size = first
+            .trim()
+            .split('\t')
+            .map(|part| part.parse::<f64>().ok());
         Some((size.next()??, size.next()??))
     }) else {
         return Vec::new();
@@ -172,7 +183,13 @@ mod reading_order {
     #[test]
     fn windows_words_become_fractions_of_the_picture() {
         let words = parse_windows("1000\t500\n100\t50\t80\t20\tKaydet\n0\t0\t10\t10\t \n");
-        assert_eq!(words, vec![Word { text: "Kaydet".into(), frame: [0.1, 0.1, 0.08, 0.04] }]);
+        assert_eq!(
+            words,
+            vec![Word {
+                text: "Kaydet".into(),
+                frame: [0.1, 0.1, 0.08, 0.04]
+            }]
+        );
         assert!(parse_windows("").is_empty());
     }
 

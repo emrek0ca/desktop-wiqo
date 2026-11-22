@@ -35,8 +35,24 @@ fn luhn(text: &str) -> bool {
     if !(13..=19).contains(&digits.len()) {
         return false;
     }
-    let sum: u32 = digits.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { let x = d * 2; if x > 9 { x - 9 } else { x } } else { *d }).sum();
-    sum % 10 == 0
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, d)| {
+            if i % 2 == 1 {
+                let x = d * 2;
+                if x > 9 {
+                    x - 9
+                } else {
+                    x
+                }
+            } else {
+                *d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
 }
 
 /// A Turkish ID number's own checksum: eleven digits that fail it are just a number.
@@ -80,7 +96,9 @@ impl Vault {
         if let Some(entries) = saved.as_object() {
             for (stand_in, value) in entries {
                 if let Some(value) = value.as_str() {
-                    vault.by_stand_in.insert(stand_in.clone(), value.to_string());
+                    vault
+                        .by_stand_in
+                        .insert(stand_in.clone(), value.to_string());
                     vault.by_value.insert(value.to_string(), stand_in.clone());
                 }
             }
@@ -89,7 +107,12 @@ impl Vault {
     }
 
     pub(super) fn saved(&self) -> Value {
-        Value::Object(self.by_stand_in.iter().map(|(key, value)| (key.clone(), Value::String(value.clone()))).collect())
+        Value::Object(
+            self.by_stand_in
+                .iter()
+                .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+                .collect(),
+        )
     }
 
     pub(super) fn len(&self) -> usize {
@@ -100,7 +123,12 @@ impl Vault {
         if let Some(known) = self.by_value.get(value) {
             return known.clone();
         }
-        let count = self.counts.entry(kind).or_insert_with(|| self.by_stand_in.keys().filter(|key| key.starts_with(&format!("⟦{kind}_"))).count());
+        let count = self.counts.entry(kind).or_insert_with(|| {
+            self.by_stand_in
+                .keys()
+                .filter(|key| key.starts_with(&format!("⟦{kind}_")))
+                .count()
+        });
         *count += 1;
         let stand_in = format!("⟦{kind}_{count}⟧");
         self.by_stand_in.insert(stand_in.clone(), value.to_string());
@@ -114,7 +142,9 @@ impl Vault {
         for rule in rules() {
             let mut found: Vec<(usize, usize, String)> = Vec::new();
             for captures in rule.pattern.captures_iter(&out) {
-                let Some(part) = captures.get(rule.group) else { continue };
+                let Some(part) = captures.get(rule.group) else {
+                    continue;
+                };
                 let value = part.as_str();
                 if is_stand_in(value) || !(rule.check)(value) {
                     continue;
@@ -147,8 +177,14 @@ impl Vault {
     pub(super) fn open_value(&self, value: &Value) -> Value {
         match value {
             Value::String(text) => Value::String(self.open(text)),
-            Value::Array(items) => Value::Array(items.iter().map(|item| self.open_value(item)).collect()),
-            Value::Object(map) => Value::Object(map.iter().map(|(key, item)| (key.clone(), self.open_value(item))).collect()),
+            Value::Array(items) => {
+                Value::Array(items.iter().map(|item| self.open_value(item)).collect())
+            }
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, item)| (key.clone(), self.open_value(item)))
+                    .collect(),
+            ),
             other => other.clone(),
         }
     }
@@ -175,14 +211,20 @@ mod tests {
     #[test]
     fn numbers_that_only_look_private_stay() {
         let mut vault = Vault::default();
-        assert_eq!(vault.seal("1234567890123 satır, 12345678901 kayıt"), "1234567890123 satır, 12345678901 kayıt");
+        assert_eq!(
+            vault.seal("1234567890123 satır, 12345678901 kayıt"),
+            "1234567890123 satır, 12345678901 kayıt"
+        );
         assert!(vault.seal("kart 4111 1111 1111 1111").contains("⟦KART_1⟧"));
     }
 
     #[test]
     fn a_password_is_hidden_but_its_name_stays() {
         let mut vault = Vault::default();
-        assert_eq!(vault.seal("DB_PASSWORD=hunter2secret"), "DB_PASSWORD=⟦SIFRE_1⟧");
+        assert_eq!(
+            vault.seal("DB_PASSWORD=hunter2secret"),
+            "DB_PASSWORD=⟦SIFRE_1⟧"
+        );
     }
 
     #[test]
@@ -190,7 +232,13 @@ mod tests {
         let mut vault = Vault::default();
         let sealed = vault.seal("ayse@example.org");
         let args = serde_json::json!({ "to": sealed, "list": [sealed] });
-        assert_eq!(vault.open_value(&args), serde_json::json!({ "to": "ayse@example.org", "list": ["ayse@example.org"] }));
-        assert_eq!(Vault::from_saved(&vault.saved()).open(&sealed), "ayse@example.org");
+        assert_eq!(
+            vault.open_value(&args),
+            serde_json::json!({ "to": "ayse@example.org", "list": ["ayse@example.org"] })
+        );
+        assert_eq!(
+            Vault::from_saved(&vault.saved()).open(&sealed),
+            "ayse@example.org"
+        );
     }
 }

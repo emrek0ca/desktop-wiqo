@@ -20,7 +20,14 @@ use wiqo_core::relay::RemoteSession;
 use wiqo_ops::remote::{self, Button, Input};
 
 /// (width, JPEG quality) from the lightest to the sharpest; the session starts in the middle and moves with the line.
-const LEVELS: [(u32, u8); 6] = [(640, 40), (800, 48), (1024, 55), (1280, 62), (1600, 70), (1920, 76)];
+const LEVELS: [(u32, u8); 6] = [
+    (640, 40),
+    (800, 48),
+    (1024, 55),
+    (1280, 62),
+    (1600, 70),
+    (1920, 76),
+];
 const START_LEVEL: usize = 3;
 const MAX_IN_FLIGHT: u32 = 2;
 /// The fastest frame rate (a frame every 33 ms); an unchanged screen sends nothing.
@@ -63,7 +70,10 @@ impl State {
             *self.last_good.lock().expect("good lock") = Instant::now();
         } else {
             let mut good = self.last_good.lock().expect("good lock");
-            if good.elapsed() > Duration::from_secs(2) && self.rtt_ms.load(Ordering::Relaxed) < 180 && *level + 1 < LEVELS.len() {
+            if good.elapsed() > Duration::from_secs(2)
+                && self.rtt_ms.load(Ordering::Relaxed) < 180
+                && *level + 1 < LEVELS.len()
+            {
                 *level += 1;
                 *good = Instant::now();
             }
@@ -82,7 +92,10 @@ pub async fn serve(session: RemoteSession, working: impl Fn(bool) + Send + Sync 
 
 async fn run(session: RemoteSession) -> anyhow::Result<()> {
     let mut request = session.socket_url.as_str().into_client_request()?;
-    request.headers_mut().insert("Authorization", HeaderValue::from_str(&format!("Bearer {}", session.access_token))?);
+    request.headers_mut().insert(
+        "Authorization",
+        HeaderValue::from_str(&format!("Bearer {}", session.access_token))?,
+    );
     let (socket, _) = tokio_tungstenite::connect_async(request).await?;
     let (mut sink, mut stream) = socket.split();
     tracing::info!("remote screen: joined");
@@ -146,7 +159,9 @@ async fn run(session: RemoteSession) -> anyhow::Result<()> {
             Ok(None) | Ok(Some(Err(_))) => break,
             Ok(Some(Ok(message))) => message,
         };
-        let Message::Text(text) = message else { continue };
+        let Message::Text(text) = message else {
+            continue;
+        };
         let text = text.as_str();
         // The server's own line about the other side.
         if let Ok(value) = serde_json::from_str::<Value>(text) {
@@ -167,9 +182,15 @@ async fn run(session: RemoteSession) -> anyhow::Result<()> {
             "bye" => break,
             "ack" => {
                 if let Some(seq) = value["f"].as_u64() {
-                    let sent = state.sent_at.lock().expect("sent lock").remove(&(seq as u32));
+                    let sent = state
+                        .sent_at
+                        .lock()
+                        .expect("sent lock")
+                        .remove(&(seq as u32));
                     if let Some(at) = sent {
-                        state.rtt_ms.store(at.elapsed().as_millis() as u64, Ordering::Relaxed);
+                        state
+                            .rtt_ms
+                            .store(at.elapsed().as_millis() as u64, Ordering::Relaxed);
                     }
                     release(&state.in_flight, 1);
                     state.adapt(false);
@@ -207,7 +228,12 @@ async fn run(session: RemoteSession) -> anyhow::Result<()> {
 /// Frames no longer in flight (acknowledged, or given up as lost); never below zero.
 fn release(counter: &AtomicU32, count: u32) {
     let mut current = counter.load(Ordering::Relaxed);
-    while let Err(actual) = counter.compare_exchange_weak(current, current.saturating_sub(count), Ordering::Relaxed, Ordering::Relaxed) {
+    while let Err(actual) = counter.compare_exchange_weak(
+        current,
+        current.saturating_sub(count),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
         current = actual;
     }
 }
@@ -215,7 +241,10 @@ fn release(counter: &AtomicU32, count: u32) {
 /// The message, when its signature holds and its sequence number is newer than every one before (a replayed input is dropped).
 fn verified(key: &str, text: &str, last_seq: &mut u64) -> Option<Value> {
     let (signature, body) = text.split_once('.')?;
-    if !wiqo_contract::verify_signature(&wiqo_contract::remote_input_signature(key, body), signature) {
+    if !wiqo_contract::verify_signature(
+        &wiqo_contract::remote_input_signature(key, body),
+        signature,
+    ) {
         return None;
     }
     let value: Value = serde_json::from_str(body).ok()?;
@@ -228,28 +257,72 @@ fn verified(key: &str, text: &str, last_seq: &mut u64) -> Option<Value> {
 }
 
 fn fraction(value: &Value, name: &str) -> Option<f64> {
-    value[name].as_f64().filter(|number| number.is_finite()).map(|number| number.clamp(0.0, 1.0))
+    value[name]
+        .as_f64()
+        .filter(|number| number.is_finite())
+        .map(|number| number.clamp(0.0, 1.0))
 }
 
 fn button(value: &Value) -> Button {
-    if value["b"] == "right" { Button::Right } else { Button::Left }
+    if value["b"] == "right" {
+        Button::Right
+    } else {
+        Button::Left
+    }
 }
 
 fn input_of(value: &Value) -> Option<Input> {
     let at = || Some((fraction(value, "x")?, fraction(value, "y")?));
     Some(match value["t"].as_str()? {
-        "move" => { let (x, y) = at()?; Input::Move { x, y } }
-        "down" => { let (x, y) = at()?; Input::Down { x, y, button: button(value) } }
-        "up" => { let (x, y) = at()?; Input::Up { x, y, button: button(value) } }
-        "click" => { let (x, y) = at()?; Input::Click { x, y, button: button(value), count: value["n"].as_u64().unwrap_or(1).clamp(1, 3) as u8 } }
+        "move" => {
+            let (x, y) = at()?;
+            Input::Move { x, y }
+        }
+        "down" => {
+            let (x, y) = at()?;
+            Input::Down {
+                x,
+                y,
+                button: button(value),
+            }
+        }
+        "up" => {
+            let (x, y) = at()?;
+            Input::Up {
+                x,
+                y,
+                button: button(value),
+            }
+        }
+        "click" => {
+            let (x, y) = at()?;
+            Input::Click {
+                x,
+                y,
+                button: button(value),
+                count: value["n"].as_u64().unwrap_or(1).clamp(1, 3) as u8,
+            }
+        }
         "scroll" => {
             let (x, y) = at()?;
-            Input::Scroll { x, y, dx: value["dx"].as_f64().unwrap_or(0.0) as i32, dy: value["dy"].as_f64().unwrap_or(0.0) as i32 }
+            Input::Scroll {
+                x,
+                y,
+                dx: value["dx"].as_f64().unwrap_or(0.0) as i32,
+                dy: value["dy"].as_f64().unwrap_or(0.0) as i32,
+            }
         }
         "text" => Input::Text(value["v"].as_str()?.chars().take(2_000).collect()),
         "key" => Input::Key {
             key: value["k"].as_str()?.to_ascii_lowercase(),
-            modifiers: value["m"].as_array().map(|list| list.iter().filter_map(|item| item.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+            modifiers: value["m"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
         },
         _ => return None,
     })
@@ -283,7 +356,11 @@ async fn capture_loop(state: Arc<State>, outgoing: mpsc::Sender<Message>) {
         let forced = state.force.swap(false, Ordering::Relaxed);
         let (width, quality) = state.level();
         let previous = if forced { None } else { last_digest };
-        let frame = match tokio::task::spawn_blocking(move || remote::capture(width, quality, previous)).await {
+        let frame = match tokio::task::spawn_blocking(move || {
+            remote::capture(width, quality, previous)
+        })
+        .await
+        {
             Ok(Ok(Some(frame))) => frame,
             Ok(Ok(None)) => continue,
             Ok(Err(error)) => {
@@ -302,7 +379,11 @@ async fn capture_loop(state: Arc<State>, outgoing: mpsc::Sender<Message>) {
         packet.extend_from_slice(&(frame.width.min(u32::from(u16::MAX)) as u16).to_be_bytes());
         packet.extend_from_slice(&(frame.height.min(u32::from(u16::MAX)) as u16).to_be_bytes());
         packet.extend_from_slice(&frame.jpeg);
-        state.sent_at.lock().expect("sent lock").insert(seq, Instant::now());
+        state
+            .sent_at
+            .lock()
+            .expect("sent lock")
+            .insert(seq, Instant::now());
         state.in_flight.fetch_add(1, Ordering::Relaxed);
         last_sent = Instant::now();
         if outgoing.send(Message::binary(packet)).await.is_err() {
@@ -316,26 +397,51 @@ mod tests {
     use super::*;
 
     fn signed(key: &str, body: &str) -> String {
-        format!("{}.{body}", wiqo_contract::remote_input_signature(key, body))
+        format!(
+            "{}.{body}",
+            wiqo_contract::remote_input_signature(key, body)
+        )
     }
 
     #[test]
     fn only_signed_inputs_with_a_rising_sequence_are_taken() {
-        let key = wiqo_contract::remote_session_key("pairing-token", "s".repeat(32).as_str(), "n".repeat(16).as_str());
+        let key = wiqo_contract::remote_session_key(
+            "pairing-token",
+            "s".repeat(32).as_str(),
+            "n".repeat(16).as_str(),
+        );
         let mut last = 0;
         let first = signed(&key, r#"{"s":1,"t":"click","x":0.5,"y":0.5}"#);
         assert!(verified(&key, &first, &mut last).is_some());
-        assert!(verified(&key, &first, &mut last).is_none(), "a replay is dropped");
-        assert!(verified("other-key", &signed("other-key", r#"{"s":2,"t":"text","v":"a"}"#), &mut last).is_some(), "own key works");
+        assert!(
+            verified(&key, &first, &mut last).is_none(),
+            "a replay is dropped"
+        );
+        assert!(
+            verified(
+                "other-key",
+                &signed("other-key", r#"{"s":2,"t":"text","v":"a"}"#),
+                &mut last
+            )
+            .is_some(),
+            "own key works"
+        );
         let forged = format!("{}.{}", "0".repeat(64), r#"{"s":9,"t":"text","v":"x"}"#);
-        assert!(verified(&key, &forged, &mut last).is_none(), "a wrong signature is dropped");
+        assert!(
+            verified(&key, &forged, &mut last).is_none(),
+            "a wrong signature is dropped"
+        );
     }
 
     #[test]
     fn inputs_are_read_from_their_messages() {
         let click = input_of(&json!({ "t": "click", "x": 0.25, "y": 2.0, "b": "right", "n": 2 }));
-        assert!(matches!(click, Some(Input::Click { x, y, button: Button::Right, count: 2 }) if (x - 0.25).abs() < 1e-9 && (y - 1.0).abs() < 1e-9));
-        assert!(matches!(input_of(&json!({ "t": "key", "k": "Backspace" })), Some(Input::Key { ref key, .. }) if key == "backspace"));
+        assert!(
+            matches!(click, Some(Input::Click { x, y, button: Button::Right, count: 2 }) if (x - 0.25).abs() < 1e-9 && (y - 1.0).abs() < 1e-9)
+        );
+        assert!(
+            matches!(input_of(&json!({ "t": "key", "k": "Backspace" })), Some(Input::Key { ref key, .. }) if key == "backspace")
+        );
         assert!(input_of(&json!({ "t": "nonsense" })).is_none());
     }
 }

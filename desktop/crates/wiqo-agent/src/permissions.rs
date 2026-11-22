@@ -45,7 +45,11 @@ struct Asked {
 /// on this computer are asked about (`automation_apps`).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const AUTOMATION_ALL: &[(&str, &str, &str)] = &[
-    ("com.apple.systemevents", "Sistem Olayları", "System Events.app"),
+    (
+        "com.apple.systemevents",
+        "Sistem Olayları",
+        "System Events.app",
+    ),
     ("com.apple.finder", "Finder", "Finder.app"),
     ("com.apple.mail", "Mail", "Mail.app"),
     ("com.apple.MobileSMS", "Mesajlar", "Messages.app"),
@@ -54,7 +58,11 @@ const AUTOMATION_ALL: &[(&str, &str, &str)] = &[
     ("com.apple.reminders", "Anımsatıcılar", "Reminders.app"),
     ("com.google.Chrome", "Google Chrome", "Google Chrome.app"),
     ("com.apple.Safari", "Safari", "Safari.app"),
-    ("com.microsoft.edgemac", "Microsoft Edge", "Microsoft Edge.app"),
+    (
+        "com.microsoft.edgemac",
+        "Microsoft Edge",
+        "Microsoft Edge.app",
+    ),
     ("com.brave.Browser", "Brave", "Brave Browser.app"),
     ("company.thebrowser.Browser", "Arc", "Arc.app"),
     ("com.apple.Music", "Müzik", "Music.app"),
@@ -63,8 +71,15 @@ const AUTOMATION_ALL: &[(&str, &str, &str)] = &[
 
 /// The apps above that are installed here, found once (an app installed later is picked up at the next start).
 fn automation_apps() -> &'static [(&'static str, &'static str)] {
-    static FOUND: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
-    FOUND.get_or_init(|| AUTOMATION_ALL.iter().filter(|(_, _, file)| sys::installed(file)).map(|(bundle, name, _)| (*bundle, *name)).collect())
+    static FOUND: std::sync::OnceLock<Vec<(&'static str, &'static str)>> =
+        std::sync::OnceLock::new();
+    FOUND.get_or_init(|| {
+        AUTOMATION_ALL
+            .iter()
+            .filter(|(_, _, file)| sys::installed(file))
+            .map(|(bundle, name, _)| (*bundle, *name))
+            .collect()
+    })
 }
 
 /// Which permission an operation's error code points at, so the window can open on it.
@@ -315,7 +330,9 @@ impl Permissions {
                 let mut asked = self.asked();
                 let mut refused = false;
                 for (bundle, _) in automation_apps() {
-                    if asked.automation.get(*bundle) == Some(&true) && sys::automation(bundle, false) != Some(false) {
+                    if asked.automation.get(*bundle) == Some(&true)
+                        && sys::automation(bundle, false) != Some(false)
+                    {
                         continue;
                     }
                     if !sys::is_running(bundle) {
@@ -363,7 +380,9 @@ pub enum AutomationAnswer {
 /// dialog it does and waits for the answer ("İzin Ver"); when the person refused before, the right Settings page is opened. Blocks while a dialog is open
 /// (call it off the async threads).
 pub fn ask_automation_for(app: &str) -> AutomationAnswer {
-    let Some(bundle) = sys::bundle_of(app) else { return AutomationAnswer::Unknown };
+    let Some(bundle) = sys::bundle_of(app) else {
+        return AutomationAnswer::Unknown;
+    };
     match sys::request_automation(&bundle) {
         Some(true) => AutomationAnswer::Granted,
         Some(false) => {
@@ -523,7 +542,10 @@ mod sys {
     /// The bundle id of an app by the name a script uses for it ("Google Chrome").
     pub fn bundle_of(name: &str) -> Option<String> {
         let safe: String = name.chars().filter(|c| *c != '"' && *c != '\\').collect();
-        let out = Command::new("/usr/bin/osascript").args(["-e", &format!("id of application \"{safe}\"")]).output().ok()?;
+        let out = Command::new("/usr/bin/osascript")
+            .args(["-e", &format!("id of application \"{safe}\"")])
+            .output()
+            .ok()?;
         let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
         (out.status.success() && !id.is_empty()).then_some(id)
     }

@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use sha2::{Digest, Sha256};
-use wiqo_contract::schema_generated::{AgentRunFinishRequest, AgentRunOutcome, AgentRunOutcomeState, AgentRunProgressEvent, AgentRunProgressRequest, LocalAgentHandoff};
+use wiqo_contract::schema_generated::{
+    AgentRunFinishRequest, AgentRunOutcome, AgentRunOutcomeState, AgentRunProgressEvent,
+    AgentRunProgressRequest, LocalAgentHandoff,
+};
 use wiqo_core::storage::write_json;
 use wiqo_ops::terminal::starts_server;
 
@@ -148,7 +151,10 @@ const MALFORMED_NOTE: &str = "Son araç çağrın sağlayıcı tarafından redde
 
 fn is_malformed_note(message: &Value) -> bool {
     message["role"] == "user"
-        && message["content"].as_str().is_some_and(|text| text.starts_with(MALFORMED_NOTE) || text.starts_with("Son araç çağrın bozuk biçimde yazıldı"))
+        && message["content"].as_str().is_some_and(|text| {
+            text.starts_with(MALFORMED_NOTE)
+                || text.starts_with("Son araç çağrın bozuk biçimde yazıldı")
+        })
 }
 
 /// "~/x" and absolute paths as a real path; a relative one stays relative.
@@ -167,8 +173,13 @@ fn expand(path: &str) -> PathBuf {
 fn file_and_folder(path: &str) -> (String, Option<String>) {
     let full = expand(path);
     if full.is_absolute() {
-        let folder = full.parent().map(|parent| parent.to_string_lossy().to_string());
-        let name = full.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+        let folder = full
+            .parent()
+            .map(|parent| parent.to_string_lossy().to_string());
+        let name = full
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
         return (name, folder);
     }
     (path.to_string(), None)
@@ -203,17 +214,29 @@ fn clip(text: &str, most: usize) -> String {
         return text.to_string();
     }
     let head: String = text.chars().take(most / 3).collect();
-    let tail: String = text.chars().rev().take(most - most / 3).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(most - most / 3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{head}\n…(arası kısaltıldı)…\n{tail}")
 }
 
 fn weight(messages: &[Value]) -> usize {
-    messages.iter().map(|message| message.to_string().len()).sum()
+    messages
+        .iter()
+        .map(|message| message.to_string().len())
+        .sum()
 }
 
 /// An old tool call keeps what it was (which file, which command) and drops what it carried (a whole file's content).
 fn lighten_call(call: &mut Value) {
-    let Some(raw) = call["function"]["arguments"].as_str() else { return };
+    let Some(raw) = call["function"]["arguments"].as_str() else {
+        return;
+    };
     if raw.len() < 1_200 {
         return;
     }
@@ -230,16 +253,29 @@ fn lighten_call(call: &mut Value) {
 
 /// Everything before the last `keep` tool results is made light: results keep their first and last lines, calls lose their long arguments.
 fn shorten_old(messages: &mut [Value], keep: usize) {
-    let tools: Vec<usize> = messages.iter().enumerate().filter(|(_, message)| message["role"] == "tool").map(|(index, _)| index).collect();
-    let boundary = tools.get(tools.len().saturating_sub(keep)).copied().unwrap_or(messages.len());
+    let tools: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message["role"] == "tool")
+        .map(|(index, _)| index)
+        .collect();
+    let boundary = tools
+        .get(tools.len().saturating_sub(keep))
+        .copied()
+        .unwrap_or(messages.len());
     for message in &mut messages[..boundary] {
         if message["role"] == "tool" {
             let content = text_of(&message["content"]);
             if content.len() > 700 {
                 // What a failed build said (its error summary) is what the work is about: it stays whole while the rest of an old result goes.
-                let kept = content.strip_prefix("HATA ÖZETİ").map(|rest| rest.split("\n\n").next().unwrap_or(""));
+                let kept = content
+                    .strip_prefix("HATA ÖZETİ")
+                    .map(|rest| rest.split("\n\n").next().unwrap_or(""));
                 message["content"] = match kept {
-                    Some(digest) => json!(format!("HATA ÖZETİ{} (eski sonuç, geri kalanı kısaltıldı)", digest.chars().take(1_400).collect::<String>())),
+                    Some(digest) => json!(format!(
+                        "HATA ÖZETİ{} (eski sonuç, geri kalanı kısaltıldı)",
+                        digest.chars().take(1_400).collect::<String>()
+                    )),
                     None => json!(format!("{} (eski sonuç kısaltıldı)", clip(&content, 500))),
                 };
             }
@@ -252,24 +288,37 @@ fn shorten_old(messages: &mut [Value], keep: usize) {
 /// A file read again, or changed after it was read, makes the earlier reads of it dead weight: their text is replaced by a line that says where the newer one is.
 /// Only reads of the same path are touched (`read_file` calls, matched by their call id); returns how many were replaced.
 fn dedupe_reads(messages: &mut [Value]) -> usize {
-    let mut calls: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    let mut calls: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
     for message in messages.iter() {
-        for call in message["tool_calls"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
-            let args = serde_json::from_str::<Value>(&text_of(&call["function"]["arguments"])).unwrap_or(Value::Null);
+        for call in message["tool_calls"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+        {
+            let args = serde_json::from_str::<Value>(&text_of(&call["function"]["arguments"]))
+                .unwrap_or(Value::Null);
             let path = text_of(&args["path"]);
             if !path.is_empty() {
-                calls.insert(text_of(&call["id"]), (text_of(&call["function"]["name"]), path));
+                calls.insert(
+                    text_of(&call["id"]),
+                    (text_of(&call["function"]["name"]), path),
+                );
             }
         }
     }
     // For each path: the index of the newest result that read it, and of the newest that changed it.
-    let mut newest_read: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut newest_change: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut newest_read: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut newest_change: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for (index, message) in messages.iter().enumerate() {
         if message["role"] != "tool" {
             continue;
         }
-        let Some((name, path)) = calls.get(&text_of(&message["tool_call_id"])) else { continue };
+        let Some((name, path)) = calls.get(&text_of(&message["tool_call_id"])) else {
+            continue;
+        };
         match name.as_str() {
             "read_file" => {
                 newest_read.insert(path.clone(), index);
@@ -285,14 +334,25 @@ fn dedupe_reads(messages: &mut [Value]) -> usize {
         if message["role"] != "tool" || text_of(&message["content"]).len() < 400 {
             continue;
         }
-        let Some((name, path)) = calls.get(&text_of(&message["tool_call_id"])) else { continue };
+        let Some((name, path)) = calls.get(&text_of(&message["tool_call_id"])) else {
+            continue;
+        };
         if name != "read_file" {
             continue;
         }
         let read_again = newest_read.get(path).is_some_and(|newest| *newest > index);
-        let changed_since = newest_change.get(path).is_some_and(|changed| *changed > index);
+        let changed_since = newest_change
+            .get(path)
+            .is_some_and(|changed| *changed > index);
         if read_again || changed_since {
-            message["content"] = json!(format!("(Bu dosya ({path}) sonradan {}: eski içerik atıldı; gerekirse yeniden oku.)", if changed_since { "değiştirildi" } else { "yeniden okundu" }));
+            message["content"] = json!(format!(
+                "(Bu dosya ({path}) sonradan {}: eski içerik atıldı; gerekirse yeniden oku.)",
+                if changed_since {
+                    "değiştirildi"
+                } else {
+                    "yeniden okundu"
+                }
+            ));
             replaced += 1;
         }
     }
@@ -322,17 +382,31 @@ fn transcript(messages: &[Value]) -> String {
     let mut lines = Vec::new();
     for message in messages {
         match message["role"].as_str().unwrap_or("") {
-            "user" => lines.push(format!("KULLANICI: {}", clip(&text_of(&message["content"]), 2_000))),
+            "user" => lines.push(format!(
+                "KULLANICI: {}",
+                clip(&text_of(&message["content"]), 2_000)
+            )),
             "assistant" => {
                 let said = text_of(&message["content"]);
                 if !said.trim().is_empty() {
                     lines.push(format!("AJAN: {}", clip(&said, 1_200)));
                 }
-                for call in message["tool_calls"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
-                    lines.push(format!("  ARAÇ {}({})", text_of(&call["function"]["name"]), clip(&text_of(&call["function"]["arguments"]), 300)));
+                for call in message["tool_calls"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                {
+                    lines.push(format!(
+                        "  ARAÇ {}({})",
+                        text_of(&call["function"]["name"]),
+                        clip(&text_of(&call["function"]["arguments"]), 300)
+                    ));
                 }
             }
-            "tool" => lines.push(format!("  SONUÇ: {}", clip(&text_of(&message["content"]), 700))),
+            "tool" => lines.push(format!(
+                "  SONUÇ: {}",
+                clip(&text_of(&message["content"]), 700)
+            )),
             _ => {}
         }
     }
@@ -375,14 +449,32 @@ fn repair(messages: Vec<Value>) -> Vec<Value> {
 /// same way (the session keeps a request with its goal added, and a long answer shortened).
 fn said_since(known: &[Value], taken: &mut Vec<(String, String)>, history: &Value) -> Vec<Value> {
     let begins = |text: &str| text.trim().chars().take(160).collect::<String>();
-    let mut held: Vec<(String, String)> = known.iter().filter(|message| message["tool_calls"].is_null()).map(|message| (text_of(&message["role"]), begins(&text_of(&message["content"])))).collect();
+    let mut held: Vec<(String, String)> = known
+        .iter()
+        .filter(|message| message["tool_calls"].is_null())
+        .map(|message| {
+            (
+                text_of(&message["role"]),
+                begins(&text_of(&message["content"])),
+            )
+        })
+        .collect();
     held.extend(taken.iter().cloned());
     let mut new = Vec::new();
-    for item in history.as_array().map(|items| &items[items.len().saturating_sub(10)..]).unwrap_or(&[]) {
+    for item in history
+        .as_array()
+        .map(|items| &items[items.len().saturating_sub(10)..])
+        .unwrap_or(&[])
+    {
         let role = text_of(&item["role"]);
         let content = text_of(&item["content"]);
         let begin = begins(&content);
-        if !matches!(role.as_str(), "user" | "assistant") || begin.is_empty() || held.iter().any(|(by, text)| *by == role && text.starts_with(&begin)) {
+        if !matches!(role.as_str(), "user" | "assistant")
+            || begin.is_empty()
+            || held
+                .iter()
+                .any(|(by, text)| *by == role && text.starts_with(&begin))
+        {
             continue;
         }
         new.push(json!({ "role": role, "content": clip(&content, 4_000) }));
@@ -398,7 +490,17 @@ fn said_since(known: &[Value], taken: &mut Vec<(String, String)>, history: &Valu
 
 /// The tools a side worker may use: reading and research only (the web, the project's own search and map). It cannot write, run commands or ask for approvals.
 fn helper_tools(all: &Value) -> Value {
-    json!(all.as_array().map(|tools| tools.iter().filter(|tool| matches!(tool["function"]["name"].as_str(), Some("web" | "repo_find" | "repo_map"))).cloned().collect::<Vec<_>>()).unwrap_or_default())
+    json!(all
+        .as_array()
+        .map(|tools| tools
+            .iter()
+            .filter(|tool| matches!(
+                tool["function"]["name"].as_str(),
+                Some("web" | "repo_find" | "repo_map")
+            ))
+            .cloned()
+            .collect::<Vec<_>>())
+        .unwrap_or_default())
 }
 
 /// Turns a side worker may take before it must answer.
@@ -417,14 +519,30 @@ fn plan_text(plan: &[Value]) -> String {
                 _ => "[ ]",
             };
             let check = text_of(&step["check"]);
-            if check.is_empty() { format!("{mark} {}", text_of(&step["title"])) } else { format!("{mark} {} — ölçüt: {}", text_of(&step["title"]), check.chars().take(120).collect::<String>()) }
+            if check.is_empty() {
+                format!("{mark} {}", text_of(&step["title"]))
+            } else {
+                format!(
+                    "{mark} {} — ölçüt: {}",
+                    text_of(&step["title"]),
+                    check.chars().take(120).collect::<String>()
+                )
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 fn plan_open(plan: &[Value]) -> Vec<String> {
-    plan.iter().filter(|step| matches!(step["status"].as_str().unwrap_or("pending"), "pending" | "doing")).map(|step| text_of(&step["title"])).collect()
+    plan.iter()
+        .filter(|step| {
+            matches!(
+                step["status"].as_str().unwrap_or("pending"),
+                "pending" | "doing"
+            )
+        })
+        .map(|step| text_of(&step["title"]))
+        .collect()
 }
 
 /// What the person reads for a tool call while it runs.
@@ -440,7 +558,13 @@ fn label(name: &str, args: &Value) -> String {
         "search" => format!("Arıyor: {}", one("pattern")),
         "apply_patch" => format!("Yama: {}", one("workdir")),
         "undo" => "Geri alıyor".into(),
-        "web" => format!("Web: {}", [one("query"), one("url")].into_iter().find(|text| !text.is_empty()).unwrap_or_default()),
+        "web" => format!(
+            "Web: {}",
+            [one("query"), one("url")]
+                .into_iter()
+                .find(|text| !text.is_empty())
+                .unwrap_or_default()
+        ),
         "browser_check" => format!("Sayfa denemesi: {}", one("url")),
         "project_notes" => format!("Proje notu: {}", one("project")),
         "plan" => "Plan".into(),
@@ -449,9 +573,22 @@ fn label(name: &str, args: &Value) -> String {
         "accounts" if args["operation"] == "list" => "Bağlı hesaplar".into(),
         "accounts" => format!("Hesap: {} {}", one("account"), one("action")),
         "repo_find" => format!("Projede ara: {}", one("query")),
-        "repo_map" => format!("Proje haritası: {}", [one("file"), one("query"), one("path")].into_iter().find(|text| !text.is_empty()).unwrap_or_default()),
+        "repo_map" => format!(
+            "Proje haritası: {}",
+            [one("file"), one("query"), one("path")]
+                .into_iter()
+                .find(|text| !text.is_empty())
+                .unwrap_or_default()
+        ),
         "computer_interface" => format!("Ekran: {}", one("operation")),
-        "computer_files" => format!("Dosya ({}): {}", one("operation"), [one("path"), one("query")].into_iter().find(|text| !text.is_empty()).unwrap_or_default()),
+        "computer_files" => format!(
+            "Dosya ({}): {}",
+            one("operation"),
+            [one("path"), one("query")]
+                .into_iter()
+                .find(|text| !text.is_empty())
+                .unwrap_or_default()
+        ),
         "computer_system" => format!("Sistem: {}", one("operation")),
         other => other.to_string(),
     }
@@ -459,7 +596,11 @@ fn label(name: &str, args: &Value) -> String {
 
 /// A step's data as the model reads it: the terminal's own fields, each long text cut to its start and end.
 fn shown_output(data: &Value) -> String {
-    let mut value = if data["kind"] == "terminalResult" { data["value"].clone() } else { data.clone() };
+    let mut value = if data["kind"] == "terminalResult" {
+        data["value"].clone()
+    } else {
+        data.clone()
+    };
     if let Some(object) = value.as_object_mut() {
         object.remove("workingDirectory");
         if let Some(undo) = object.remove("undoId").filter(|undo| undo.is_string()) {
@@ -472,10 +613,16 @@ fn shown_output(data: &Value) -> String {
         }
     }
     let (shown, cut) = match value.as_str() {
-        Some(text) => (clip(text, OUTPUT_CHARS), text.chars().count() > OUTPUT_CHARS),
+        Some(text) => (
+            clip(text, OUTPUT_CHARS),
+            text.chars().count() > OUTPUT_CHARS,
+        ),
         None => {
             let whole = value.to_string();
-            (clip(&whole, OUTPUT_CHARS * 2), whole.chars().count() > OUTPUT_CHARS * 2)
+            (
+                clip(&whole, OUTPUT_CHARS * 2),
+                whole.chars().count() > OUTPUT_CHARS * 2,
+            )
         }
     };
     // Said where it is cut: the rest is one narrower request away, not lost.
@@ -494,11 +641,18 @@ struct WorkResult {
 
 impl WorkResult {
     fn stopped(state: AgentRunOutcomeState, reply: String) -> Self {
-        Self { reply, state, verified: false }
+        Self {
+            reply,
+            state,
+            verified: false,
+        }
     }
 
     fn outcome(&self) -> AgentRunOutcome {
-        AgentRunOutcome { state: self.state.clone(), verified: self.verified }
+        AgentRunOutcome {
+            state: self.state.clone(),
+            verified: self.verified,
+        }
     }
 }
 
@@ -557,8 +711,12 @@ struct SessionSnapshot {
 
 impl SessionSnapshot {
     fn eligible_for_automatic_resume(&self, now: i64) -> bool {
-        self.open && !self.read_only && !self.auto_resume_attempted
-            && !self.in_flight && !self.uncertain && self.jobs.is_empty()
+        self.open
+            && !self.read_only
+            && !self.auto_resume_attempted
+            && !self.in_flight
+            && !self.uncertain
+            && self.jobs.is_empty()
             && !self.plan.iter().any(|step| step["checkJob"].is_string())
             && Uuid::parse_str(&self.task_id).is_ok()
             && Uuid::parse_str(&self.run_id).is_ok()
@@ -590,17 +748,20 @@ impl Drop for ActiveSession<'_> {
 impl LocalSession<'_> {
     fn save(&self, work: &Work, open: bool) -> std::io::Result<()> {
         let log: Vec<_> = work.log.iter().rev().take(200).rev().collect();
-        write_json(&self.path, &json!({
-            "v": 2, "savedAt": chrono::Utc::now().timestamp(), "conversation": self.conversation,
-            "taskId": self.task_id, "runId": self.run_id, "open": open, "goal": work.goal,
-            "messages": work.messages.get(1..).unwrap_or(&[]), "plan": work.plan,
-            "decisions": work.decisions, "log": log, "held": work.held, "vault": work.vault.saved(),
-            "ledger": work.ledger, "jobs": work.jobs, "servers": work.reach.servers,
-            "pins": work.pins, "lastErrors": work.last_errors, "files": work.files,
-            "seen": work.reach.seen, "checkpoints": work.reach.checkpoints, "undo": work.reach.undo,
-            "inFlight": work.in_flight, "uncertain": work.uncertain, "readOnly": work.read_only,
-            "verification": if open { None } else { work.ledger.report() },
-        }))
+        write_json(
+            &self.path,
+            &json!({
+                "v": 2, "savedAt": chrono::Utc::now().timestamp(), "conversation": self.conversation,
+                "taskId": self.task_id, "runId": self.run_id, "open": open, "goal": work.goal,
+                "messages": work.messages.get(1..).unwrap_or(&[]), "plan": work.plan,
+                "decisions": work.decisions, "log": log, "held": work.held, "vault": work.vault.saved(),
+                "ledger": work.ledger, "jobs": work.jobs, "servers": work.reach.servers,
+                "pins": work.pins, "lastErrors": work.last_errors, "files": work.files,
+                "seen": work.reach.seen, "checkpoints": work.reach.checkpoints, "undo": work.reach.undo,
+                "inFlight": work.in_flight, "uncertain": work.uncertain, "readOnly": work.read_only,
+                "verification": if open { None } else { work.ledger.report() },
+            }),
+        )
     }
 }
 
@@ -608,17 +769,34 @@ fn effectful_tool(name: &str, args: &Value, pc_tools: &[String]) -> bool {
     match name {
         "shell" => !wiqo_ops::is_read_only(args["command"].as_str().unwrap_or("")),
         "job" => matches!(args["action"].as_str(), Some("input" | "cancel")),
-        "write_file" | "edit_file" | "apply_patch" | "undo" | "project_notes" | "browser_check" => true,
-        "api" => args["operation"] == "call" && !matches!(args["method"].as_str(), None | Some("GET" | "HEAD")),
+        "write_file" | "edit_file" | "apply_patch" | "undo" | "project_notes" | "browser_check" => {
+            true
+        }
+        "api" => {
+            args["operation"] == "call"
+                && !matches!(args["method"].as_str(), None | Some("GET" | "HEAD"))
+        }
         "accounts" => args["operation"] != "list",
         _ => pc_tools.iter().any(|tool| tool == name),
     }
 }
 
 fn private_model_result(name: &str, pc_tools: &[String]) -> bool {
-    matches!(name, "shell" | "job" | "read_file" | "write_file" | "edit_file" | "apply_patch"
-        | "undo" | "search" | "project_notes" | "repo_map" | "repo_find" | "browser_check")
-        || pc_tools.iter().any(|tool| tool == name)
+    matches!(
+        name,
+        "shell"
+            | "job"
+            | "read_file"
+            | "write_file"
+            | "edit_file"
+            | "apply_patch"
+            | "undo"
+            | "search"
+            | "project_notes"
+            | "repo_map"
+            | "repo_find"
+            | "browser_check"
+    ) || pc_tools.iter().any(|tool| tool == name)
 }
 
 /// Keep receipt metadata and the opaque job reference while withholding local content.
@@ -633,12 +811,15 @@ fn model_receipt(outcome: &ToolOutcome) -> String {
         "jobId": outcome.job,
         "errorCode": receipt["errorCode"],
         "message": "Yerel çıktı bu bilgisayarda kaldı."
-    }).to_string()
+    })
+    .to_string()
 }
 
 fn session_snapshot(path: &Path) -> Option<SessionSnapshot> {
     let session: SessionSnapshot = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-    let age = chrono::Utc::now().timestamp().saturating_sub(session.saved_at);
+    let age = chrono::Utc::now()
+        .timestamp()
+        .saturating_sub(session.saved_at);
     (session.v == 2 && age < SESSION_DAYS * 86_400).then_some(session)
 }
 
@@ -711,13 +892,22 @@ fn fingerprint(path: &Path) -> Option<u64> {
 /// The files a file tool reads or changes, by full path (a relative path is the terminal session's own business and is not tracked).
 fn file_targets(name: &str, args: &Value) -> Vec<PathBuf> {
     match name {
-        "read_file" | "write_file" | "edit_file" => Some(expand(&text_of(&args["path"]))).filter(|path| path.is_absolute() && plain(path)).into_iter().collect(),
+        "read_file" | "write_file" | "edit_file" => Some(expand(&text_of(&args["path"])))
+            .filter(|path| path.is_absolute() && plain(path))
+            .into_iter()
+            .collect(),
         "apply_patch" => {
             let root = expand(&text_of(&args["workdir"]));
             if !root.is_absolute() || !plain(&root) {
                 return Vec::new();
             }
-            args["edits"].as_array().into_iter().flatten().map(|edit| root.join(text_of(&edit["path"]))).filter(|path| plain(path)).collect()
+            args["edits"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|edit| root.join(text_of(&edit["path"])))
+                .filter(|path| plain(path))
+                .collect()
         }
         _ => Vec::new(),
     }
@@ -726,10 +916,15 @@ fn file_targets(name: &str, args: &Value) -> Vec<PathBuf> {
 impl Reach {
     /// Why a change may not run: the file changed after the agent last saw it, or a whole-file write would replace a file it never read.
     fn stale(&self, name: &str, args: &Value) -> Option<String> {
-        if !matches!(name, "write_file" | "edit_file" | "apply_patch") || (name == "write_file" && args["append"] == true) {
+        if !matches!(name, "write_file" | "edit_file" | "apply_patch")
+            || (name == "write_file" && args["append"] == true)
+        {
             return None;
         }
-        for path in file_targets(name, args).into_iter().filter(|path| path.is_file()) {
+        for path in file_targets(name, args)
+            .into_iter()
+            .filter(|path| path.is_file())
+        {
             match self.seen.get(&path) {
                 Some(known) if fingerprint(&path) != Some(*known) => {
                     return Some(format!("FILE_CHANGED: {} sen son okuduktan sonra değişmiş (büyük olasılıkla kullanıcı düzenledi). Üzerine yazılmadı. Önce read_file ile yeniden oku, değişikliği o güncel metne göre yap.", path.display()));
@@ -760,7 +955,12 @@ impl Reach {
             "shell" if changed => {
                 let folder = expand(&text_of(&args["workdir"]));
                 if folder.is_absolute() {
-                    let under: Vec<PathBuf> = self.seen.keys().filter(|path| path.starts_with(&folder)).cloned().collect();
+                    let under: Vec<PathBuf> = self
+                        .seen
+                        .keys()
+                        .filter(|path| path.starts_with(&folder))
+                        .cloned()
+                        .collect();
                     for path in under {
                         match fingerprint(&path) {
                             Some(print) => self.seen.insert(path, print),
@@ -776,26 +976,49 @@ impl Reach {
 
 /// What marks the root of a project.
 const PROJECT_MARKERS: &[&str] = &[
-    ".git", "package.json", "Cargo.toml", "pyproject.toml", "go.mod", "Package.swift", "pom.xml", "build.gradle", "build.gradle.kts", "Gemfile",
-    "composer.json", "deno.json", "pubspec.yaml", "requirements.txt", "Makefile", "CMakeLists.txt",
+    ".git",
+    "package.json",
+    "Cargo.toml",
+    "pyproject.toml",
+    "go.mod",
+    "Package.swift",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Gemfile",
+    "composer.json",
+    "deno.json",
+    "pubspec.yaml",
+    "requirements.txt",
+    "Makefile",
+    "CMakeLists.txt",
 ];
 
 /// A path with no ".." in it: a folder rule read on its text must not be walked out of.
 fn plain(path: &Path) -> bool {
-    !path.components().any(|part| part == std::path::Component::ParentDir)
+    !path
+        .components()
+        .any(|part| part == std::path::Component::ParentDir)
 }
 
 /// The nearest folder at or above `folder` that is a project, below the home folder.
 fn project_root(folder: &Path) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     // Folders come here canonical; on Windows that is the \\?\C:\... form, which the plain home folder is never a prefix of.
-    let home = if folder.starts_with(&home) { home } else { std::fs::canonicalize(&home).unwrap_or(home) };
+    let home = if folder.starts_with(&home) {
+        home
+    } else {
+        std::fs::canonicalize(&home).unwrap_or(home)
+    };
     let mut current = Some(folder);
     while let Some(dir) = current {
         if dir == home || !dir.starts_with(&home) {
             return None;
         }
-        if PROJECT_MARKERS.iter().any(|marker| dir.join(marker).exists()) {
+        if PROJECT_MARKERS
+            .iter()
+            .any(|marker| dir.join(marker).exists())
+        {
             return Some(dir.to_path_buf());
         }
         current = dir.parent();
@@ -806,12 +1029,21 @@ fn project_root(folder: &Path) -> Option<PathBuf> {
 /// The folder a call works in, when it names one by a full path.
 fn touched_folder(name: &str, args: &Value) -> Option<PathBuf> {
     let folder = match name {
-        "shell" | "apply_patch" => args["workdir"].as_str().filter(|dir| !dir.trim().is_empty()).map(expand),
-        "read_file" | "write_file" | "edit_file" => expand(&text_of(&args["path"])).parent().map(Path::to_path_buf),
-        "search" | "repo_map" | "repo_find" => args["path"].as_str().filter(|dir| !dir.trim().is_empty()).map(expand),
+        "shell" | "apply_patch" => args["workdir"]
+            .as_str()
+            .filter(|dir| !dir.trim().is_empty())
+            .map(expand),
+        "read_file" | "write_file" | "edit_file" => expand(&text_of(&args["path"]))
+            .parent()
+            .map(Path::to_path_buf),
+        "search" | "repo_map" | "repo_find" => args["path"]
+            .as_str()
+            .filter(|dir| !dir.trim().is_empty())
+            .map(expand),
         _ => None,
     }?;
-    (folder.is_absolute() && plain(&folder)).then(|| std::fs::canonicalize(&folder).unwrap_or(folder))
+    (folder.is_absolute() && plain(&folder))
+        .then(|| std::fs::canonicalize(&folder).unwrap_or(folder))
 }
 
 /// What a yes for a change in `folder` covers for the rest of the run: its project, or the folder itself; never the home folder or a folder right
@@ -831,7 +1063,9 @@ fn strip_emoji(text: &str) -> String {
     for c in text.chars() {
         let code = c as u32;
         let keeps = matches!(code, 0x2713 | 0x2714 | 0x2717 | 0x2718 | 0x2190..=0x21FF);
-        if !keeps && matches!(code, 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0xFE0F | 0x200D) {
+        if !keeps
+            && matches!(code, 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0xFE0F | 0x200D)
+        {
             emoji = true;
             continue;
         }
@@ -840,7 +1074,11 @@ fn strip_emoji(text: &str) -> String {
         }
         emoji = false;
     }
-    cleaned.lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
+    cleaned
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn mentions_change(goal: &str) -> bool {
@@ -856,7 +1094,8 @@ fn wants_intent_card(goal: &str) -> bool {
 }
 
 fn asks_for_inspection(goal: &str) -> bool {
-    static INSPECTION: std::sync::OnceLock<(regex::Regex, regex::Regex)> = std::sync::OnceLock::new();
+    static INSPECTION: std::sync::OnceLock<(regex::Regex, regex::Regex)> =
+        std::sync::OnceLock::new();
     let (read, effect) = INSPECTION.get_or_init(|| (
         regex::Regex::new(r"(?i)\b(read|list|find|search|inspect|status|show|oku\w*|listele\w*|bul\w*|ara\w*|incele\w*|durum\w*|göster\w*)\b")
             .expect("inspection goal pattern"),
@@ -881,13 +1120,19 @@ fn running_server<'a>(servers: &'a [(String, String)], args: &Value) -> Option<&
         return None;
     }
     let folder = text_of(&args["workdir"]);
-    servers.iter().find(|(known, _)| *known == folder).map(|(_, job)| job.as_str())
+    servers
+        .iter()
+        .find(|(known, _)| *known == folder)
+        .map(|(_, job)| job.as_str())
 }
 
 /// A command that reaches past the folder (the network, other processes, other apps): asked every time, whatever was allowed.
 fn reaches_out(command: &str) -> bool {
     let lower = command.to_lowercase();
-    let words: Vec<&str> = lower.split(|c: char| c.is_whitespace() || ";&|()".contains(c)).filter(|word| !word.is_empty()).collect();
+    let words: Vec<&str> = lower
+        .split(|c: char| c.is_whitespace() || ";&|()".contains(c))
+        .filter(|word| !word.is_empty())
+        .collect();
     let has = |word: &str| words.contains(&word);
     (has("git") && (has("push") || has("reset") || has("clean"))) || (has("publish") && (has("npm") || has("pnpm") || has("yarn") || has("cargo")))
         || ["ssh", "scp", "rsync", "kill", "pkill", "killall", "osascript", "open", "gh", "sudo", "launchctl", "defaults", "crontab"].iter().any(|word| has(word))
@@ -907,18 +1152,32 @@ fn denied_app(command: &str, output: &str) -> Option<String> {
         return None;
     }
     let lower = output.to_lowercase();
-    if !(lower.contains("-1743") || lower.contains("-10004") || lower.contains("not authorized to send apple events") || lower.contains("ayrıcalık ihlali")) {
+    if !(lower.contains("-1743")
+        || lower.contains("-10004")
+        || lower.contains("not authorized to send apple events")
+        || lower.contains("ayrıcalık ihlali"))
+    {
         return None;
     }
     static TARGET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let target = TARGET.get_or_init(|| regex::Regex::new(r#"application\s+"([^"]{1,60})""#).expect("pattern"));
-    Some(target.captures(command).map(|found| found[1].to_string()).unwrap_or_default())
+    let target = TARGET
+        .get_or_init(|| regex::Regex::new(r#"application\s+"([^"]{1,60})""#).expect("pattern"));
+    Some(
+        target
+            .captures(command)
+            .map(|found| found[1].to_string())
+            .unwrap_or_default(),
+    )
 }
 
 /// What the model is told after the permission was asked for (`ask_automation_for`): the answer decides whether to run the script again or to say what is left.
 fn automation_note(app: &str, answer: &crate::permissions::AutomationAnswer) -> String {
     use crate::permissions::AutomationAnswer::*;
-    let name = if app.is_empty() { "ilgili uygulama" } else { app };
+    let name = if app.is_empty() {
+        "ilgili uygulama"
+    } else {
+        app
+    };
     match answer {
         Granted => format!("NOT: macOS izin penceresi bu bilgisayarda gösterildi ve kullanıcı \"{name}\" için Wiqo'ya izin verdi. Aynı komutu şimdi yeniden çalıştır."),
         Refused => format!(
@@ -959,8 +1218,17 @@ fn git_checkpoint(root: &Path) -> Option<String> {
     }
     let index = std::env::temp_dir().join(format!("wiqo-checkpoint-{}.index", Uuid::new_v4()));
     let git = |args: &[&str]| -> Option<String> {
-        let out = std::process::Command::new("git").arg("-C").arg(root).args(args).env("GIT_INDEX_FILE", &index).stdin(std::process::Stdio::null()).output().ok()?;
-        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .env("GIT_INDEX_FILE", &index)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
     let head = git(&["rev-parse", "--verify", "-q", "HEAD"]);
     let made = (|| {
@@ -969,12 +1237,20 @@ fn git_checkpoint(root: &Path) -> Option<String> {
         }
         git(&["add", "-A"])?;
         let tree = git(&["write-tree"])?;
-        let mut args = vec!["commit-tree", tree.as_str(), "-m", "Wiqo checkpoint (before the agent's changes)"];
+        let mut args = vec![
+            "commit-tree",
+            tree.as_str(),
+            "-m",
+            "Wiqo checkpoint (before the agent's changes)",
+        ];
         if let Some(head) = head.as_deref() {
             args.extend(["-p", head]);
         }
         let commit = git(&args)?;
-        let name = format!("refs/wiqo/checkpoints/{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        let name = format!(
+            "refs/wiqo/checkpoints/{}",
+            chrono::Local::now().format("%Y%m%d-%H%M%S")
+        );
         git(&["update-ref", &name, &commit])?;
         Some(commit)
     })();
@@ -987,42 +1263,105 @@ fn tool_inventory() -> &'static str {
     static FOUND: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     FOUND.get_or_init(|| {
         const WANTED: &[&str] = &[
-            "rg", "fd", "jq", "git", "gh", "node", "npm", "pnpm", "yarn", "bun", "python3", "pip3", "uv", "brew", "winget", "ffmpeg", "ffprobe", "magick",
-            "sips", "pandoc", "sqlite3", "psql", "docker", "cargo", "go", "java", "dotnet", "swift", "xcodebuild", "code", "curl", "wget", "7z", "tree",
-            "pwsh", "scoop", "choco", "wsl",
+            "rg",
+            "fd",
+            "jq",
+            "git",
+            "gh",
+            "node",
+            "npm",
+            "pnpm",
+            "yarn",
+            "bun",
+            "python3",
+            "pip3",
+            "uv",
+            "brew",
+            "winget",
+            "ffmpeg",
+            "ffprobe",
+            "magick",
+            "sips",
+            "pandoc",
+            "sqlite3",
+            "psql",
+            "docker",
+            "cargo",
+            "go",
+            "java",
+            "dotnet",
+            "swift",
+            "xcodebuild",
+            "code",
+            "curl",
+            "wget",
+            "7z",
+            "tree",
+            "pwsh",
+            "scoop",
+            "choco",
+            "wsl",
         ];
-        let paths: Vec<PathBuf> = std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect()).unwrap_or_default();
+        let paths: Vec<PathBuf> = std::env::var_os("PATH")
+            .map(|path| std::env::split_paths(&path).collect())
+            .unwrap_or_default();
         // Where the usual installers put programs that a GUI-started app's PATH may not list yet.
-        let mut extra = vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")];
+        let mut extra = vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ];
         if cfg!(windows) {
-            let under = |variable: &str, parts: &[&str]| std::env::var_os(variable).map(|base| parts.iter().fold(PathBuf::from(base), |path, part| path.join(part)));
-            extra.extend([
-                under("LOCALAPPDATA", &["Microsoft", "WindowsApps"]),
-                under("USERPROFILE", &["scoop", "shims"]),
-                under("ProgramFiles", &["Git", "cmd"]),
-                under("ProgramFiles", &["PowerShell", "7"]),
-                under("ProgramFiles", &["nodejs"]),
-                under("ProgramData", &["chocolatey", "bin"]),
-            ].into_iter().flatten());
+            let under = |variable: &str, parts: &[&str]| {
+                std::env::var_os(variable).map(|base| {
+                    parts
+                        .iter()
+                        .fold(PathBuf::from(base), |path, part| path.join(part))
+                })
+            };
+            extra.extend(
+                [
+                    under("LOCALAPPDATA", &["Microsoft", "WindowsApps"]),
+                    under("USERPROFILE", &["scoop", "shims"]),
+                    under("ProgramFiles", &["Git", "cmd"]),
+                    under("ProgramFiles", &["PowerShell", "7"]),
+                    under("ProgramFiles", &["nodejs"]),
+                    under("ProgramData", &["chocolatey", "bin"]),
+                ]
+                .into_iter()
+                .flatten(),
+            );
         }
         let exists = |name: &str| {
             paths.iter().chain(extra.iter()).any(|dir| {
                 if cfg!(windows) {
-                    ["exe", "cmd", "bat"].iter().any(|ext| dir.join(format!("{name}.{ext}")).is_file())
+                    ["exe", "cmd", "bat"]
+                        .iter()
+                        .any(|ext| dir.join(format!("{name}.{ext}")).is_file())
                 } else {
                     dir.join(name).is_file()
                 }
             })
         };
-        let (have, missing): (Vec<&str>, Vec<&str>) = WANTED.iter().copied().partition(|name| exists(name));
-        format!("Kurulu: {}
-- Kurulu değil: {}", have.join(", "), if missing.is_empty() { "-".into() } else { missing.join(", ") })
+        let (have, missing): (Vec<&str>, Vec<&str>) =
+            WANTED.iter().copied().partition(|name| exists(name));
+        format!(
+            "Kurulu: {}
+- Kurulu değil: {}",
+            have.join(", "),
+            if missing.is_empty() {
+                "-".into()
+            } else {
+                missing.join(", ")
+            }
+        )
     })
 }
 
 /// sudo asks for the person's password, which nobody types here: it runs only when it would not ask (a cached or passwordless sudo).
 fn sudo_would_ask(command: &str) -> bool {
-    let named = command.split(|c: char| c.is_whitespace() || ";&|(".contains(c)).any(|word| word == "sudo");
+    let named = command
+        .split(|c: char| c.is_whitespace() || ";&|(".contains(c))
+        .any(|word| word == "sudo");
     if !named || cfg!(windows) {
         return false;
     }
@@ -1043,18 +1382,48 @@ fn head(path: &Path, lines: usize, most: usize) -> Option<String> {
 
 /// What the model is told the first time it touches a project: what it is built with, how it is run and tested, where git stands, its own rules and
 /// what earlier work noted about it. Read from the files themselves, so it is never stale.
-fn project_brief(root: &Path, notes: Option<String>, remembered: Option<(String, Vec<String>)>) -> String {
+fn project_brief(
+    root: &Path,
+    notes: Option<String>,
+    remembered: Option<(String, Vec<String>)>,
+) -> String {
     let mut parts = vec![format!("PROJE: {}", root.display())];
-    let markers: Vec<&str> = PROJECT_MARKERS.iter().copied().filter(|marker| root.join(marker).exists()).collect();
-    parts.push(format!("İşaretler: {}", markers.join(", ")));
-    let manager = [("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("bun.lockb", "bun"), ("bun.lock", "bun"), ("package-lock.json", "npm")]
+    let markers: Vec<&str> = PROJECT_MARKERS
         .iter()
-        .find(|(lock, _)| root.join(lock).exists())
-        .map(|(_, manager)| *manager);
-    if let Some(package) = std::fs::read_to_string(root.join("package.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()) {
+        .copied()
+        .filter(|marker| root.join(marker).exists())
+        .collect();
+    parts.push(format!("İşaretler: {}", markers.join(", ")));
+    let manager = [
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lockb", "bun"),
+        ("bun.lock", "bun"),
+        ("package-lock.json", "npm"),
+    ]
+    .iter()
+    .find(|(lock, _)| root.join(lock).exists())
+    .map(|(_, manager)| *manager);
+    if let Some(package) = std::fs::read_to_string(root.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    {
         if let Some(scripts) = package["scripts"].as_object() {
-            let lines: Vec<String> = scripts.iter().take(20).map(|(name, command)| format!("  {name}: {}", text_of(command).chars().take(120).collect::<String>())).collect();
-            parts.push(format!("Betikler ({} run <ad>):\n{}", manager.unwrap_or("npm"), lines.join("\n")));
+            let lines: Vec<String> = scripts
+                .iter()
+                .take(20)
+                .map(|(name, command)| {
+                    format!(
+                        "  {name}: {}",
+                        text_of(command).chars().take(120).collect::<String>()
+                    )
+                })
+                .collect();
+            parts.push(format!(
+                "Betikler ({} run <ad>):\n{}",
+                manager.unwrap_or("npm"),
+                lines.join("\n")
+            ));
         }
     }
     let (memory_text, learned) = remembered.unwrap_or_default();
@@ -1071,35 +1440,78 @@ fn project_brief(root: &Path, notes: Option<String>, remembered: Option<(String,
     // The map of the project, at the first touch: the tree, the languages, the entry points. Five to ten calls of looking around, said once.
     let map = super::repo::repo_map(root, None, None);
     if !map.trim().is_empty() {
-        parts.push(format!("PROJE HARİTASI (özet; ayrıntı için repo_map / repo_find):\n{}", map.chars().take(2_200).collect::<String>()));
+        parts.push(format!(
+            "PROJE HARİTASI (özet; ayrıntı için repo_map / repo_find):\n{}",
+            map.chars().take(2_200).collect::<String>()
+        ));
     }
     if !checks.is_empty() {
         parts.push(format!("Doğrulama (her değişiklikten sonra çalıştır, hataları dosya:satır olarak oku, yeşil olana kadar döngüyü sürdür):\n{}", checks.iter().map(|command| format!("  {command}")).collect::<Vec<_>>().join("\n")));
     }
     if root.join(".git").exists() {
-        let status = std::process::Command::new("git").args(["-C", &root.to_string_lossy(), "status", "--porcelain=v1", "-b"]).stdin(std::process::Stdio::null()).output();
+        let status = std::process::Command::new("git")
+            .args([
+                "-C",
+                &root.to_string_lossy(),
+                "status",
+                "--porcelain=v1",
+                "-b",
+            ])
+            .stdin(std::process::Stdio::null())
+            .output();
         if let Some(out) = status.ok().filter(|out| out.status.success()) {
             let text = String::from_utf8_lossy(&out.stdout);
             let mut lines = text.lines();
-            let branch = lines.next().unwrap_or("").trim_start_matches("## ").to_string();
+            let branch = lines
+                .next()
+                .unwrap_or("")
+                .trim_start_matches("## ")
+                .to_string();
             let changed = lines.count();
             parts.push(format!("Git: {branch}; {changed} değişmiş dosya"));
             // The phone's branches as this clone last fetched them (no network here): work waiting to be taken.
-            let phone = std::process::Command::new("git").args(["-C", &root.to_string_lossy(), "branch", "-r", "--list", "*/wiqo/*", "--format=%(refname:short) %(committerdate:relative)"]).stdin(std::process::Stdio::null()).output();
-            if let Some(out) = phone.ok().filter(|out| out.status.success() && !out.stdout.is_empty()) {
-                let list: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().take(6).map(str::to_string).collect();
-                parts.push(format!("Telefondan gelen dallar (son fetch'e göre): {}", list.join("; ")));
+            let phone = std::process::Command::new("git")
+                .args([
+                    "-C",
+                    &root.to_string_lossy(),
+                    "branch",
+                    "-r",
+                    "--list",
+                    "*/wiqo/*",
+                    "--format=%(refname:short) %(committerdate:relative)",
+                ])
+                .stdin(std::process::Stdio::null())
+                .output();
+            if let Some(out) = phone
+                .ok()
+                .filter(|out| out.status.success() && !out.stdout.is_empty())
+            {
+                let list: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .take(6)
+                    .map(str::to_string)
+                    .collect();
+                parts.push(format!(
+                    "Telefondan gelen dallar (son fetch'e göre): {}",
+                    list.join("; ")
+                ));
             }
         }
     }
-    if let Some((name, rules)) = ["AGENTS.md", "CLAUDE.md", ".cursorrules", "CONTRIBUTING.md"].iter().find_map(|name| head(&root.join(name), 60, 3_000).map(|text| (*name, text))) {
+    if let Some((name, rules)) = ["AGENTS.md", "CLAUDE.md", ".cursorrules", "CONTRIBUTING.md"]
+        .iter()
+        .find_map(|name| head(&root.join(name), 60, 3_000).map(|text| (*name, text)))
+    {
         parts.push(format!("Kurallar ({name}):\n{rules}"));
     }
     if let Some(readme) = head(&root.join("README.md"), 25, 1_500) {
         parts.push(format!("README başı:\n{readme}"));
     }
     if let Some(notes) = notes.filter(|notes| !notes.trim().is_empty()) {
-        parts.push(format!("Wiqo notların:\n{}", notes.chars().take(3_000).collect::<String>()));
+        parts.push(format!(
+            "Wiqo notların:\n{}",
+            notes.chars().take(3_000).collect::<String>()
+        ));
     }
     clip(&parts.join("\n\n"), 8_000)
 }
@@ -1109,10 +1521,18 @@ fn project_brief(root: &Path, notes: Option<String>, remembered: Option<(String,
 fn verify_commands(root: &Path, manager: Option<&str>) -> Vec<String> {
     let has = |name: &str| root.join(name).exists();
     let mut commands: Vec<String> = Vec::new();
-    if let Some(package) = std::fs::read_to_string(root.join("package.json")).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok()) {
+    if let Some(package) = std::fs::read_to_string(root.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    {
         let run = manager.unwrap_or("npm");
         let scripts = package["scripts"].as_object().cloned().unwrap_or_default();
-        let script = |names: &[&str]| names.iter().find(|name| scripts.contains_key(**name)).map(|name| format!("{run} run {name}"));
+        let script = |names: &[&str]| {
+            names
+                .iter()
+                .find(|name| scripts.contains_key(**name))
+                .map(|name| format!("{run} run {name}"))
+        };
         if let Some(command) = script(&["typecheck", "type-check", "tsc", "check-types"]) {
             commands.push(command);
         } else if has("tsconfig.json") {
@@ -1128,7 +1548,12 @@ fn verify_commands(root: &Path, manager: Option<&str>) -> Vec<String> {
     if has("go.mod") {
         commands.push("go build ./... && go vet ./... && go test ./...".into());
     }
-    if has("pyproject.toml") || has("pytest.ini") || has("setup.py") || has("requirements.txt") || root.join("tests").is_dir() {
+    if has("pyproject.toml")
+        || has("pytest.ini")
+        || has("setup.py")
+        || has("requirements.txt")
+        || root.join("tests").is_dir()
+    {
         commands.push("python3 -m pytest -q".into());
     }
     if has("Package.swift") {
@@ -1142,7 +1567,10 @@ fn verify_commands(root: &Path, manager: Option<&str>) -> Vec<String> {
     }
     if let Ok(makefile) = std::fs::read_to_string(root.join("Makefile")) {
         for target in ["test", "check", "lint"] {
-            if makefile.lines().any(|line| line.starts_with(&format!("{target}:"))) {
+            if makefile
+                .lines()
+                .any(|line| line.starts_with(&format!("{target}:")))
+            {
                 commands.push(format!("make {target}"));
             }
         }
@@ -1163,7 +1591,13 @@ struct Pc {
 }
 
 /// Runs a step, and lets go of it a moment after the person stops the task (`None`: its result was not waited for).
-async fn run_stoppable(engine: &Engine, step: &Value, card_approved: bool, send_approved: bool, stop: &Stop) -> Option<(Value, Option<Value>)> {
+async fn run_stoppable(
+    engine: &Engine,
+    step: &Value,
+    card_approved: bool,
+    send_approved: bool,
+    stop: &Stop,
+) -> Option<(Value, Option<Value>)> {
     let run = run_step_whole(engine, step, card_approved, send_approved);
     tokio::pin!(run);
     tokio::select! {
@@ -1178,37 +1612,97 @@ impl Work {
     fn card(&self) -> String {
         let mut lines = vec!["ÇALIŞMA KARTI (program yazdı, kesin):".to_string()];
         if !self.pins.is_empty() {
-            lines.push(format!("Kullanıcının koyduğu sınırlar (her zaman uy):\n{}", self.pins.iter().map(|pin| format!("  - {pin}")).collect::<Vec<_>>().join("\n")));
+            lines.push(format!(
+                "Kullanıcının koyduğu sınırlar (her zaman uy):\n{}",
+                self.pins
+                    .iter()
+                    .map(|pin| format!("  - {pin}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
         }
         if self.model_sharing != Some(true) {
             let checked = self.ledger.checks_summary();
-            lines.push(format!("Yerel kayıt: {} dosya işlemi, {} denetim, {} geçen denetim.", self.files.len(), checked.len(), checked.iter().filter(|(_, passed)| *passed).count()));
+            lines.push(format!(
+                "Yerel kayıt: {} dosya işlemi, {} denetim, {} geçen denetim.",
+                self.files.len(),
+                checked.len(),
+                checked.iter().filter(|(_, passed)| *passed).count()
+            ));
             return lines.join("\n");
         }
         let changed = self.ledger.changed_paths();
         if !changed.is_empty() {
-            let shown: Vec<&str> = changed.iter().rev().take(12).rev().map(String::as_str).collect();
-            lines.push(format!("Değişen dosyalar ({}): {}", changed.len(), shown.join(", ")));
+            let shown: Vec<&str> = changed
+                .iter()
+                .rev()
+                .take(12)
+                .rev()
+                .map(String::as_str)
+                .collect();
+            lines.push(format!(
+                "Değişen dosyalar ({}): {}",
+                changed.len(),
+                shown.join(", ")
+            ));
         }
         let checks = self.ledger.checks_summary();
         if !checks.is_empty() {
-            lines.push(format!("Denetimler (son sonuç): {}", checks.iter().take(8).map(|(label, passed)| format!("{} {label}", if *passed { "✔" } else { "✗" })).collect::<Vec<_>>().join("; ")));
+            lines.push(format!(
+                "Denetimler (son sonuç): {}",
+                checks
+                    .iter()
+                    .take(8)
+                    .map(|(label, passed)| format!("{} {label}", if *passed { "✔" } else { "✗" }))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
         }
         if !self.files.is_empty() {
-            lines.push(format!("Dosyalar (son işlem; içerikleri bağlamdan çıktı, gerekirse yeniden oku): {}", self.files.iter().rev().take(20).rev().map(|(path, did)| format!("{path} ({did})")).collect::<Vec<_>>().join(", ")));
+            lines.push(format!(
+                "Dosyalar (son işlem; içerikleri bağlamdan çıktı, gerekirse yeniden oku): {}",
+                self.files
+                    .iter()
+                    .rev()
+                    .take(20)
+                    .rev()
+                    .map(|(path, did)| format!("{path} ({did})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
         if !self.decisions.is_empty() {
-            lines.push(format!("Verdiğin kararlar ve ara notların (eskiden yeniye):\n{}", self.decisions.iter().map(|note| format!("  - {note}")).collect::<Vec<_>>().join("\n")));
+            lines.push(format!(
+                "Verdiğin kararlar ve ara notların (eskiden yeniye):\n{}",
+                self.decisions
+                    .iter()
+                    .map(|note| format!("  - {note}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
         }
         if !self.last_errors.is_empty() {
-            lines.push(format!("Açık hatalar (son başarısız denetimden):\n{}", self.last_errors.iter().map(|error| format!("  - {error}")).collect::<Vec<_>>().join("\n")));
+            lines.push(format!(
+                "Açık hatalar (son başarısız denetimden):\n{}",
+                self.last_errors
+                    .iter()
+                    .map(|error| format!("  - {error}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
         }
         lines.join("\n")
     }
 
     fn pending_jobs(&self) -> Vec<String> {
-        self.jobs.iter().map(|job| job.id.clone())
-            .chain(self.plan.iter().filter_map(|step| step["checkJob"].as_str().map(str::to_owned)))
+        self.jobs
+            .iter()
+            .map(|job| job.id.clone())
+            .chain(
+                self.plan
+                    .iter()
+                    .filter_map(|step| step["checkJob"].as_str().map(str::to_owned)),
+            )
             .collect()
     }
 
@@ -1225,13 +1719,22 @@ impl Work {
 
     fn completion(&self, reply: String) -> WorkResult {
         if self.uncertain || self.in_flight {
-            return WorkResult::stopped(Unknown, format!("{reply}\n\nÖnceki bir işlemin sonucu doğrulanamadı."));
+            return WorkResult::stopped(
+                Unknown,
+                format!("{reply}\n\nÖnceki bir işlemin sonucu doğrulanamadı."),
+            );
         }
         if self.jobs.iter().any(|job| !job.server)
-            || self.plan.iter().any(|step| step["status"] != "done" || step["verified"] != true)
+            || self
+                .plan
+                .iter()
+                .any(|step| step["status"] != "done" || step["verified"] != true)
             || self.ledger.unchecked_changes()
         {
-            return WorkResult::stopped(Paused, format!("{reply}\n\nTamamlanmamış veya doğrulanmamış adımlar kayıtlı."));
+            return WorkResult::stopped(
+                Paused,
+                format!("{reply}\n\nTamamlanmamış veya doğrulanmamış adımlar kayıtlı."),
+            );
         }
         let checks = self.ledger.checks_summary();
         let verified = if checks.is_empty() {
@@ -1240,9 +1743,16 @@ impl Work {
             checks.iter().all(|(_, passed)| *passed)
         };
         if verified {
-            WorkResult { reply, state: Done, verified }
+            WorkResult {
+                reply,
+                state: Done,
+                verified,
+            }
         } else {
-            WorkResult::stopped(Unknown, format!("{reply}\n\nGörev tamamlanmış olarak doğrulanamadı."))
+            WorkResult::stopped(
+                Unknown,
+                format!("{reply}\n\nGörev tamamlanmış olarak doğrulanamadı."),
+            )
         }
     }
 
@@ -1266,7 +1776,11 @@ fn steps_in_words(log: &[String]) -> String {
     let words = last.trim_start_matches(['✓', '✗', ' ']);
     let words = words.split(" (").next().unwrap_or(words);
     let words: String = words.chars().take(90).collect();
-    let counts = if failed == 0 { format!("{done} adım tamamlandı") } else { format!("{done} adım tamamlandı, {failed} adım başarısız") };
+    let counts = if failed == 0 {
+        format!("{done} adım tamamlandı")
+    } else {
+        format!("{done} adım tamamlandı, {failed} adım başarısız")
+    };
     format!("{counts}. Son adım: {words}.")
 }
 
@@ -1295,8 +1809,12 @@ fn sse_outcome(text: &str) -> Option<Result<Value, Value>> {
     }
     let mut last = None;
     for frame in text.split("\n\n") {
-        let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) else { continue };
-        let Ok(event) = serde_json::from_str::<Value>(data) else { continue };
+        let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) else {
+            continue;
+        };
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
         if event["done"] == true {
             last = Some(Ok(event["message"].clone()));
         } else if event["error"].is_object() {
@@ -1342,9 +1860,21 @@ async fn repo_map_tool(args: &Value) -> ToolOutcome {
         return refused("path var olan bir proje klasörünün tam yolu olmalı.");
     }
     let root = project_root(&std::fs::canonicalize(&root).unwrap_or(root.clone())).unwrap_or(root);
-    let (query, file) = (args["query"].as_str().map(str::to_string), args["file"].as_str().map(str::to_string));
-    let text = tokio::task::spawn_blocking(move || super::repo::repo_map(&root, query.as_deref(), file.as_deref())).await.unwrap_or_else(|_| "Proje haritası çıkarılamadı.".into());
-    ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
+    let (query, file) = (
+        args["query"].as_str().map(str::to_string),
+        args["file"].as_str().map(str::to_string),
+    );
+    let text = tokio::task::spawn_blocking(move || {
+        super::repo::repo_map(&root, query.as_deref(), file.as_deref())
+    })
+    .await
+    .unwrap_or_else(|_| "Proje haritası çıkarılamadı.".into());
+    ToolOutcome {
+        ok: true,
+        output: json!({ "status": "completed", "output": text }).to_string(),
+        brief: String::new(),
+        job: None,
+    }
 }
 
 /// `browser_check`: read-only (it opens a page and uses it in a throwaway browser profile); the report is the result.
@@ -1353,14 +1883,24 @@ async fn browser_check_tool(args: &Value) -> ToolOutcome {
         Ok(report) => {
             let ok = report["ok"] == true;
             let brief = report["summary"].as_str().unwrap_or("").to_string();
-            ToolOutcome { ok, output: report.to_string(), brief, job: None }
+            ToolOutcome {
+                ok,
+                output: report.to_string(),
+                brief,
+                job: None,
+            }
         }
         Err(message) => refused(&message),
     }
 }
 
 fn refused(message: &str) -> ToolOutcome {
-    ToolOutcome { ok: false, output: json!({ "status": "failed", "message": message }).to_string(), brief: message.chars().take(160).collect(), job: None }
+    ToolOutcome {
+        ok: false,
+        output: json!({ "status": "failed", "message": message }).to_string(),
+        brief: message.chars().take(160).collect(),
+        job: None,
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -1369,34 +1909,61 @@ struct PendingDelivery {
     progress: VecDeque<AgentRunProgressRequest>,
 }
 
-async fn accept_progress(http: &reqwest::Client, server: &str, token: &str, device_token: Option<&str>, progress: &AgentRunProgressRequest) -> bool {
-    let mut request = http.post(format!("{server}/agent/progress")).bearer_auth(token)
-        .timeout(Duration::from_secs(8)).json(progress);
+async fn accept_progress(
+    http: &reqwest::Client,
+    server: &str,
+    token: &str,
+    device_token: Option<&str>,
+    progress: &AgentRunProgressRequest,
+) -> bool {
+    let mut request = http
+        .post(format!("{server}/agent/progress"))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(8))
+        .json(progress);
     if let Some(device_token) = device_token {
         request = request.header("X-Wiqo-Device-Token", device_token);
     }
-    request.send().await
-        .is_ok_and(|response| response.status().is_success() || matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 410))
+    request.send().await.is_ok_and(|response| {
+        response.status().is_success()
+            || matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 410)
+    })
 }
 
-async fn deliver_once(http: &reqwest::Client, server: &str, token: &str, device_token: Option<&str>, pending: &PendingDelivery) -> bool {
+async fn deliver_once(
+    http: &reqwest::Client,
+    server: &str,
+    token: &str,
+    device_token: Option<&str>,
+    pending: &PendingDelivery,
+) -> bool {
     for progress in &pending.progress {
         if !accept_progress(http, server, token, device_token, progress).await {
             return false;
         }
     }
-    let Some(finish) = &pending.finish else { return true };
-    let mut request = http.post(format!("{server}/agent/finish")).bearer_auth(token)
-        .timeout(Duration::from_secs(15)).json(finish);
+    let Some(finish) = &pending.finish else {
+        return true;
+    };
+    let mut request = http
+        .post(format!("{server}/agent/finish"))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(15))
+        .json(finish);
     if let Some(device_token) = device_token {
         request = request.header("X-Wiqo-Device-Token", device_token);
     }
-    request.send().await
-        .is_ok_and(|response| response.status().is_success() || matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 410))
+    request.send().await.is_ok_and(|response| {
+        response.status().is_success()
+            || matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 410)
+    })
 }
 
 fn device_bearer(engine: &Engine) -> Option<String> {
-    engine.services().credentials.get()
+    engine
+        .services()
+        .credentials
+        .get()
         .filter(|credentials| credentials.access_expires_at > chrono::Utc::now().timestamp())
         .map(|credentials| credentials.access_token)
 }
@@ -1407,16 +1974,25 @@ fn shared_progress(mut event: Value) -> Value {
             for field in ["command", "workdir", "output", "files", "message"] {
                 step.remove(field);
             }
-            step.insert("summary".into(), json!(match step.get("tool").and_then(Value::as_str) {
-                Some("shell") => "Terminal komutu",
-                Some("job") => "Arka plan işi",
-                Some("read_file" | "repo_map" | "repo_find" | "search") => "Yerel bilgi okunuyor",
-                Some("write_file" | "edit_file" | "apply_patch" | "undo") => "Yerel dosya işlemi",
-                _ => "Masaüstü işlemi",
-            }));
+            step.insert(
+                "summary".into(),
+                json!(match step.get("tool").and_then(Value::as_str) {
+                    Some("shell") => "Terminal komutu",
+                    Some("job") => "Arka plan işi",
+                    Some("read_file" | "repo_map" | "repo_find" | "search") =>
+                        "Yerel bilgi okunuyor",
+                    Some("write_file" | "edit_file" | "apply_patch" | "undo") =>
+                        "Yerel dosya işlemi",
+                    _ => "Masaüstü işlemi",
+                }),
+            );
         }
     }
-    if event["type"] == "activity" && event["activity"]["id"].as_str().is_some_and(|id| id.starts_with("local-note-") || id == "local-plan") {
+    if event["type"] == "activity"
+        && event["activity"]["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("local-note-") || id == "local-plan")
+    {
         event["activity"]["label"] = json!("Görev planı güncellendi");
     }
     event
@@ -1425,23 +2001,39 @@ fn shared_progress(mut event: Value) -> Value {
 impl Chat {
     /// Reconnects retry completion records before opening the next observer stream.
     pub(super) async fn flush_local_finishes(&self, token: &str) {
-        let Some(folder) = self.account_session_dir(None) else { return };
-        let Ok(mut entries) = tokio::fs::read_dir(folder).await else { return };
+        let Some(folder) = self.account_session_dir(None) else {
+            return;
+        };
+        let Ok(mut entries) = tokio::fs::read_dir(folder).await else {
+            return;
+        };
         let mut attempted = 0;
         while let Ok(Some(entry)) = entries.next_entry().await {
             if attempted >= 16 || self.token().ok().as_deref() != Some(token) {
                 break;
             }
             let name = entry.file_name();
-            if !name.to_str().is_some_and(|name| name.starts_with("finish-") && name.ends_with(".json")) {
+            if !name
+                .to_str()
+                .is_some_and(|name| name.starts_with("finish-") && name.ends_with(".json"))
+            {
                 continue;
             }
             let path = entry.path();
-            if self.local_tasks.lock().expect("local tasks lock").contains(&path) {
+            if self
+                .local_tasks
+                .lock()
+                .expect("local tasks lock")
+                .contains(&path)
+            {
                 continue;
             }
-            let Ok(bytes) = tokio::fs::read(&path).await else { continue };
-            let Ok(pending) = serde_json::from_slice::<PendingDelivery>(&bytes) else { continue };
+            let Ok(bytes) = tokio::fs::read(&path).await else {
+                continue;
+            };
+            let Ok(pending) = serde_json::from_slice::<PendingDelivery>(&bytes) else {
+                continue;
+            };
             attempted += 1;
             if deliver_once(&self.http, &self.server, token, None, &pending).await {
                 let _ = tokio::fs::remove_file(path).await;
@@ -1451,8 +2043,19 @@ impl Chat {
         }
     }
 
-    async fn report(&self, engine: &Engine, token: &str, owner: Option<&str>, run_id: &str, delivery_path: &Path, mut events: tokio::sync::mpsc::UnboundedReceiver<Value>) -> PendingDelivery {
-        let mut pending = PendingDelivery { finish: None, progress: VecDeque::new() };
+    async fn report(
+        &self,
+        engine: &Engine,
+        token: &str,
+        owner: Option<&str>,
+        run_id: &str,
+        delivery_path: &Path,
+        mut events: tokio::sync::mpsc::UnboundedReceiver<Value>,
+    ) -> PendingDelivery {
+        let mut pending = PendingDelivery {
+            finish: None,
+            progress: VecDeque::new(),
+        };
         let mut seq = 0_i64;
         let mut next_attempt = Instant::now();
         while let Some(first) = events.recv().await {
@@ -1464,23 +2067,37 @@ impl Chat {
                     Err(_) => break,
                 }
             }
-            let events: Vec<_> = join_pieces(batch).into_iter().filter_map(|event| {
-                serde_json::from_value::<AgentRunProgressEvent>(event).ok()
-                    .filter(|event| !matches!(event, AgentRunProgressEvent::Unknown))
-            }).collect();
+            let events: Vec<_> = join_pieces(batch)
+                .into_iter()
+                .filter_map(|event| {
+                    serde_json::from_value::<AgentRunProgressEvent>(event)
+                        .ok()
+                        .filter(|event| !matches!(event, AgentRunProgressEvent::Unknown))
+                })
+                .collect();
             if events.is_empty() {
                 continue;
             }
             seq += 1;
             if pending.progress.len() >= 128 {
-                let ephemeral = pending.progress.iter().position(|batch| batch.events.iter().all(|event|
-                    matches!(event, AgentRunProgressEvent::Delta(_) | AgentRunProgressEvent::Reset(_))));
+                let ephemeral = pending.progress.iter().position(|batch| {
+                    batch.events.iter().all(|event| {
+                        matches!(
+                            event,
+                            AgentRunProgressEvent::Delta(_) | AgentRunProgressEvent::Reset(_)
+                        )
+                    })
+                });
                 if let Some(index) = ephemeral {
                     pending.progress.remove(index);
                 }
             }
             if pending.progress.len() < 128 {
-                pending.progress.push_back(AgentRunProgressRequest { run_id: run_id.into(), events, seq: Some(seq) });
+                pending.progress.push_back(AgentRunProgressRequest {
+                    run_id: run_id.into(),
+                    events,
+                    seq: Some(seq),
+                });
                 let _ = write_json(delivery_path, &pending);
             }
             let bearer = match owner {
@@ -1491,7 +2108,15 @@ impl Chat {
             if Instant::now() >= next_attempt {
                 if let (Some(bearer), Some(next)) = (bearer, pending.progress.front()) {
                     let device_token = device_bearer(engine);
-                    if accept_progress(&self.http, &self.server, &bearer, device_token.as_deref(), next).await {
+                    if accept_progress(
+                        &self.http,
+                        &self.server,
+                        &bearer,
+                        device_token.as_deref(),
+                        next,
+                    )
+                    .await
+                    {
                         pending.progress.pop_front();
                         if pending.progress.is_empty() {
                             let _ = tokio::fs::remove_file(delivery_path).await;
@@ -1508,7 +2133,9 @@ impl Chat {
     }
 
     fn account_session_dir(&self, fallback_token: Option<&str>) -> Option<PathBuf> {
-        let scope = self.email().map(|email| format!("account:{}", email.trim().to_ascii_lowercase()))
+        let scope = self
+            .email()
+            .map(|email| format!("account:{}", email.trim().to_ascii_lowercase()))
             .or_else(|| fallback_token.map(|token| format!("eval:{token}")))?;
         let parent = self.file.parent()?.join("local-sessions");
         Some(parent.join(format!("{:x}", Sha256::digest(scope.as_bytes()))))
@@ -1518,10 +2145,19 @@ impl Chat {
         // A server-handled explicit resume proves ownership of this conversation. Older
         // records have no task identity or receipts, so recover context but require review.
         Uuid::parse_str(conversation).ok()?;
-        let path = self.file.parent()?.join("local-sessions").join(format!("{conversation}.json"));
+        let path = self
+            .file
+            .parent()?
+            .join("local-sessions")
+            .join(format!("{conversation}.json"));
         let mut record: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-        let age = chrono::Utc::now().timestamp().saturating_sub(record["savedAt"].as_i64()?);
-        if record["v"] != 1 || record["conversation"] != conversation || age >= SESSION_DAYS * 86_400 {
+        let age = chrono::Utc::now()
+            .timestamp()
+            .saturating_sub(record["savedAt"].as_i64()?);
+        if record["v"] != 1
+            || record["conversation"] != conversation
+            || age >= SESSION_DAYS * 86_400
+        {
             return None;
         }
         record["taskId"] = json!(task_id);
@@ -1532,8 +2168,15 @@ impl Chat {
     }
 
     /// Reuses normal chat initiation, fenced to the prior local run and this device.
-    pub async fn resume_safe_tasks(&self, engine: &Engine, device_id: &str, events: &broadcast::Sender<Event>) {
-        let Some(folder) = self.account_session_dir(None) else { return };
+    pub async fn resume_safe_tasks(
+        &self,
+        engine: &Engine,
+        device_id: &str,
+        events: &broadcast::Sender<Event>,
+    ) {
+        let Some(folder) = self.account_session_dir(None) else {
+            return;
+        };
         let Some(owner) = self.email() else { return };
         let mut ready = false;
         for delay in [0_u64, 400, 1000] {
@@ -1542,10 +2185,20 @@ impl Chat {
             if self.email().as_deref() != Some(&owner) {
                 return;
             }
-            let response = self.http.get(format!("{}/devices/{device_id}/readiness", self.server))
-                .bearer_auth(token).timeout(Duration::from_secs(3)).send().await;
+            let response = self
+                .http
+                .get(format!("{}/devices/{device_id}/readiness", self.server))
+                .bearer_auth(token)
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await;
             if let Ok(response) = response {
-                if response.status().is_success() && response.json::<Value>().await.is_ok_and(|value| value["online"] == true) {
+                if response.status().is_success()
+                    && response
+                        .json::<Value>()
+                        .await
+                        .is_ok_and(|value| value["online"] == true)
+                {
                     ready = true;
                     break;
                 }
@@ -1555,17 +2208,23 @@ impl Chat {
             return;
         }
         let mut recovered = 0;
-        let Ok(mut entries) = tokio::fs::read_dir(folder).await else { return };
+        let Ok(mut entries) = tokio::fs::read_dir(folder).await else {
+            return;
+        };
         while let Ok(Some(entry)) = entries.next_entry().await {
             if recovered >= 4 || self.email().as_deref() != Some(&owner) {
                 break;
             }
-            let Some(credentials) = engine.services().credentials.get() else { break };
+            let Some(credentials) = engine.services().credentials.get() else {
+                break;
+            };
             if credentials.access_expires_at <= chrono::Utc::now().timestamp() {
                 break;
             }
             let path = entry.path();
-            let Some(saved) = session_snapshot(&path) else { continue };
+            let Some(saved) = session_snapshot(&path) else {
+                continue;
+            };
             if !saved.eligible_for_automatic_resume(chrono::Utc::now().timestamp()) {
                 continue;
             }
@@ -1574,44 +2233,79 @@ impl Chat {
                 if active.contains(&path) {
                     continue;
                 }
-                let Ok(bytes) = std::fs::read(&path) else { continue };
-                let Ok(mut record) = serde_json::from_slice::<Value>(&bytes) else { continue };
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                let Ok(mut record) = serde_json::from_slice::<Value>(&bytes) else {
+                    continue;
+                };
                 record["autoResumeAttempted"] = json!(true);
                 if write_json(&path, &record).is_err() {
                     continue;
                 }
             }
             let turn = format!("auto-resume-{}", Uuid::new_v4());
-            let asker = Asker::AutoResume { prior_run: saved.run_id, device_token: credentials.access_token };
+            let asker = Asker::AutoResume {
+                prior_run: saved.run_id,
+                device_token: credentials.access_token,
+            };
             let deny = |_: String, _: String| Box::pin(async { Decision::No }) as _;
-            let _ = self.send(engine, device_id, events, &turn, Uuid::new_v4().to_string(), &saved.conversation,
-                json!([]), "devam et", Some(saved.task_id), None, json!([]), &asker, &deny).await;
+            let _ = self
+                .send(
+                    engine,
+                    device_id,
+                    events,
+                    &turn,
+                    Uuid::new_v4().to_string(),
+                    &saved.conversation,
+                    json!([]),
+                    "devam et",
+                    Some(saved.task_id),
+                    None,
+                    json!([]),
+                    &asker,
+                    &deny,
+                )
+                .await;
             recovered += 1;
         }
     }
 
     /// Interrupted work stays recorded and is offered once on the device that owned it.
     pub fn interrupted(&self) -> Vec<Value> {
-        let Some(folder) = self.account_session_dir(None) else { return Vec::new() };
+        let Some(folder) = self.account_session_dir(None) else {
+            return Vec::new();
+        };
         let active = self.local_tasks.lock().expect("local tasks lock");
         let mut found = Vec::new();
         for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
             let path = entry.path();
-            if active.contains(&path) || path.extension().and_then(|value| value.to_str()) != Some("json") {
+            if active.contains(&path)
+                || path.extension().and_then(|value| value.to_str()) != Some("json")
+            {
                 continue;
             }
-            let Some(session) = session_snapshot(&path) else { continue };
+            let Some(session) = session_snapshot(&path) else {
+                continue;
+            };
             if !session.open || session.interrupted_notified {
                 continue;
             }
-            let Ok(bytes) = std::fs::read(&path) else { continue };
-            let Ok(mut record) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let Ok(mut record) = serde_json::from_slice::<Value>(&bytes) else {
+                continue;
+            };
             record["interruptedNotified"] = json!(true);
             if write_json(&path, &record).is_ok() {
-                found.push((session.saved_at, json!({
-                    "conversation": session.conversation, "taskId": session.task_id,
-                    "goal": session.goal.chars().take(200).collect::<String>(),
-                })));
+                found.push((
+                    session.saved_at,
+                    json!({
+                        "conversation": session.conversation, "taskId": session.task_id,
+                        "goal": session.goal.chars().take(200).collect::<String>(),
+                    }),
+                ));
             }
         }
         found.sort_by_key(|(saved, _)| std::cmp::Reverse(*saved));
@@ -1621,30 +2315,67 @@ impl Chat {
     /// This computer's tools beyond the terminal, as the server describes them. None when the server cannot be asked or does not know them yet: the
     /// run then works with the terminal alone.
     async fn pc_tools(&self, token: &str, run_id: &str, device: &Value) -> Vec<Value> {
-        let asked = self.http.post(format!("{}/agent/tools", self.server)).bearer_auth(token).timeout(Duration::from_secs(10)).json(&json!({ "runId": run_id, "device": device })).send().await;
-        let Ok(response) = asked else { return Vec::new() };
+        let asked = self
+            .http
+            .post(format!("{}/agent/tools", self.server))
+            .bearer_auth(token)
+            .timeout(Duration::from_secs(10))
+            .json(&json!({ "runId": run_id, "device": device }))
+            .send()
+            .await;
+        let Ok(response) = asked else {
+            return Vec::new();
+        };
         if !response.status().is_success() {
             return Vec::new();
         }
-        response.json::<Value>().await.ok().and_then(|value| value["tools"].as_array().cloned()).unwrap_or_default()
+        response
+            .json::<Value>()
+            .await
+            .ok()
+            .and_then(|value| value["tools"].as_array().cloned())
+            .unwrap_or_default()
     }
 
     /// One call of such a tool: the server writes the step, this computer asks what it must ask and runs it.
     #[allow(clippy::too_many_arguments)]
-    async fn pc_tool(&self, engine: &Engine, run_id: &str, token: &str, pc: &mut Pc, sent: &mut Vec<Value>, name: &str, args: &Value, vault: &super::vault::Vault, approve: &Approve, stop: &Stop) -> ToolOutcome {
+    async fn pc_tool(
+        &self,
+        engine: &Engine,
+        run_id: &str,
+        token: &str,
+        pc: &mut Pc,
+        sent: &mut Vec<Value>,
+        name: &str,
+        args: &Value,
+        vault: &super::vault::Vault,
+        approve: &Approve,
+        stop: &Stop,
+    ) -> ToolOutcome {
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
         let mut body = json!({ "runId": run_id, "device": pc.device, "name": name, "args": args });
         if let Some(snapshot) = &pc.snapshot {
             body["snapshotId"] = json!(snapshot);
         }
-        let asked = self.http.post(format!("{}/agent/step", self.server)).bearer_auth(&bearer).timeout(Duration::from_secs(20)).json(&body).send().await;
+        let asked = self
+            .http
+            .post(format!("{}/agent/step", self.server))
+            .bearer_auth(&bearer)
+            .timeout(Duration::from_secs(20))
+            .json(&body)
+            .send()
+            .await;
         let Ok(response) = asked else {
             return refused("Sunucuya ulaşılamadı; bu araç şu an kullanılamıyor. İş terminalle yapılabiliyorsa öyle yap, değilse biraz sonra yeniden dene.");
         };
         let taken = response.status().is_success();
         let value: Value = response.json().await.unwrap_or(Value::Null);
         if !taken {
-            return refused(value["error"]["message"].as_str().unwrap_or("Araç hazırlanamadı."));
+            return refused(
+                value["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Araç hazırlanamadı."),
+            );
         }
         if let Some(why) = value["refused"].as_str() {
             return refused(why);
@@ -1664,8 +2395,14 @@ impl Chat {
                 Decision::TimedOut => return refused("Onay zamanında gelmedi; çalıştırılmadı."),
             }
         }
-        let Some((mut result, mut data)) = run_stoppable(engine, &step, false, asked, stop).await else {
-            return ToolOutcome { ok: false, brief: "Kullanıcı durdurdu.".into(), output: json!({ "status": "unknown", "sideEffectUncertain": true }).to_string(), job: None };
+        let Some((mut result, mut data)) = run_stoppable(engine, &step, false, asked, stop).await
+        else {
+            return ToolOutcome {
+                ok: false,
+                brief: "Kullanıcı durdurdu.".into(),
+                output: json!({ "status": "unknown", "sideEffectUncertain": true }).to_string(),
+                job: None,
+            };
         };
         // A press that cannot be taken back is asked by the computer itself, with its own sentence; the rest of the step then runs carrying that yes.
         if result["errorCode"] == "DESKTOP_APPROVAL_REQUIRED" {
@@ -1678,14 +2415,21 @@ impl Chat {
                         None => return refused("Kullanıcı durdurdu; adımın sonucu beklenmedi."),
                     }
                 }
-                Decision::No => return refused("Kullanıcı bu geri alınamaz işleme onay vermedi; çalıştırılmadı."),
+                Decision::No => {
+                    return refused(
+                        "Kullanıcı bu geri alınamaz işleme onay vermedi; çalıştırılmadı.",
+                    )
+                }
                 Decision::TimedOut => return refused("Onay zamanında gelmedi; çalıştırılmadı."),
             }
         }
         let ok = result["status"] == "completed";
         if let Some(data) = &data {
             if data["kind"] == "computerDesktop" {
-                if let Some(snapshot) = data["value"]["snapshotId"].as_str().filter(|id| !id.is_empty()) {
+                if let Some(snapshot) = data["value"]["snapshotId"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                {
                     pc.snapshot = Some(snapshot.to_string());
                 }
             }
@@ -1695,7 +2439,8 @@ impl Chat {
                 }
             }
         }
-        let mut shown = json!({ "status": result["status"], "did": summary, "message": result["message"] });
+        let mut shown =
+            json!({ "status": result["status"], "did": summary, "message": result["message"] });
         if let Some(code) = result["errorCode"].as_str() {
             shown["errorCode"] = json!(code);
             shown["error"] = result["error"].clone();
@@ -1706,8 +2451,19 @@ impl Chat {
         if ok && kind == "captureScreen" {
             shown["note"] = json!("Görüntü telefona kendiliğinden gitmedi. Bir dosyaya kaydedildiyse (saveTo) computer_files send_to_phone ile gönder; kaydedilmediyse saveTo vererek yeniden al.");
         }
-        let brief = result["error"].as_str().or(result["message"].as_str()).unwrap_or("").chars().take(160).collect();
-        ToolOutcome { ok, output: shown.to_string(), brief, job: None }
+        let brief = result["error"]
+            .as_str()
+            .or(result["message"].as_str())
+            .unwrap_or("")
+            .chars()
+            .take(160)
+            .collect();
+        ToolOutcome {
+            ok,
+            output: shown.to_string(),
+            brief,
+            job: None,
+        }
     }
 
     /// Runs one handed-over request to its end on this computer. `handoff` is the chat turn's `localAgent`: run id, instructions, goal.
@@ -1730,14 +2486,23 @@ impl Chat {
         let handoff: LocalAgentHandoff = serde_json::from_value(handoff.clone())
             .map_err(|_| anyhow!("Yerel çalışma kaydı okunamadı."))?;
         let run_id = handoff.run_id;
-        let task_id = handoff.task_id.as_deref().filter(|id| !id.is_empty()).unwrap_or(task_id);
+        let task_id = handoff
+            .task_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .unwrap_or(task_id);
         if Uuid::parse_str(&run_id).is_err() {
             bail!("Yerel çalışma başlatılamadı.");
         }
         let owner = self.email();
-        let folder = self.account_session_dir(Some(token)).ok_or_else(|| anyhow!("Yerel görev kaydı açılamadı."))?;
+        let folder = self
+            .account_session_dir(Some(token))
+            .ok_or_else(|| anyhow!("Yerel görev kaydı açılamadı."))?;
         std::fs::create_dir_all(&folder).map_err(|_| anyhow!("Yerel görev kaydı açılamadı."))?;
-        let path = folder.join(format!("{:x}.json", Sha256::digest(task_id.to_ascii_lowercase().as_bytes())));
+        let path = folder.join(format!(
+            "{:x}.json",
+            Sha256::digest(task_id.to_ascii_lowercase().as_bytes())
+        ));
         let finish_path = folder.join(format!("finish-{run_id}.json"));
         {
             let mut active = self.local_tasks.lock().expect("local tasks lock");
@@ -1746,18 +2511,38 @@ impl Chat {
             }
             active.insert(finish_path.clone());
         }
-        let _active = ActiveSession { active: &self.local_tasks, paths: [path.clone(), finish_path.clone()] };
-        let checkpoint = LocalSession { path, conversation, task_id, run_id: &run_id };
+        let _active = ActiveSession {
+            active: &self.local_tasks,
+            paths: [path.clone(), finish_path.clone()],
+        };
+        let checkpoint = LocalSession {
+            path,
+            conversation,
+            task_id,
+            run_id: &run_id,
+        };
         let resumes = handoff.resumes.unwrap_or(false);
         let prior = session_snapshot(&checkpoint.path)
-            .filter(|saved| saved.task_id.eq_ignore_ascii_case(task_id) && saved.conversation == conversation)
-            .or_else(|| if resumes && !read_only { self.legacy_session(conversation, task_id) } else { None });
+            .filter(|saved| {
+                saved.task_id.eq_ignore_ascii_case(task_id) && saved.conversation == conversation
+            })
+            .or_else(|| {
+                if resumes && !read_only {
+                    self.legacy_session(conversation, task_id)
+                } else {
+                    None
+                }
+            });
         if prior.as_ref().is_some_and(|saved| saved.run_id == run_id) {
             bail!("Bu çalışmanın yerel kaydı zaten var. Devam etmek için yeni bir devam isteği gönder.");
         }
         let untrusted = handoff.untrusted.unwrap_or(false);
         let began = Instant::now();
-        let goal = if handoff.goal.trim().is_empty() { text } else { &handoff.goal };
+        let goal = if handoff.goal.trim().is_empty() {
+            text
+        } else {
+            &handoff.goal
+        };
         let context = device_context(engine, device_id);
         let device = json!({
             "deviceId": device_id, "platform": match engine.platform() {
@@ -1770,21 +2555,60 @@ impl Chat {
         if read_only && prior.is_none() {
             bail!("Otomatik devam için yerel görev kaydı bulunamadı.");
         }
-        let extra = if read_only { Vec::new() } else { self.pc_tools(token, &run_id, &device).await };
-        let names: Vec<String> = extra.iter().filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string)).collect();
+        let extra = if read_only {
+            Vec::new()
+        } else {
+            self.pc_tools(token, &run_id, &device).await
+        };
+        let names: Vec<String> = extra
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+            .collect();
         let mut offered = tools();
         if let Some(list) = offered.as_array_mut() {
             list.extend(extra);
         }
-        let notes = if names.is_empty() { String::new() } else { format!("\n\n{PC_NOTES}") };
+        let notes = if names.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{PC_NOTES}")
+        };
         let mut work = Work {
-            messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), pins: super::memory::constraints_of(goal), last_errors: Vec::new(), trims: 0, files: Vec::new(), decisions: Vec::new(), budget: CONTEXT_BYTES,
-            tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(),
+            messages: Vec::new(),
+            plan: Vec::new(),
+            log: Vec::new(),
+            goal: goal.to_string(),
+            pins: super::memory::constraints_of(goal),
+            last_errors: Vec::new(),
+            trims: 0,
+            files: Vec::new(),
+            decisions: Vec::new(),
+            budget: CONTEXT_BYTES,
+            tools: offered,
+            pc: Pc {
+                device,
+                names,
+                snapshot: None,
+            },
+            sent: Vec::new(),
+            held: Vec::new(),
             // Project folders the person said yes for in an earlier run (within TRUST_DAYS) are not asked again; a Mission's run starts with none.
-            reach: Reach { untrusted, allowed: if untrusted { Vec::new() } else { self.trusted_folders() }, ..Reach::default() },
+            reach: Reach {
+                untrusted,
+                allowed: if untrusted {
+                    Vec::new()
+                } else {
+                    self.trusted_folders()
+                },
+                ..Reach::default()
+            },
             vault: super::vault::Vault::default(),
             ledger: super::ledger::Ledger::default(),
-            jobs: Vec::new(), in_flight: false, uncertain: false, read_only, model_sharing: None,
+            jobs: Vec::new(),
+            in_flight: false,
+            uncertain: false,
+            read_only,
+            model_sharing: None,
         };
         work.ledger.expect_from(goal);
         for pin in super::memory::constraints_of(text) {
@@ -1795,12 +2619,22 @@ impl Chat {
         work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}\n\n{PRIVATE_NOTE}", handoff.instructions, environment()) }));
         if let Some(saved) = prior.filter(|_| resumes) {
             // Old output and summaries had the earlier run's permission, if any.
-            work.messages.extend(repair(saved.messages).into_iter().filter(|message| !is_malformed_note(message)).map(|mut message| {
-                if message["role"] != "user" || !message["content"].as_str().is_some_and(|content| content == saved.goal) {
-                    message["content"] = json!("Önceki çalışma içeriği yerel görev kaydında.");
-                }
-                message
-            }));
+            work.messages.extend(
+                repair(saved.messages)
+                    .into_iter()
+                    .filter(|message| !is_malformed_note(message))
+                    .map(|mut message| {
+                        if message["role"] != "user"
+                            || !message["content"]
+                                .as_str()
+                                .is_some_and(|content| content == saved.goal)
+                        {
+                            message["content"] =
+                                json!("Önceki çalışma içeriği yerel görev kaydında.");
+                        }
+                        message
+                    }),
+            );
             work.plan = saved.plan;
             work.decisions = saved.decisions;
             work.log = saved.log;
@@ -1831,13 +2665,21 @@ impl Chat {
         // What was said in the chat since (answers the server gave, not this computer): "az önce yazdığını dosyaya kaydet" needs them.
         let unknown = said_since(&work.messages, &mut work.held, history);
         work.messages.extend(unknown);
-        let asked = if goal.trim() == text.trim() { text.to_string() } else { format!("{text}\n\n{goal}") };
+        let asked = if goal.trim() == text.trim() {
+            text.to_string()
+        } else {
+            format!("{text}\n\n{goal}")
+        };
         // The request written down as a card before any work (what is wanted, what will be handed over, what "done" is checked by, the limits, a reading chosen for
         // an ambiguous phrase): one call without tools, for work that builds or changes something. The card rides with the request through every compaction.
         let intent = if !resumes && wants_intent_card(goal) {
-            emit(json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anlıyorum", "state": "running" } }));
+            emit(
+                json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anlıyorum", "state": "running" } }),
+            );
             let card = self.intent_card(token, &run_id, goal, stop).await;
-            emit(json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anladım", "state": "done" } }));
+            emit(
+                json!({ "type": "activity", "activity": { "id": "local-intent", "phase": "understand", "label": "İsteği anladım", "state": "done" } }),
+            );
             card
         } else {
             None
@@ -1848,9 +2690,11 @@ impl Chat {
                     work.pins.push(limit.clone());
                 }
             }
-            work.messages.push(json!({ "role": "user", "content": format!("{asked}\n\n{card}") }));
+            work.messages
+                .push(json!({ "role": "user", "content": format!("{asked}\n\n{card}") }));
         } else {
-            work.messages.push(json!({ "role": "user", "content": asked }));
+            work.messages
+                .push(json!({ "role": "user", "content": asked }));
         }
         emit(json!({ "type": "reset" }));
 
@@ -1863,36 +2707,77 @@ impl Chat {
                 let _ = steps.send(event.clone());
                 emit(event);
             };
-            self.work(engine, &run_id, &checkpoint, &mut work, token, approve, stop, &say).await
+            self.work(
+                engine,
+                &run_id,
+                &checkpoint,
+                &mut work,
+                token,
+                approve,
+                stop,
+                &say,
+            )
+            .await
         };
-        let (result, mut pending) = tokio::join!(working, self.report(engine, token, owner.as_deref(), &run_id, &finish_path, received));
+        let (result, mut pending) = tokio::join!(
+            working,
+            self.report(
+                engine,
+                token,
+                owner.as_deref(),
+                &run_id,
+                &finish_path,
+                received
+            )
+        );
 
         // What the run did is written into the memory of each project it worked in (from the ledger, not from what the model says): the next run starts from it.
         let stopped = result.state == Cancelled;
         for root in work.reach.briefed.clone() {
-            let Some(memory) = self.memory(&root) else { continue };
+            let Some(memory) = self.memory(&root) else {
+                continue;
+            };
             let prefix = format!("{}/", root.display());
-            let files: Vec<String> = work.ledger.changed_paths().iter().filter_map(|path| path.strip_prefix(&prefix)).map(str::to_string).collect();
+            let files: Vec<String> = work
+                .ledger
+                .changed_paths()
+                .iter()
+                .filter_map(|path| path.strip_prefix(&prefix))
+                .map(str::to_string)
+                .collect();
             if files.is_empty() && work.ledger.checks_summary().is_empty() {
                 continue;
             }
-            memory.record(&root, &super::memory::RunRecord {
-                goal: work.goal.clone(),
-                outcome: if stopped { "durduruldu" } else { work.ledger.outcome() },
-                files,
-                checks: work.ledger.checks_summary(),
-                errors: work.last_errors.clone(),
-                minutes: began.elapsed().as_secs() / 60,
-            });
+            memory.record(
+                &root,
+                &super::memory::RunRecord {
+                    goal: work.goal.clone(),
+                    outcome: if stopped {
+                        "durduruldu"
+                    } else {
+                        work.ledger.outcome()
+                    },
+                    files,
+                    checks: work.ledger.checks_summary(),
+                    errors: work.last_errors.clone(),
+                    minutes: began.elapsed().as_secs() / 60,
+                },
+            );
             memory.add_rules(&work.pins);
         }
         let outcome = result.outcome();
         let reply = strip_emoji(&work.vault.seal(&result.reply));
-        work.messages.push(json!({ "role": "assistant", "content": reply }));
+        work.messages
+            .push(json!({ "role": "assistant", "content": reply }));
         pending.finish = Some(AgentRunFinishRequest {
             run_id: run_id.clone(),
             reply: reply.chars().take(19_000).collect(),
-            sent: Some(std::mem::take(&mut work.sent).into_iter().filter_map(|value| serde_json::from_value(value).ok()).collect()),
+            sent: Some(
+                std::mem::take(&mut work.sent)
+                    .into_iter()
+                    .filter_map(|value| serde_json::from_value(value).ok())
+                    .collect(),
+            ),
             outcome: Some(outcome.clone()),
         });
         let stored = write_json(&finish_path, &pending).is_ok();
@@ -1900,7 +2785,12 @@ impl Chat {
             let _ = checkpoint.save(&work, false);
         }
         // The same event reaches the desktop and the paired phone. Raw tool values stay here.
-        emit(super::progress::done(&reply, &run_id, work.vault.len(), outcome));
+        emit(super::progress::done(
+            &reply,
+            &run_id,
+            work.vault.len(),
+            outcome,
+        ));
         let bearer = match owner {
             Some(owner) if self.email().as_deref() == Some(&owner) => self.token().ok(),
             None => Some(token.to_string()),
@@ -1916,7 +2806,11 @@ impl Chat {
                     if stored && !finish_path.is_file() {
                         break;
                     }
-                    let proof = if delay == 0 { device_token.as_deref() } else { None };
+                    let proof = if delay == 0 {
+                        device_token.as_deref()
+                    } else {
+                        None
+                    };
                     if deliver_once(&http, &server, &bearer, proof, &pending).await {
                         if stored {
                             let _ = tokio::fs::remove_file(&finish_path).await;
@@ -1931,9 +2825,21 @@ impl Chat {
 
     /// The loop: ask the model, run what it calls, give the results back, until it answers in words and nothing is visibly left open.
     #[allow(clippy::too_many_arguments)]
-    async fn work(&self, engine: &Engine, run_id: &str, checkpoint: &LocalSession<'_>, work: &mut Work, token: &str, approve: &Approve, stop: &Stop, say: &impl Fn(Value)) -> WorkResult {
+    async fn work(
+        &self,
+        engine: &Engine,
+        run_id: &str,
+        checkpoint: &LocalSession<'_>,
+        work: &mut Work,
+        token: &str,
+        approve: &Approve,
+        stop: &Stop,
+        say: &impl Fn(Value),
+    ) -> WorkResult {
         let started = Instant::now();
-        let stopped = |work: &Work| WorkResult::stopped(Cancelled, format!("Durduruldu. {}", work.done_so_far()));
+        let stopped = |work: &Work| {
+            WorkResult::stopped(Cancelled, format!("Durduruldu. {}", work.done_so_far()))
+        };
         let mut thinking = 0usize;
         let mut note_id = 0usize;
         let mut digest_seen: (String, usize) = (String::new(), 0);
@@ -1944,7 +2850,7 @@ impl Chat {
         let mut failures_noted = false;
         let mut failed_calls: HashMap<String, usize> = HashMap::new();
         let mut last_failure: Option<String> = None;
-            let mut same: (String, usize) = (String::new(), 0);
+        let mut same: (String, usize) = (String::new(), 0);
         let mut stall: (String, usize, bool) = (String::new(), 0, false);
         let (mut changes, mut verified_turns, mut verified_noted) = (0usize, 0usize, false);
         for turn in 0..MAX_TURNS {
@@ -1958,7 +2864,16 @@ impl Chat {
             self.compact(run_id, work, token, stop, say).await;
             // Moving or not: new closed plan steps, a check that started passing, a file touched for the first time, the open errors changing. Turns without any of
             // that are a run going in circles; it is told once to change its way, and ended with a question when that does not move it either.
-            let signature = format!("{}|{}|{}|{}", work.plan.iter().filter(|step| matches!(step["status"].as_str(), Some("done" | "dropped"))).count(), work.last_errors.join(";"), work.files.len(), format!("{:?}", work.ledger.checks_summary()));
+            let signature = format!(
+                "{}|{}|{}|{:?}",
+                work.plan
+                    .iter()
+                    .filter(|step| matches!(step["status"].as_str(), Some("done" | "dropped")))
+                    .count(),
+                work.last_errors.join(";"),
+                work.files.len(),
+                work.ledger.checks_summary()
+            );
             if signature != stall.0 {
                 stall = (signature, turn, false);
             } else if turn - stall.1 >= STALL_STOP {
@@ -1969,19 +2884,41 @@ impl Chat {
                 work.messages.push(json!({ "role": "user", "content": format!("Son {STALL_NOTE} turdur ilerleme yok: yeni geçen kontrol, kapanan plan adımı ya da değişen hata yok. Aynı yoldan devam etme: kök nedeni baştan incele (hatayı, sürümü, yolu, varsayımını kontrol et), yöntemi değiştir; gerekirse adımı daha küçük parçalara böl ya da yan işçiye (delegate) bir araştırma ver. Bir sonraki denemede de ilerleme olmazsa durup kullanıcıya neyin engel olduğunu söyleyeceksin.") }));
             }
             if checkpoint.save(work, true).is_err() {
-                return WorkResult::stopped(Paused, "Yerel görev kaydı yazılamadı. Görev duraklatıldı.".into());
+                return WorkResult::stopped(
+                    Paused,
+                    "Yerel görev kaydı yazılamadı. Görev duraklatıldı.".into(),
+                );
             }
             thinking += 1;
             let think_id = format!("local-think-{thinking}");
-            let think_label = if turn == 0 { "Düşünüyor" } else { "Sonuca bakıyor" };
-            let think = |label: &str, state: &str| say(json!({ "type": "activity", "activity": { "id": think_id, "phase": "plan", "label": label, "state": state } }));
+            let think_label = if turn == 0 {
+                "Düşünüyor"
+            } else {
+                "Sonuca bakıyor"
+            };
+            let think = |label: &str, state: &str| {
+                say(
+                    json!({ "type": "activity", "activity": { "id": think_id, "phase": "plan", "label": label, "state": state } }),
+                )
+            };
             think(think_label, "running");
             let waiting = |words: String| think(&words, "running");
             let live = |event: Live| match event {
                 Live::Text(piece) => say(json!({ "type": "delta", "text": piece })),
                 Live::Reset => say(json!({ "type": "reset" })),
             };
-            let answer = match self.model_call(token, run_id, &work.messages, &work.tools, stop, &waiting, &live).await {
+            let answer = match self
+                .model_call(
+                    token,
+                    run_id,
+                    &work.messages,
+                    &work.tools,
+                    stop,
+                    &waiting,
+                    &live,
+                )
+                .await
+            {
                 Ok(answer) => answer,
                 Err(ModelStop::Cancelled) => {
                     think("Durduruldu", "failed");
@@ -2007,7 +2944,11 @@ impl Chat {
                     if malformed > 4 {
                         return WorkResult::stopped(Failed, format!("Model art arda okunamayan araç çağrıları yazdı; burada durdum. {}\n\n\"devam et\" yazarsan sürdürürüm.", work.done_so_far()));
                     }
-                    let said = if why.is_empty() { String::new() } else { format!("\nSağlayıcının nedeni ve yazdığın: {why}") };
+                    let said = if why.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\nSağlayıcının nedeni ve yazdığın: {why}")
+                    };
                     work.messages.push(json!({ "role": "user", "content": format!("{MALFORMED_NOTE}{said}\nAraç adını listedeki gibi yaz (ör. shell, write_file), argümanları aracın alanlarıyla geçerli JSON olarak ver, listede olmayan alan ekleme. İçerik uzunsa write_file ile ilk bölümü yaz, kalanını append: true ile ekle.") }));
                     continue;
                 }
@@ -2034,10 +2975,8 @@ impl Chat {
                     Some("Yanıtın boş geldi. İş bittiyse ne yaptığını ve sonucu yaz; bitmediyse araçlarla devam et.".to_string())
                 } else if !open.is_empty() {
                     Some(format!("Planında bitmemiş adımlar var: {}. Bunları şimdi bitir. Yapılamayacak olanı plan aracıyla dropped işaretle ve yanıtında nedenini açıkça söyle.", open.join("; ")))
-                } else if let Some(failed) = last_failure.take() {
-                    Some(format!("Son adım başarısız olmuştu ({failed}). Düzeltip doğrula; düzeltilemiyorsa yanıtında bunun yapılamadığını ve nedenini açıkça yaz."))
                 } else {
-                    None
+                    last_failure.take().map(|failed| format!("Son adım başarısız olmuştu ({failed}). Düzeltip doğrula; düzeltilemiyorsa yanıtında bunun yapılamadığını ve nedenini açıkça yaz."))
                 };
                 // The ledger's own turn-backs (nothing ran, zero tests, only happy-path requests) have their own small budget, so an open
                 // plan cannot use up the chance to make it run its work.
@@ -2056,14 +2995,19 @@ impl Chat {
                 };
                 if let Some(why) = turn_back {
                     if !content.trim().is_empty() {
-                        work.messages.push(json!({ "role": "assistant", "content": content }));
+                        work.messages
+                            .push(json!({ "role": "assistant", "content": content }));
                     }
-                    work.messages.push(json!({ "role": "user", "content": why }));
+                    work.messages
+                        .push(json!({ "role": "user", "content": why }));
                     continue;
                 }
                 if content.trim().is_empty() {
                     self.release_servers(engine, work).await;
-                    return WorkResult::stopped(Failed, format!("Çalışma bir özet yazılmadan bitti. {}", work.done_so_far()));
+                    return WorkResult::stopped(
+                        Failed,
+                        format!("Çalışma bir özet yazılmadan bitti. {}", work.done_so_far()),
+                    );
                 }
                 // Dev servers this run started: stopped now, or left running because the person asked to run it (and the answer says which).
                 let content = format!("{content}{}", self.release_servers(engine, work).await);
@@ -2071,7 +3015,13 @@ impl Chat {
                 let content = work.with_verification(content);
                 // Turned back as often as allowed and the plan is still open: the answer stands, with what it left undone said under it.
                 if !open.is_empty() {
-                    return work.completion(format!("{content}\n\nPlanda açık kalan adımlar:\n{}", open.iter().map(|title| format!("- {title}")).collect::<Vec<_>>().join("\n")));
+                    return work.completion(format!(
+                        "{content}\n\nPlanda açık kalan adımlar:\n{}",
+                        open.iter()
+                            .map(|title| format!("- {title}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
                 }
                 return work.completion(content);
             }
@@ -2081,7 +3031,8 @@ impl Chat {
                 }
                 call["type"] = json!("function");
             }
-            work.messages.push(json!({ "role": "assistant", "content": content, "tool_calls": calls }));
+            work.messages
+                .push(json!({ "role": "assistant", "content": content, "tool_calls": calls }));
             // What the model says before it acts (what it is about to do and why) is the thinking of the work: shown on the task as a line of its timeline,
             // so the person reads "komutu şunun için çalıştırıyorum" step by step, not only the commands. The words that streamed as the reply are taken back
             // by the `reset` the call brings (the model's server side), so they are not said twice.
@@ -2093,15 +3044,23 @@ impl Chat {
                     work.decisions.remove(0);
                 }
                 let label: String = note.chars().take(180).collect();
-                say(json!({ "type": "activity", "activity": { "id": format!("local-note-{note_id}"), "phase": "plan", "label": label, "state": "done", "persona": "developer" } }));
+                say(
+                    json!({ "type": "activity", "activity": { "id": format!("local-note-{note_id}"), "phase": "plan", "label": label, "state": "done", "persona": "developer" } }),
+                );
             }
             let mut turn_changed = false;
             for call in &calls {
                 let id = text_of(&call["id"]);
                 let name = text_of(&call["function"]["name"]);
-                let raw = call["function"]["arguments"].as_str().unwrap_or("{}").to_string();
+                let raw = call["function"]["arguments"]
+                    .as_str()
+                    .unwrap_or("{}")
+                    .to_string();
                 // The model wrote stand-ins (⟦EPOSTA_1⟧); the tool gets the real values, here and only here.
-                let model_args = serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { &raw }).ok().filter(Value::is_object);
+                let model_args =
+                    serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { &raw })
+                        .ok()
+                        .filter(Value::is_object);
                 let args = model_args.as_ref().map(|args| work.vault.open_value(args));
                 if name == "plan" {
                     let output = match args.as_ref().and_then(|args| args["steps"].as_array()).filter(|steps| !steps.is_empty()) {
@@ -2121,9 +3080,13 @@ impl Chat {
                         }
                         None => json!({ "status": "failed", "message": "steps gerekli: [{title, status}]." }).to_string(),
                     };
-                    work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": output }));
+                    work.messages
+                        .push(json!({ "role": "tool", "tool_call_id": id, "content": output }));
                     if checkpoint.save(work, true).is_err() {
-                        return WorkResult::stopped(Unknown, "Plan denetiminin yerel kaydı yazılamadı.".into());
+                        return WorkResult::stopped(
+                            Unknown,
+                            "Plan denetiminin yerel kaydı yazılamadı.".into(),
+                        );
                     }
                     continue;
                 }
@@ -2135,11 +3098,24 @@ impl Chat {
                 let told_args = args.as_ref().unwrap_or(&no_args);
                 let touched = super::progress::touched(file_targets(&name, told_args));
                 let started = Instant::now();
-                say(super::progress::running(&step_id, &words, &name, told_args, &mut |text: &str| work.vault.seal(text)));
+                say(super::progress::running(
+                    &step_id,
+                    &words,
+                    &name,
+                    told_args,
+                    &mut |text: &str| work.vault.seal(text),
+                ));
                 let key = format!("{name}:{raw}");
-                let effectful = args.as_ref().is_some_and(|args| effectful_tool(&name, args, &work.pc.names));
+                let effectful = args
+                    .as_ref()
+                    .is_some_and(|args| effectful_tool(&name, args, &work.pc.names));
                 if effectful && work.read_only {
-                    let blocked = super::progress::planned(&json!({ "id": step_uuid, "summary": "Kullanıcıdan devam bekleniyor" }), "blocked", None, None);
+                    let blocked = super::progress::planned(
+                        &json!({ "id": step_uuid, "summary": "Kullanıcıdan devam bekleniyor" }),
+                        "blocked",
+                        None,
+                        None,
+                    );
                     say(blocked);
                     return WorkResult::stopped(Paused, "Devam etmek için yerel bir değişiklik gerekiyor. Görevi açıp devam edebilirsin.".into());
                 }
@@ -2159,7 +3135,10 @@ impl Chat {
                     work.in_flight = true;
                     if checkpoint.save(work, true).is_err() {
                         work.in_flight = false;
-                        return WorkResult::stopped(Paused, "Yerel görev kaydı yazılamadı. Adım çalıştırılmadı.".into());
+                        return WorkResult::stopped(
+                            Paused,
+                            "Yerel görev kaydı yazılamadı. Adım çalıştırılmadı.".into(),
+                        );
                     }
                 }
                 let tried = failed_calls.get(&key).copied().unwrap_or(0);
@@ -2225,36 +3204,68 @@ impl Chat {
                         if let Some(errors) = super::digest::errors_of(&text) {
                             // The same errors again after changes: what was done did not touch the cause. Said once it is a third time, as a note, not a stop.
                             let same = digest_seen.0 == errors;
-                            digest_seen = (errors.clone(), if same { digest_seen.1 + 1 } else { 1 });
+                            digest_seen =
+                                (errors.clone(), if same { digest_seen.1 + 1 } else { 1 });
                             let note = if digest_seen.1 >= 2 {
                                 format!("\nNOT: bu hata özeti üst üste {} kez aynı geldi; yaptığın değişiklikler nedene dokunmadı. Aynı yolda sürme: ilgili satırı ve çevresini oku, bağımlılığı/sürümü/yolu doğrula, ya da yöntemi değiştir.", digest_seen.1)
                             } else {
                                 String::new()
                             };
-                            work.last_errors = errors.lines().skip(1).take(3).map(|line| line.trim().trim_start_matches("- ").to_string()).collect();
+                            work.last_errors = errors
+                                .lines()
+                                .skip(1)
+                                .take(3)
+                                .map(|line| line.trim().trim_start_matches("- ").to_string())
+                                .collect();
                             outcome.output = format!("{errors}{note}\n\n{}", outcome.output);
                         }
                     }
                 }
                 if name == "shell" {
-                    if let Some(app) = denied_app(&text_of(&told_args["command"]), &outcome.output) {
+                    if let Some(app) = denied_app(&text_of(&told_args["command"]), &outcome.output)
+                    {
                         // macOS refused the script: the permission is asked for right here (its own dialog on this computer, or the Settings page when it
                         // was refused before), so the person taps once on the computer instead of finding a page in System Settings. A dialog waits for
                         // its answer for two minutes at most.
-                        say(json!({ "type": "activity", "activity": { "id": "local-permission", "phase": "tool", "label": format!("macOS izni isteniyor: {}", if app.is_empty() { "uygulama" } else { app.as_str() }), "state": "running" } }));
+                        say(
+                            json!({ "type": "activity", "activity": { "id": "local-permission", "phase": "tool", "label": format!("macOS izni isteniyor: {}", if app.is_empty() { "uygulama" } else { app.as_str() }), "state": "running" } }),
+                        );
                         let asked = app.clone();
-                        let answer = tokio::time::timeout(Duration::from_secs(120), tokio::task::spawn_blocking(move || crate::permissions::ask_automation_for(&asked))).await;
-                        let answer = answer.ok().and_then(Result::ok).unwrap_or(crate::permissions::AutomationAnswer::Unknown);
-                        say(json!({ "type": "activity", "activity": { "id": "local-permission", "phase": "tool", "label": "macOS izni soruldu", "state": "done" } }));
-                        outcome.output = format!("{}\n\n{}", outcome.output, automation_note(&app, &answer));
+                        let answer = tokio::time::timeout(
+                            Duration::from_secs(120),
+                            tokio::task::spawn_blocking(move || {
+                                crate::permissions::ask_automation_for(&asked)
+                            }),
+                        )
+                        .await;
+                        let answer = answer
+                            .ok()
+                            .and_then(Result::ok)
+                            .unwrap_or(crate::permissions::AutomationAnswer::Unknown);
+                        say(
+                            json!({ "type": "activity", "activity": { "id": "local-permission", "phase": "tool", "label": "macOS izni soruldu", "state": "done" } }),
+                        );
+                        outcome.output =
+                            format!("{}\n\n{}", outcome.output, automation_note(&app, &answer));
                     }
                 }
                 if let Some(args) = &args {
-                    work.ledger.record(&name, args, outcome.ok, &outcome.output, outcome.job.as_deref());
+                    work.ledger.record(
+                        &name,
+                        args,
+                        outcome.ok,
+                        &outcome.output,
+                        outcome.job.as_deref(),
+                    );
                 }
-                let inspection = matches!(name.as_str(), "read_file" | "search" | "repo_find" | "repo_map")
-                    || (name == "shell" && !effectful && args.is_some());
-                work.ledger.record_inspection(effectful, inspection.then_some(outcome.ok && outcome.job.is_none()));
+                let inspection = matches!(
+                    name.as_str(),
+                    "read_file" | "search" | "repo_find" | "repo_map"
+                ) || (name == "shell" && !effectful && args.is_some());
+                work.ledger.record_inspection(
+                    effectful,
+                    inspection.then_some(outcome.ok && outcome.job.is_none()),
+                );
                 if outcome.ok {
                     let did = match name.as_str() {
                         "read_file" => Some("okundu"),
@@ -2276,10 +3287,14 @@ impl Chat {
                 }
                 // A file just written is checked for its syntax at once (see syntax.rs), and an appended piece that repeats the start of what is already there is said:
                 // both are what a person's editor shows the moment it happens, not a surprise at the end.
-                if outcome.ok && matches!(name.as_str(), "write_file" | "edit_file" | "apply_patch") {
+                if outcome.ok && matches!(name.as_str(), "write_file" | "edit_file" | "apply_patch")
+                {
                     for path in file_targets(&name, told_args) {
                         let checked = path.clone();
-                        if let Ok(Some(error)) = tokio::task::spawn_blocking(move || super::syntax::error_of(&checked)).await {
+                        if let Ok(Some(error)) =
+                            tokio::task::spawn_blocking(move || super::syntax::error_of(&checked))
+                                .await
+                        {
                             outcome.output = format!("{}\n\nSÖZDİZİMİ HATASI ({}):\n{error}\nDosya bu hâliyle çalışmaz: önce bunu düzelt, sonra devam et.", outcome.output, path.display());
                             work.ledger.syntax_failed(&path.to_string_lossy());
                         }
@@ -2293,13 +3308,22 @@ impl Chat {
                     }
                 }
                 // The first touch of a project brings what it is and how it is worked on, once per run.
-                if let Some(root) = args.as_ref().and_then(|args| touched_folder(&name, args)).and_then(|folder| project_root(&folder)) {
+                if let Some(root) = args
+                    .as_ref()
+                    .and_then(|args| touched_folder(&name, args))
+                    .and_then(|folder| project_root(&folder))
+                {
                     if !work.reach.briefed.contains(&root) {
                         work.reach.briefed.push(root.clone());
-                        let notes = self.notes_file(&root).and_then(|file| std::fs::read_to_string(file).ok());
+                        let notes = self
+                            .notes_file(&root)
+                            .and_then(|file| std::fs::read_to_string(file).ok());
                         let data = self.file.parent().map(Path::to_path_buf);
                         let brief = tokio::task::spawn_blocking(move || {
-                            let remembered = data.as_deref().and_then(|data| super::memory::Memory::of(data, &root)).map(|memory| (memory.brief(&root), memory.proven_commands()));
+                            let remembered = data
+                                .as_deref()
+                                .and_then(|data| super::memory::Memory::of(data, &root))
+                                .map(|memory| (memory.brief(&root), memory.proven_commands()));
                             project_brief(&root, notes, remembered)
                         })
                         .await
@@ -2309,7 +3333,12 @@ impl Chat {
                         }
                     }
                 }
-                if outcome.ok && matches!(name.as_str(), "write_file" | "edit_file" | "apply_patch" | "undo") {
+                if outcome.ok
+                    && matches!(
+                        name.as_str(),
+                        "write_file" | "edit_file" | "apply_patch" | "undo"
+                    )
+                {
                     turn_changed = true;
                 }
                 if outcome.ok {
@@ -2317,7 +3346,11 @@ impl Chat {
                     last_failure = None;
                     // The same call with the same result, again and again, is a loop that learns nothing (waiting on a job is not: time passes there).
                     let seen = format!("{key}\n{}", outcome.output);
-                    same = if same.0 == seen { (seen, same.1 + 1) } else { (seen, 1) };
+                    same = if same.0 == seen {
+                        (seen, same.1 + 1)
+                    } else {
+                        (seen, 1)
+                    };
                     if same.1 >= 3 && name != "job" {
                         outcome.output = format!("{}\n\nUYARI: Bu çağrı üst üste {} kez aynı sonucu verdi; yinelemek yeni bilgi getirmiyor. Elindeki sonuçla ilerle ya da farklı bir şeye bak.", outcome.output, same.1);
                     }
@@ -2334,45 +3367,97 @@ impl Chat {
                 if let Some(job) = outcome.job.as_ref().filter(|_| name == "shell") {
                     let server = starts_server(&text_of(&told_args["command"]));
                     if server && !work.reach.servers.iter().any(|(_, known)| known == job) {
-                        work.reach.servers.push((text_of(&told_args["workdir"]), job.clone()));
+                        work.reach
+                            .servers
+                            .push((text_of(&told_args["workdir"]), job.clone()));
                     }
                     if !work.jobs.iter().any(|known| known.id == *job) {
-                        work.jobs.push(TrackedJob { id: job.clone(), step_id: step_id.clone(), server });
+                        work.jobs.push(TrackedJob {
+                            id: job.clone(),
+                            step_id: step_id.clone(),
+                            server,
+                        });
                     }
                     say(super::progress::background_started(&step_id));
                 } else {
-                    if name == "job" && matches!(told_args["action"].as_str(), Some("wait" | "status" | "cancel")) {
+                    if name == "job"
+                        && matches!(
+                            told_args["action"].as_str(),
+                            Some("wait" | "status" | "cancel")
+                        )
+                    {
                         let job_id = text_of(&told_args["job_id"]);
-                        let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
-                        if let Some(position) = work.jobs.iter().position(|known| known.id == job_id) {
+                        let receipt: Value =
+                            serde_json::from_str(&outcome.output).unwrap_or_default();
+                        if let Some(position) =
+                            work.jobs.iter().position(|known| known.id == job_id)
+                        {
                             let state = receipt["jobState"].as_str();
-                            if matches!(state, Some("completed" | "failed" | "cancelled" | "unknown"))
-                                || matches!(receipt["errorCode"].as_str(), Some("TERMINAL_JOB_NOT_FOUND" | "TERMINAL_JOB_UNKNOWN"))
-                            {
+                            if matches!(
+                                state,
+                                Some("completed" | "failed" | "cancelled" | "unknown")
+                            ) || matches!(
+                                receipt["errorCode"].as_str(),
+                                Some("TERMINAL_JOB_NOT_FOUND" | "TERMINAL_JOB_UNKNOWN")
+                            ) {
                                 let job = work.jobs.remove(position);
                                 work.reach.servers.retain(|(_, known)| known != &job_id);
-                                let success = state == Some("completed") && receipt["exitCode"] == 0;
-                                let uncertain = !matches!(state, Some("completed" | "failed" | "cancelled"));
-                                work.uncertain |= uncertain || state == Some("cancelled") && !job.server;
+                                let success =
+                                    state == Some("completed") && receipt["exitCode"] == 0;
+                                let uncertain =
+                                    !matches!(state, Some("completed" | "failed" | "cancelled"));
+                                work.uncertain |=
+                                    uncertain || state == Some("cancelled") && !job.server;
                                 if !success && !job.server {
-                                    last_failure = Some("Arka plan işi başarıyla tamamlanmadı.".into());
+                                    last_failure =
+                                        Some("Arka plan işi başarıyla tamamlanmadı.".into());
                                 }
-                                say(super::progress::background_finished(&job.step_id, success, uncertain, receipt["exitCode"].as_i64()));
+                                say(super::progress::background_finished(
+                                    &job.step_id,
+                                    success,
+                                    uncertain,
+                                    receipt["exitCode"].as_i64(),
+                                ));
                             }
                         }
                     }
-                    say(super::progress::finished(&step_id, &words, &name, told_args, outcome.ok, &outcome.brief, &printed, started.elapsed().as_millis(), &touched, &mut |text: &str| work.vault.seal(text)));
+                    say(super::progress::finished(
+                        &step_id,
+                        &words,
+                        &name,
+                        told_args,
+                        outcome.ok,
+                        &outcome.brief,
+                        &printed,
+                        started.elapsed().as_millis(),
+                        &touched,
+                        &mut |text: &str| work.vault.seal(text),
+                    ));
                 }
-                work.log.push(format!("{} {words}{}", if outcome.ok { "✓" } else { "✗" }, if outcome.ok { String::new() } else { format!(" ({})", outcome.brief) }));
+                work.log.push(format!(
+                    "{} {words}{}",
+                    if outcome.ok { "✓" } else { "✗" },
+                    if outcome.ok {
+                        String::new()
+                    } else {
+                        format!(" ({})", outcome.brief)
+                    }
+                ));
                 let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
                 if effectful && may_run {
                     work.in_flight = false;
                     work.uncertain |= receipt["sideEffectUncertain"] == true
-                        || receipt["status"] == "unknown" || stop.is_asked();
+                        || receipt["status"] == "unknown"
+                        || stop.is_asked();
                 }
                 let private = private_model_result(&name, &work.pc.names);
-                if private && work.model_sharing.is_none() && !work.read_only && !work.reach.untrusted && !stop.is_asked()
-                    && (outcome.ok || receipt.get("output").is_some()) && !outcome.output.is_empty()
+                if private
+                    && work.model_sharing.is_none()
+                    && !work.read_only
+                    && !work.reach.untrusted
+                    && !stop.is_asked()
+                    && (outcome.ok || receipt.get("output").is_some())
+                    && !outcome.output.is_empty()
                 {
                     let permission = approve("local_context_share".into(),
                         "Bu görev için yerel dosya içeriği ve terminal çıktısı Wiqo’nun model hizmetine gönderilsin mi? Reddedersen görev yalnızca güvenli işlem özetleriyle devam eder.".into());
@@ -2387,7 +3472,8 @@ impl Chat {
                 } else {
                     work.vault.seal(&outcome.output)
                 };
-                work.messages.push(json!({ "role": "tool", "tool_call_id": id, "content": model_output }));
+                work.messages
+                    .push(json!({ "role": "tool", "tool_call_id": id, "content": model_output }));
                 if checkpoint.save(work, true).is_err() {
                     return WorkResult::stopped(Unknown, "Adımın yerel kaydı yazılamadı. Sonucu doğrulamadan işlem tekrarlanmayacak.".into());
                 }
@@ -2401,7 +3487,10 @@ impl Chat {
                 verified_turns = 0;
             }
             if verified_turns >= VERIFIED_TURNS_STOP {
-                let reply = work.with_verification(format!("Yerel doğrulamalar değerlendirildi. {}", work.done_so_far()));
+                let reply = work.with_verification(format!(
+                    "Yerel doğrulamalar değerlendirildi. {}",
+                    work.done_so_far()
+                ));
                 return work.completion(reply);
             }
             if verified_turns >= VERIFIED_TURNS_NOTE && !verified_noted {
@@ -2426,9 +3515,17 @@ impl Chat {
         if work.reach.servers.is_empty() {
             return String::new();
         }
-        let jobs: Vec<String> = work.reach.servers.iter().map(|(_, job)| job.clone()).collect();
+        let jobs: Vec<String> = work
+            .reach
+            .servers
+            .iter()
+            .map(|(_, job)| job.clone())
+            .collect();
         if wants_server_kept(&work.goal) {
-            return format!("\n\nSunucu açık bırakıldı ({} çalışıyor); kapatmamı istersen söyle.", jobs.len());
+            return format!(
+                "\n\nSunucu açık bırakıldı ({} çalışıyor); kapatmamı istersen söyle.",
+                jobs.len()
+            );
         }
         self.cancel_jobs(engine, &jobs).await;
         work.reach.servers.clear();
@@ -2447,7 +3544,15 @@ impl Chat {
     /// a summary the model writes of it (or, when the model cannot be asked, by the list of steps), with the request and the plan said again.
     /// A side worker: its own short conversation with the model (reading and research tools only), so what it reads does not fill this run's context. Only its
     /// answer comes back.
-    async fn delegate_tool(&self, run_id: &str, token: &str, args: &Value, tools: &Value, stop: &Stop, share_local: bool) -> ToolOutcome {
+    async fn delegate_tool(
+        &self,
+        run_id: &str,
+        token: &str,
+        args: &Value,
+        tools: &Value,
+        stop: &Stop,
+        share_local: bool,
+    ) -> ToolOutcome {
         let task = text_of(&args["task"]);
         if task.trim().len() < 12 {
             return refused("task: yan işçinin yapacağı işi kendi başına anlaşılır yaz (proje yolu, ne öğrenilecek, nasıl bir sonuç).");
@@ -2462,10 +3567,16 @@ impl Chat {
             if stop.is_asked() {
                 return refused("Kullanıcı durdurdu.");
             }
-            let answer = match self.model_call(token, run_id, &messages, tools, stop, &quiet, &|_: Live| {}).await {
-                Ok(answer) => answer,
-                Err(_) => return refused("Yan işçi için model yanıt vermedi; işi kendin yap ya da biraz sonra dene."),
-            };
+            let answer =
+                match self
+                    .model_call(token, run_id, &messages, tools, stop, &quiet, &|_: Live| {})
+                    .await
+                {
+                    Ok(answer) => answer,
+                    Err(_) => return refused(
+                        "Yan işçi için model yanıt vermedi; işi kendin yap ya da biraz sonra dene.",
+                    ),
+                };
             let content = text_of(&answer["content"]);
             let mut calls = answer["tool_calls"].as_array().cloned().unwrap_or_default();
             if calls.is_empty() {
@@ -2473,7 +3584,12 @@ impl Chat {
                 if text.is_empty() {
                     return refused("Yan işçi bir sonuç yazmadan bitti.");
                 }
-                return ToolOutcome { ok: true, brief: "Yan işçi bitti".into(), output: text, job: None };
+                return ToolOutcome {
+                    ok: true,
+                    brief: "Yan işçi bitti".into(),
+                    output: text,
+                    job: None,
+                };
             }
             last = content.clone();
             for call in &mut calls {
@@ -2486,7 +3602,10 @@ impl Chat {
             for call in &calls {
                 let name = text_of(&call["function"]["name"]);
                 let raw = call["function"]["arguments"].as_str().unwrap_or("{}");
-                let parsed = serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { raw }).ok().filter(Value::is_object);
+                let parsed =
+                    serde_json::from_str::<Value>(if raw.trim().is_empty() { "{}" } else { raw })
+                        .ok()
+                        .filter(Value::is_object);
                 let outcome = match (&parsed, name.as_str()) {
                     (None, _) => refused("Argümanlar geçerli JSON değil."),
                     (Some(args), "web") => self.web_tool(run_id, token, args).await,
@@ -2502,12 +3621,26 @@ impl Chat {
                 messages.push(json!({ "role": "tool", "tool_call_id": text_of(&call["id"]), "content": output }));
             }
         }
-        let note = if last.trim().is_empty() { String::new() } else { format!(" Son notu: {}", clip(last.trim(), 800)) };
-        refused(&format!("Yan işçi {DELEGATE_TURNS} turda bir sonuca varamadı; görevi daralt.{note}"))
+        let note = if last.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" Son notu: {}", clip(last.trim(), 800))
+        };
+        refused(&format!(
+            "Yan işçi {DELEGATE_TURNS} turda bir sonuca varamadı; görevi daralt.{note}"
+        ))
     }
 
     /// Reconcile a model plan with the evidence this desktop actually observed.
-    async fn update_plan(&self, engine: &Engine, checkpoint_record: &LocalSession<'_>, work: &mut Work, steps: &[Value], approve: &Approve, stop: &Stop) -> (String, bool) {
+    async fn update_plan(
+        &self,
+        engine: &Engine,
+        checkpoint_record: &LocalSession<'_>,
+        work: &mut Work,
+        steps: &[Value],
+        approve: &Approve,
+        stop: &Stop,
+    ) -> (String, bool) {
         let old = work.plan.clone();
         let mut next: Vec<Value> = Vec::new();
         let mut told: Vec<String> = Vec::new();
@@ -2519,15 +3652,23 @@ impl Chat {
             }
             let id = clip(&text_of(&step["id"]), 96);
             let before = old.iter().find(|held| {
-                if id.is_empty() { held["title"] == title } else {
+                if id.is_empty() {
+                    held["title"] == title
+                } else {
                     held["id"] == id || (held["id"].is_null() && held["title"] == title)
                 }
             });
             let kept = |key: &str| before.map(|held| text_of(&held[key])).unwrap_or_default();
             let id = if id.is_empty() {
                 let prior = kept("id");
-                if prior.is_empty() { Uuid::new_v4().to_string() } else { prior }
-            } else { id };
+                if prior.is_empty() {
+                    Uuid::new_v4().to_string()
+                } else {
+                    prior
+                }
+            } else {
+                id
+            };
             if next.iter().any(|row| row["id"] == id) {
                 continue;
             }
@@ -2539,8 +3680,16 @@ impl Chat {
             };
             let prior_check = kept("check");
             let prior_folder = kept("workdir");
-            let check = if prior_check.is_empty() { text_of(&step["check"]) } else { prior_check };
-            let folder = if prior_folder.is_empty() { text_of(&step["workdir"]) } else { prior_folder };
+            let check = if prior_check.is_empty() {
+                text_of(&step["check"])
+            } else {
+                prior_check
+            };
+            let folder = if prior_folder.is_empty() {
+                text_of(&step["workdir"])
+            } else {
+                prior_folder
+            };
             let mut checkpoint = kept("checkpoint");
             let mut check_job = kept("checkJob");
             let mut tries = before.and_then(|held| held["tries"].as_u64()).unwrap_or(0);
@@ -2548,13 +3697,29 @@ impl Chat {
             let root = if folder.is_empty() {
                 work.reach.checkpoints.first().map(|(root, _)| root.clone())
             } else {
-                std::fs::canonicalize(expand(&folder)).ok().filter(|root| root.is_dir())
+                std::fs::canonicalize(expand(&folder))
+                    .ok()
+                    .filter(|root| root.is_dir())
             };
             if status == "done" && !verified {
                 let checked = if !check_job.is_empty() {
                     let args = json!({ "action": "wait", "job_id": check_job });
-                    Some(self.local_tool(engine, "job", &args, &mut work.reach, approve, stop, Uuid::new_v4()).await)
-                } else if let Some(root) = root.filter(|root| root.is_dir()).filter(|_| !check.trim().is_empty()) {
+                    Some(
+                        self.local_tool(
+                            engine,
+                            "job",
+                            &args,
+                            &mut work.reach,
+                            approve,
+                            stop,
+                            Uuid::new_v4(),
+                        )
+                        .await,
+                    )
+                } else if let Some(root) = root
+                    .filter(|root| root.is_dir())
+                    .filter(|_| !check.trim().is_empty())
+                {
                     let args = json!({ "command": check, "workdir": root, "timeout_seconds": 50 });
                     let args = work.vault.open_value(&args);
                     let effectful = effectful_tool("shell", &args, &[]);
@@ -2566,12 +3731,28 @@ impl Chat {
                         work.in_flight = effectful;
                         if effectful && checkpoint_record.save(work, true).is_err() {
                             work.in_flight = false;
-                            Some(refused("Yerel görev kaydı yazılamadı; denetim çalıştırılmadı."))
+                            Some(refused(
+                                "Yerel görev kaydı yazılamadı; denetim çalıştırılmadı.",
+                            ))
                         } else {
-                            let outcome = self.local_tool(engine, "shell", &args, &mut work.reach, approve, stop, Uuid::new_v4()).await;
+                            let outcome = self
+                                .local_tool(
+                                    engine,
+                                    "shell",
+                                    &args,
+                                    &mut work.reach,
+                                    approve,
+                                    stop,
+                                    Uuid::new_v4(),
+                                )
+                                .await;
                             work.in_flight = false;
-                            let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
-                            work.uncertain |= effectful && (stop.is_asked() || receipt["status"] == "unknown" || receipt["sideEffectUncertain"] == true);
+                            let receipt: Value =
+                                serde_json::from_str(&outcome.output).unwrap_or_default();
+                            work.uncertain |= effectful
+                                && (stop.is_asked()
+                                    || receipt["status"] == "unknown"
+                                    || receipt["sideEffectUncertain"] == true);
                             Some(outcome)
                         }
                     }
@@ -2587,22 +3768,37 @@ impl Chat {
                     Some(outcome) => {
                         let was_in_background = !check_job.is_empty();
                         check_job.clear();
-                        let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
-                        if was_in_background && (receipt["jobState"] == "unknown"
-                            || matches!(receipt["errorCode"].as_str(), Some("TERMINAL_JOB_NOT_FOUND" | "TERMINAL_JOB_UNKNOWN")))
+                        let receipt: Value =
+                            serde_json::from_str(&outcome.output).unwrap_or_default();
+                        if was_in_background
+                            && (receipt["jobState"] == "unknown"
+                                || matches!(
+                                    receipt["errorCode"].as_str(),
+                                    Some("TERMINAL_JOB_NOT_FOUND" | "TERMINAL_JOB_UNKNOWN")
+                                ))
                         {
                             work.uncertain = true;
                         }
-                        let passed = outcome.ok && receipt["exitCode"] == 0 && receipt["jobState"] != "cancelled";
-                        verified = work.ledger.record_plan_check(&check, passed, &outcome.output);
+                        let passed = outcome.ok
+                            && receipt["exitCode"] == 0
+                            && receipt["jobState"] != "cancelled";
+                        verified = work
+                            .ledger
+                            .record_plan_check(&check, passed, &outcome.output);
                         finished |= verified;
                         if verified {
                             told.push(format!("\"{title}\": denetim geçti."));
                         } else {
                             status = "doing";
                             tries += 1;
-                            let tail = if work.model_sharing == Some(true) { clip(&work.vault.seal(&outcome.output), 700) } else { model_receipt(&outcome) };
-                            told.push(format!("\"{title}\": denetim geçmedi ({tries}. deneme). {tail}"));
+                            let tail = if work.model_sharing == Some(true) {
+                                clip(&work.vault.seal(&outcome.output), 700)
+                            } else {
+                                model_receipt(&outcome)
+                            };
+                            told.push(format!(
+                                "\"{title}\": denetim geçmedi ({tries}. deneme). {tail}"
+                            ));
                         }
                     }
                     None => {
@@ -2610,13 +3806,31 @@ impl Chat {
                         told.push(format!("\"{title}\": bitirmek için bir denetim komutu ve çalışma klasörü gerekli."));
                     }
                 }
-            } else if status == "doing" && checkpoint.is_empty() && !work.read_only && !stop.is_asked() {
-                if let Some(root) = root.filter(|root| work.reach.allowed.iter().any(|allowed| root.starts_with(allowed))) {
-                    checkpoint = tokio::task::spawn_blocking(move || git_checkpoint(&root)).await.ok().flatten().unwrap_or_default();
+            } else if status == "doing"
+                && checkpoint.is_empty()
+                && !work.read_only
+                && !stop.is_asked()
+            {
+                if let Some(root) = root.filter(|root| {
+                    work.reach
+                        .allowed
+                        .iter()
+                        .any(|allowed| root.starts_with(allowed))
+                }) {
+                    checkpoint = tokio::task::spawn_blocking(move || git_checkpoint(&root))
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
                 }
             }
             let mut row = json!({ "id": id, "title": title, "status": status, "tries": tries, "verified": verified });
-            for (key, value) in [("check", check), ("workdir", folder), ("checkpoint", checkpoint), ("checkJob", check_job)] {
+            for (key, value) in [
+                ("check", check),
+                ("workdir", folder),
+                ("checkpoint", checkpoint),
+                ("checkJob", check_job),
+            ] {
                 if !value.is_empty() {
                     row[key] = json!(value);
                 }
@@ -2624,17 +3838,23 @@ impl Chat {
             next.push(row);
         }
         for previous in old {
-            let already_listed = next.iter().any(|row| if previous["id"].is_string() {
-                row["id"] == previous["id"]
-            } else {
-                row["title"] == previous["title"]
+            let already_listed = next.iter().any(|row| {
+                if previous["id"].is_string() {
+                    row["id"] == previous["id"]
+                } else {
+                    row["title"] == previous["title"]
+                }
             });
             if !already_listed {
                 next.push(previous);
             }
         }
         work.plan = next;
-        let message = if told.is_empty() { "Plan kaydedildi.".to_string() } else { told.join("\n") };
+        let message = if told.is_empty() {
+            "Plan kaydedildi.".to_string()
+        } else {
+            told.join("\n")
+        };
         (message, finished)
     }
 
@@ -2655,14 +3875,26 @@ impl Chat {
             work.card(),
             plan_text(&work.plan)
         );
-        let mut next = vec![work.messages[0].clone(), json!({ "role": "user", "content": note })];
+        let mut next = vec![
+            work.messages[0].clone(),
+            json!({ "role": "user", "content": note }),
+        ];
         next.extend(work.messages.drain(start..));
         work.messages = next;
         work.trims += 1;
-        say(json!({ "type": "activity", "activity": { "id": format!("local-reset-{}", work.trims), "phase": "plan", "label": format!("Adım bitti, bağlam hafifletildi ({} bin → {} bin karakter)", before / 1000, weight(&work.messages) / 1000), "state": "done" } }));
+        say(
+            json!({ "type": "activity", "activity": { "id": format!("local-reset-{}", work.trims), "phase": "plan", "label": format!("Adım bitti, bağlam hafifletildi ({} bin → {} bin karakter)", before / 1000, weight(&work.messages) / 1000), "state": "done" } }),
+        );
     }
 
-    async fn compact(&self, run_id: &str, work: &mut Work, token: &str, stop: &Stop, say: &impl Fn(Value)) {
+    async fn compact(
+        &self,
+        run_id: &str,
+        work: &mut Work,
+        token: &str,
+        stop: &Stop,
+        say: &impl Fn(Value),
+    ) {
         // First the cheap, exact thing: dead reads out, old results shortened (the error summaries stay), in one batch. A model's summary is the last resort.
         if weight(&work.messages) > MASK_AT {
             let before = weight(&work.messages);
@@ -2670,7 +3902,9 @@ impl Chat {
             shorten_old(&mut work.messages, MASK_KEEP);
             if weight(&work.messages) < before {
                 work.trims += 1;
-                say(json!({ "type": "activity", "activity": { "id": format!("local-mask-{}", work.trims), "phase": "plan", "label": format!("Eski sonuçlar kısaltıldı ({} bin → {} bin karakter, {dead} tekrar okuma atıldı)", before / 1000, weight(&work.messages) / 1000), "state": "done" } }));
+                say(
+                    json!({ "type": "activity", "activity": { "id": format!("local-mask-{}", work.trims), "phase": "plan", "label": format!("Eski sonuçlar kısaltıldı ({} bin → {} bin karakter, {dead} tekrar okuma atıldı)", before / 1000, weight(&work.messages) / 1000), "state": "done" } }),
+                );
             }
         }
         if weight(&work.messages) <= work.budget {
@@ -2685,15 +3919,32 @@ impl Chat {
             shorten_old(&mut work.messages, 2);
             return;
         }
-        say(json!({ "type": "activity", "activity": { "id": "local-compact", "phase": "plan", "label": "Uzun çalışma özetleniyor", "state": "running" } }));
+        say(
+            json!({ "type": "activity", "activity": { "id": "local-compact", "phase": "plan", "label": "Uzun çalışma özetleniyor", "state": "running" } }),
+        );
         let ask = vec![
             json!({ "role": "system", "content": "Bir bilgisayar ajanının çalışma kaydını, aynı ajan işe kaldığı yerden devam edebilsin diye özetliyorsun. Türkçe, kısa ve somut yaz. Başlıklar: HEDEF (kullanıcının istediği, kendi sözleriyle koşulları), YAPILANLAR (oluşturulan ve değiştirilen dosyaların tam yolları, kurulanlar, çalıştırılan önemli komutlar ve sonuçları), ÖĞRENİLENLER (ortam bilgisi, sürümler, karşılaşılan hatalar ve neyin çözdüğü, tutmayan yollar), ŞU ANKİ DURUM, KALAN İŞ. Kayıtta olmayan hiçbir şey ekleme." }),
             json!({ "role": "user", "content": format!("KULLANICININ İSTEĞİ:\n{}\n\nÇALIŞMA KAYDI:\n{}", clip(&work.goal, 4_000), transcript(&work.messages[1..start])) }),
         ];
         let quiet = |_: String| {};
-        let summary = match self.model_call(token, run_id, &ask, &json!([]), stop, &quiet, &|_: Live| {}).await {
-            Ok(answer) if !text_of(&answer["content"]).trim().is_empty() => clip(&text_of(&answer["content"]), 12_000),
-            _ => format!("(Model özet yazamadı; adımların listesi)\n{}", work.log.iter().rev().take(80).rev().cloned().collect::<Vec<_>>().join("\n")),
+        let summary = match self
+            .model_call(token, run_id, &ask, &json!([]), stop, &quiet, &|_: Live| {})
+            .await
+        {
+            Ok(answer) if !text_of(&answer["content"]).trim().is_empty() => {
+                clip(&text_of(&answer["content"]), 12_000)
+            }
+            _ => format!(
+                "(Model özet yazamadı; adımların listesi)\n{}",
+                work.log
+                    .iter()
+                    .rev()
+                    .take(80)
+                    .rev()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
         };
         let note = format!(
             "ÖNCEKİ ÇALIŞMANIN ÖZETİ (bağlam dolduğu için eski adımlar kaldırıldı; anlatılanlar senin kendi çalışman)\n\nKULLANICININ İSTEĞİ:\n{}\n\n{}\n\n{summary}\n\nPLAN:\n{}\n\nBuradan devam et. Bir dosyanın içeriği lazımsa yeniden oku; yapılmış işi yeniden yapma.",
@@ -2701,18 +3952,33 @@ impl Chat {
             work.card(),
             plan_text(&work.plan)
         );
-        let mut next = vec![work.messages[0].clone(), json!({ "role": "user", "content": note })];
+        let mut next = vec![
+            work.messages[0].clone(),
+            json!({ "role": "user", "content": note }),
+        ];
         next.extend(work.messages.drain(start..));
         work.messages = next;
         if weight(&work.messages) > work.budget {
             shorten_old(&mut work.messages, 3);
         }
-        say(json!({ "type": "activity", "activity": { "id": "local-compact", "phase": "plan", "label": "Uzun çalışma özetlendi", "state": "done" } }));
+        say(
+            json!({ "type": "activity", "activity": { "id": "local-compact", "phase": "plan", "label": "Uzun çalışma özetlendi", "state": "done" } }),
+        );
     }
 
     /// One model call through the server's gateway. A model that is busy and a server that is out of reach are waited for (about twelve minutes in
     /// all, said to the person); what waiting cannot change ends the call with its reason.
-    async fn model_call(&self, token: &str, run_id: &str, messages: &[Value], tools: &Value, stop: &Stop, waiting: &impl Fn(String), live: &impl Fn(Live)) -> Result<Value, ModelStop> {
+    #[allow(clippy::too_many_arguments)]
+    async fn model_call(
+        &self,
+        token: &str,
+        run_id: &str,
+        messages: &[Value],
+        tools: &Value,
+        stop: &Stop,
+        waiting: &impl Fn(String),
+        live: &impl Fn(Live),
+    ) -> Result<Value, ModelStop> {
         // The answer comes back as it is written (`stream`): the pieces go on to the phone at once; the call is still one call with one result.
         let body = json!({ "runId": run_id, "messages": messages, "tools": tools, "stream": true });
         let mut last = String::from("yanıt yok");
@@ -2720,7 +3986,9 @@ impl Chat {
         for attempt in 0..=MODEL_WAITS.len() {
             if attempt > 0 {
                 let seconds = MODEL_WAITS[attempt - 1];
-                waiting(format!("Model yanıt vermedi ({last}); {seconds} sn sonra yeniden deniyorum"));
+                waiting(format!(
+                    "Model yanıt vermedi ({last}); {seconds} sn sonra yeniden deniyorum"
+                ));
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(seconds)) => {}
                     _ = stop.asked() => return Err(ModelStop::Cancelled),
@@ -2728,7 +3996,13 @@ impl Chat {
             }
             // The newest token: a run of hours can outlive the one it started with.
             let bearer = self.token().unwrap_or_else(|_| token.to_string());
-            let send = self.http.post(format!("{}/agent/model", self.server)).bearer_auth(&bearer).timeout(Duration::from_secs(190)).json(&body).send();
+            let send = self
+                .http
+                .post(format!("{}/agent/model", self.server))
+                .bearer_auth(&bearer)
+                .timeout(Duration::from_secs(190))
+                .json(&body)
+                .send();
             let sent = tokio::select! {
                 sent = send => sent,
                 _ = stop.asked() => return Err(ModelStop::Cancelled),
@@ -2741,7 +4015,12 @@ impl Chat {
                 }
             };
             let mut status = response.status().as_u16();
-            let streamed = (200..300).contains(&status) && response.headers().get("content-type").and_then(|kind| kind.to_str().ok()).is_some_and(|kind| kind.contains("event-stream"));
+            let streamed = (200..300).contains(&status)
+                && response
+                    .headers()
+                    .get("content-type")
+                    .and_then(|kind| kind.to_str().ok())
+                    .is_some_and(|kind| kind.contains("event-stream"));
             let value: Value = if streamed {
                 match self.read_model_stream(response, stop, live).await {
                     Ok(Ok(message)) => return Ok(message),
@@ -2774,18 +4053,36 @@ impl Chat {
                 return Ok(value["message"].clone());
             }
             let code = value["error"]["code"].as_str().unwrap_or("");
-            let message = value["error"]["message"].as_str().or(value["error"].as_str()).unwrap_or("model hatası").to_string();
+            let message = value["error"]["message"]
+                .as_str()
+                .or(value["error"].as_str())
+                .unwrap_or("model hatası")
+                .to_string();
             match (status, code) {
                 (_, "RUN_CANCELLED") => return Err(ModelStop::Cancelled),
                 (_, "RUN_GONE" | "RUN_LIMIT") | (404, _) => return Err(ModelStop::Gone(message)),
                 (_, "CONTEXT_TOO_LARGE") | (413, _) => return Err(ModelStop::TooLarge),
                 (_, "TOOL_CALL_MALFORMED") => {
-                    let reason = value["error"]["reason"].as_str().unwrap_or("").chars().take(400).collect::<String>();
-                    let written = value["error"]["failedGeneration"].as_str().unwrap_or("").chars().take(500).collect::<String>();
-                    return Err(ModelStop::Malformed(format!("{reason}\n{written}").trim().to_string()));
+                    let reason = value["error"]["reason"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(400)
+                        .collect::<String>();
+                    let written = value["error"]["failedGeneration"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(500)
+                        .collect::<String>();
+                    return Err(ModelStop::Malformed(
+                        format!("{reason}\n{written}").trim().to_string(),
+                    ));
                 }
                 // An older server names no code: its run limit is the 429 that speaks of the run.
-                (429, "") if message.contains("model çağrısı") => return Err(ModelStop::Gone(message)),
+                (429, "") if message.contains("model çağrısı") => {
+                    return Err(ModelStop::Gone(message))
+                }
                 (400 | 403, _) => return Err(ModelStop::Failed(message)),
                 // Signed out, or a provider that refuses this very request: tried a few times, not for twelve minutes.
                 (401, _) | (_, "MODEL_FAILED") => {
@@ -2803,7 +4100,12 @@ impl Chat {
 
     /// The gateway's event stream for one model call: `{delta}` pieces go to `live`, `{reset}` takes them back, `{done, message}` is the answer and `{error}` a
     /// refusal after the stream had started. Err when the line ends or breaks before an end.
-    async fn read_model_stream(&self, response: reqwest::Response, stop: &Stop, live: &impl Fn(Live)) -> Result<Result<Value, Value>, ModelStop> {
+    async fn read_model_stream(
+        &self,
+        response: reqwest::Response,
+        stop: &Stop,
+        live: &impl Fn(Live),
+    ) -> Result<Result<Value, Value>, ModelStop> {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         loop {
@@ -2811,12 +4113,18 @@ impl Chat {
                 chunk = stream.next() => chunk,
                 _ = stop.asked() => return Err(ModelStop::Cancelled),
             };
-            let Some(Ok(bytes)) = chunk else { return Err(ModelStop::Failed("akış kesildi".into())) };
+            let Some(Ok(bytes)) = chunk else {
+                return Err(ModelStop::Failed("akış kesildi".into()));
+            };
             buffer.push_str(&String::from_utf8_lossy(&bytes));
             while let Some(end) = buffer.find("\n\n") {
                 let frame: String = buffer.drain(..end + 2).collect();
-                let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) else { continue };
-                let Ok(event) = serde_json::from_str::<Value>(data) else { continue };
+                let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) else {
+                    continue;
+                };
+                let Ok(event) = serde_json::from_str::<Value>(data) else {
+                    continue;
+                };
                 if let Some(piece) = event["delta"].as_str() {
                     live(Live::Text(piece.to_string()));
                 } else if event["reset"] == true {
@@ -2839,73 +4147,185 @@ impl Chat {
             _ => return refused("query ya da url ver (yalnız biri)."),
         };
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
-        let asked = self.http.post(format!("{}/agent/web", self.server)).bearer_auth(bearer).timeout(Duration::from_secs(60)).json(&body).send().await;
-        let Ok(response) = asked else { return refused("Web'e ulaşılamadı.") };
+        let asked = self
+            .http
+            .post(format!("{}/agent/web", self.server))
+            .bearer_auth(bearer)
+            .timeout(Duration::from_secs(60))
+            .json(&body)
+            .send()
+            .await;
+        let Ok(response) = asked else {
+            return refused("Web'e ulaşılamadı.");
+        };
         let ok = response.status().is_success();
         let answer = response.json::<Value>().await.unwrap_or_default();
         if !ok {
-            return refused(answer["error"]["message"].as_str().unwrap_or("Web isteği reddedildi."));
+            return refused(
+                answer["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Web isteği reddedildi."),
+            );
         }
         let text = clip(&text_of(&answer["text"]), OUTPUT_CHARS);
-        ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
+        ToolOutcome {
+            ok: true,
+            output: json!({ "status": "completed", "output": text }).to_string(),
+            brief: String::new(),
+            job: None,
+        }
     }
 
     /// The person's own APIs through the server (`/agent/api`), which adds the key; a call that changes something is asked here first.
-    async fn api_tool(&self, run_id: &str, token: &str, args: &Value, approve: &Approve) -> ToolOutcome {
+    async fn api_tool(
+        &self,
+        run_id: &str,
+        token: &str,
+        args: &Value,
+        approve: &Approve,
+    ) -> ToolOutcome {
         let method = args["method"].as_str().unwrap_or("GET").to_uppercase();
         let writes = args["operation"] == "call" && method != "GET";
         if writes {
-            let body = if args["body"].is_null() { String::new() } else { format!("\n{}", clip(&args["body"].to_string(), 400)) };
-            match approve("terminal".into(), format!("API isteği gönderilsin mi?\n{method} {}{}{body}", text_of(&args["name"]), text_of(&args["path"]))).await {
+            let body = if args["body"].is_null() {
+                String::new()
+            } else {
+                format!("\n{}", clip(&args["body"].to_string(), 400))
+            };
+            match approve(
+                "terminal".into(),
+                format!(
+                    "API isteği gönderilsin mi?\n{method} {}{}{body}",
+                    text_of(&args["name"]),
+                    text_of(&args["path"])
+                ),
+            )
+            .await
+            {
                 Decision::Yes => {}
                 Decision::No => return refused("Kullanıcı onay vermedi; istek gönderilmedi."),
-                Decision::TimedOut => return refused("Onay zamanında gelmedi; istek gönderilmedi."),
+                Decision::TimedOut => {
+                    return refused("Onay zamanında gelmedi; istek gönderilmedi.")
+                }
             }
         }
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
         let body = json!({ "runId": run_id, "args": args, "confirmed": writes });
-        let asked = self.http.post(format!("{}/agent/api", self.server)).bearer_auth(bearer).timeout(Duration::from_secs(60)).json(&body).send().await;
-        let Ok(response) = asked else { return refused("Wiqo sunucusuna ulaşılamadı.") };
+        let asked = self
+            .http
+            .post(format!("{}/agent/api", self.server))
+            .bearer_auth(bearer)
+            .timeout(Duration::from_secs(60))
+            .json(&body)
+            .send()
+            .await;
+        let Ok(response) = asked else {
+            return refused("Wiqo sunucusuna ulaşılamadı.");
+        };
         let status_ok = response.status().is_success();
         let answer = response.json::<Value>().await.unwrap_or_default();
         if !status_ok {
-            return refused(answer["error"]["message"].as_str().unwrap_or("API isteği reddedildi."));
+            return refused(
+                answer["error"]["message"]
+                    .as_str()
+                    .unwrap_or("API isteği reddedildi."),
+            );
         }
         let ok = answer["ok"] != false;
         let text = clip(&text_of(&answer["text"]), OUTPUT_CHARS);
-        let brief = if ok { String::new() } else { text.lines().next().unwrap_or("").chars().take(160).collect() };
-        ToolOutcome { ok, output: json!({ "status": if ok { "completed" } else { "failed" }, "output": text }).to_string(), brief, job: None }
+        let brief = if ok {
+            String::new()
+        } else {
+            text.lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(160)
+                .collect()
+        };
+        ToolOutcome {
+            ok,
+            output: json!({ "status": if ok { "completed" } else { "failed" }, "output": text })
+                .to_string(),
+            brief,
+            job: None,
+        }
     }
 
     /// The person's connected accounts through the server (`/agent/accounts`): the same tools the chat on the phone uses. A change is asked here
     /// first, in the words the server gives for it (the tool's own confirmation), then sent again as confirmed.
-    async fn accounts_tool(&self, run_id: &str, token: &str, args: &Value, approve: &Approve) -> ToolOutcome {
+    async fn accounts_tool(
+        &self,
+        run_id: &str,
+        token: &str,
+        args: &Value,
+        approve: &Approve,
+    ) -> ToolOutcome {
         let bearer = self.token().unwrap_or_else(|_| token.to_string());
         let mut confirmed = false;
         for _ in 0..2 {
             let body = json!({ "runId": run_id, "args": args, "confirmed": confirmed });
-            let asked = self.http.post(format!("{}/agent/accounts", self.server)).bearer_auth(&bearer).timeout(Duration::from_secs(90)).json(&body).send().await;
-            let Ok(response) = asked else { return refused("Wiqo sunucusuna ulaşılamadı.") };
+            let asked = self
+                .http
+                .post(format!("{}/agent/accounts", self.server))
+                .bearer_auth(&bearer)
+                .timeout(Duration::from_secs(90))
+                .json(&body)
+                .send()
+                .await;
+            let Ok(response) = asked else {
+                return refused("Wiqo sunucusuna ulaşılamadı.");
+            };
             let status_ok = response.status().is_success();
             let answer = response.json::<Value>().await.unwrap_or_default();
             if !status_ok {
-                return refused(answer["error"]["message"].as_str().unwrap_or("Hesap isteği reddedildi."));
+                return refused(
+                    answer["error"]["message"]
+                        .as_str()
+                        .unwrap_or("Hesap isteği reddedildi."),
+                );
             }
-            if let Some(ask) = answer.get("needsApproval").filter(|value| value.is_object()) {
+            if let Some(ask) = answer
+                .get("needsApproval")
+                .filter(|value| value.is_object())
+            {
                 if confirmed {
                     return refused("Hesap isteği onaydan sonra da onay bekliyor; gönderilmedi.");
                 }
                 let question = format!("{}\n{}", text_of(&ask["title"]), text_of(&ask["summary"]));
                 match approve("terminal".into(), question).await {
-                    Decision::Yes => { confirmed = true; continue; }
-                    Decision::No => return refused("Kullanıcı onay vermedi; hesapta değişiklik yapılmadı."),
-                    Decision::TimedOut => return refused("Onay zamanında gelmedi; hesapta değişiklik yapılmadı."),
+                    Decision::Yes => {
+                        confirmed = true;
+                        continue;
+                    }
+                    Decision::No => {
+                        return refused("Kullanıcı onay vermedi; hesapta değişiklik yapılmadı.")
+                    }
+                    Decision::TimedOut => {
+                        return refused("Onay zamanında gelmedi; hesapta değişiklik yapılmadı.")
+                    }
                 }
             }
             let ok = answer["ok"] != false;
             let text = clip(&text_of(&answer["text"]), OUTPUT_CHARS);
-            let brief = if ok { String::new() } else { text.lines().next().unwrap_or("").chars().take(160).collect() };
-            return ToolOutcome { ok, output: json!({ "status": if ok { "completed" } else { "failed" }, "output": text }).to_string(), brief, job: None };
+            let brief = if ok {
+                String::new()
+            } else {
+                text.lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(160)
+                    .collect()
+            };
+            return ToolOutcome {
+                ok,
+                output:
+                    json!({ "status": if ok { "completed" } else { "failed" }, "output": text })
+                        .to_string(),
+                brief,
+                job: None,
+            };
         }
         refused("Hesap isteği tamamlanamadı.")
     }
@@ -2917,29 +4337,68 @@ impl Chat {
             return refused("path var olan bir proje klasörünün tam yolu olmalı.");
         }
         let query = text_of(&args["query"]);
-        let root = project_root(&std::fs::canonicalize(&root).unwrap_or(root.clone())).unwrap_or(root);
-        let hot: std::collections::HashSet<String> = self.memory(&root).map(|memory| memory.hot_files(12).into_iter().collect()).unwrap_or_default();
-        let text = tokio::task::spawn_blocking(move || super::repo::repo_find(&root, &query, &hot)).await.unwrap_or_else(|_| "Arama yapılamadı.".into());
-        ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
+        let root =
+            project_root(&std::fs::canonicalize(&root).unwrap_or(root.clone())).unwrap_or(root);
+        let hot: std::collections::HashSet<String> = self
+            .memory(&root)
+            .map(|memory| memory.hot_files(12).into_iter().collect())
+            .unwrap_or_default();
+        let text = tokio::task::spawn_blocking(move || super::repo::repo_find(&root, &query, &hot))
+            .await
+            .unwrap_or_else(|_| "Arama yapılamadı.".into());
+        ToolOutcome {
+            ok: true,
+            output: json!({ "status": "completed", "output": text }).to_string(),
+            brief: String::new(),
+            job: None,
+        }
     }
 
     /// One call without tools: the request as a card (understood, handed over, how "done" is checked, limits, the reading chosen for an ambiguous phrase). The card text and the
     /// limits in it; None when the model gives nothing usable (the work then starts from the request alone, as before).
-    async fn intent_card(&self, token: &str, run_id: &str, goal: &str, stop: &Stop) -> Option<(String, Vec<String>)> {
+    async fn intent_card(
+        &self,
+        token: &str,
+        run_id: &str,
+        goal: &str,
+        stop: &Stop,
+    ) -> Option<(String, Vec<String>)> {
         let ask = vec![
             json!({ "role": "system", "content": "Bir bilgisayar ajanının, kullanıcının isteğiyle işe başlamadan önce isteği kısa bir kart olarak yazıya dökmesine yardım ediyorsun. Yalnızca geçerli JSON döndür: {\"anladim\": \"tek cümle\", \"teslim\": \"ne teslim edilecek (dosya, uygulama, rapor, değişiklik)\", \"kabul\": [\"bitti sayılacak 2-4 somut, denenebilir ölçüt (çalıştırılınca ne görülür)\"], \"sinirlar\": [\"kullanıcının açıkça koyduğu kısıtlar, kendi sözleriyle\"], \"belirsiz\": \"iki türlü okunabilen bir ifade varsa seçtiğin daha kullanışlı yorum, yoksa boş\"}. Kullanıcının sözlerinin dışına çıkma, kendin kısıt uydurma. İfade iki türlü okunabiliyorsa (örneğin web sitesinde '3 boyutlu' = görsel 3B) kullanıcıya daha çok yarayacak, daha zengin yorumu seç. Kabul ölçütleri sayfa, betik ya da komutla gerçekten denenebilir olsun." }),
             json!({ "role": "user", "content": goal.chars().take(4_000).collect::<String>() }),
         ];
-        let answer = self.model_call(token, run_id, &ask, &json!([]), stop, &|_: String| {}, &|_: Live| {}).await.ok()?;
+        let answer = self
+            .model_call(
+                token,
+                run_id,
+                &ask,
+                &json!([]),
+                stop,
+                &|_: String| {},
+                &|_: Live| {},
+            )
+            .await
+            .ok()?;
         let content = text_of(&answer["content"]);
         let (from, to) = (content.find('{')?, content.rfind('}')?);
         let card: Value = serde_json::from_str(content.get(from..=to)?).ok()?;
-        let list = |key: &str| -> Vec<String> { card[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(|item| item.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|item| !item.is_empty()).take(5).collect() };
+        let list = |key: &str| -> Vec<String> {
+            card[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|item| item.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|item| !item.is_empty())
+                .take(5)
+                .collect()
+        };
         let (understood, handed) = (text_of(&card["anladim"]), text_of(&card["teslim"]));
         if understood.trim().is_empty() && handed.trim().is_empty() {
             return None;
         }
-        let (accept, limits, unclear) = (list("kabul"), list("sinirlar"), text_of(&card["belirsiz"]));
+        let (accept, limits, unclear) =
+            (list("kabul"), list("sinirlar"), text_of(&card["belirsiz"]));
         let mut lines = vec!["NİYET KARTI (işe başlamadan yazılan anlayış; bununla çalış, sapman gerekirse nedenini söyle):".to_string()];
         lines.push(format!("Anladığım: {}", understood.trim()));
         lines.push(format!("Teslim edeceğim: {}", handed.trim()));
@@ -2950,7 +4409,10 @@ impl Chat {
             lines.push(format!("Sınırlar: {}", limits.join("; ")));
         }
         if !unclear.trim().is_empty() {
-            lines.push(format!("Belirsiz olan ve seçtiğim yorum (yanıtının başında söyle): {}", unclear.trim()));
+            lines.push(format!(
+                "Belirsiz olan ve seçtiğim yorum (yanıtının başında söyle): {}",
+                unclear.trim()
+            ));
         }
         Some((lines.join("\n"), limits))
     }
@@ -2966,8 +4428,16 @@ impl Chat {
         let file = self.memory(root)?.notes_file();
         if !file.exists() {
             let digest = sha2::Sha256::digest(root.to_string_lossy().as_bytes());
-            let name: String = digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect();
-            let old = self.file.parent()?.join("project-notes").join(format!("{name}.md"));
+            let name: String = digest
+                .iter()
+                .take(12)
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let old = self
+                .file
+                .parent()?
+                .join("project-notes")
+                .join(format!("{name}.md"));
             if old.exists() {
                 let _ = std::fs::rename(&old, &file);
             }
@@ -2981,9 +4451,16 @@ impl Chat {
 
     /// The project folders the person said yes for, within TRUST_DAYS, that still exist.
     fn trusted_folders(&self) -> Vec<PathBuf> {
-        let Some(text) = self.trusted_file().and_then(|file| std::fs::read_to_string(file).ok()) else { return Vec::new() };
+        let Some(text) = self
+            .trusted_file()
+            .and_then(|file| std::fs::read_to_string(file).ok())
+        else {
+            return Vec::new();
+        };
         let now = chrono::Utc::now().timestamp();
-        serde_json::from_str::<Vec<Value>>(&text).unwrap_or_default().iter()
+        serde_json::from_str::<Vec<Value>>(&text)
+            .unwrap_or_default()
+            .iter()
             .filter(|entry| entry["until"].as_i64().is_some_and(|until| until > now))
             .filter_map(|entry| entry["path"].as_str().map(PathBuf::from))
             .filter(|path| path.is_dir())
@@ -2992,12 +4469,24 @@ impl Chat {
 
     /// Remembers a yes for a project folder for TRUST_DAYS (the newest yes for a folder replaces the older one).
     fn trust_folder(&self, folder: &Path) {
-        let Some(file) = self.trusted_file() else { return };
+        let Some(file) = self.trusted_file() else {
+            return;
+        };
         let now = chrono::Utc::now().timestamp();
-        let mut entries: Vec<Value> = std::fs::read_to_string(&file).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
-        entries.retain(|entry| entry["until"].as_i64().is_some_and(|until| until > now) && entry["path"].as_str() != Some(&*folder.to_string_lossy()));
-        entries.push(json!({ "path": folder.to_string_lossy(), "until": now + TRUST_DAYS * 86_400 }));
-        let _ = std::fs::write(&file, serde_json::to_string_pretty(&entries).unwrap_or_default());
+        let mut entries: Vec<Value> = std::fs::read_to_string(&file)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        entries.retain(|entry| {
+            entry["until"].as_i64().is_some_and(|until| until > now)
+                && entry["path"].as_str() != Some(&*folder.to_string_lossy())
+        });
+        entries
+            .push(json!({ "path": folder.to_string_lossy(), "until": now + TRUST_DAYS * 86_400 }));
+        let _ = std::fs::write(
+            &file,
+            serde_json::to_string_pretty(&entries).unwrap_or_default(),
+        );
     }
 
     fn write_notes(&self, args: &Value) -> ToolOutcome {
@@ -3005,7 +4494,8 @@ impl Chat {
         if !project.is_absolute() || !plain(&project) || !project.is_dir() {
             return refused("project var olan bir klasörün tam yolu olmalı.");
         }
-        let root = project_root(&std::fs::canonicalize(&project).unwrap_or(project.clone())).unwrap_or(project);
+        let root = project_root(&std::fs::canonicalize(&project).unwrap_or(project.clone()))
+            .unwrap_or(project);
         let content: String = text_of(&args["content"]).chars().take(8_000).collect();
         match self.notes_file(&root).map(|file| std::fs::write(file, &content)) {
             Some(Ok(())) => ToolOutcome { ok: true, output: json!({ "status": "completed", "message": format!("{} için not kaydedildi.", root.display()) }).to_string(), brief: String::new(), job: None },
@@ -3015,7 +4505,16 @@ impl Chat {
 
     /// One tool call, run by this computer's terminal session; what goes back to the model is its status, its message and its output.
     #[allow(clippy::too_many_arguments)]
-    async fn local_tool(&self, engine: &Engine, name: &str, args: &Value, reach: &mut Reach, approve: &Approve, stop: &Stop, step_uuid: Uuid) -> ToolOutcome {
+    async fn local_tool(
+        &self,
+        engine: &Engine,
+        name: &str,
+        args: &Value,
+        reach: &mut Reach,
+        approve: &Approve,
+        stop: &Stop,
+        step_uuid: Uuid,
+    ) -> ToolOutcome {
         if let Some(problem) = reach.stale(name, args) {
             return refused(&problem);
         }
@@ -3143,13 +4642,24 @@ impl Chat {
         // changes in that project: files by their path, commands by their workdir only on macOS, where the sandbox keeps their writes in that folder.
         // A command that reaches past the folder (network sends, other processes, other apps) is asked every time.
         let folder = touched_folder(name, args);
-        let covers = |allowed: &PathBuf| folder.as_ref().is_some_and(|folder| folder.starts_with(allowed));
+        let covers = |allowed: &PathBuf| {
+            folder
+                .as_ref()
+                .is_some_and(|folder| folder.starts_with(allowed))
+        };
         // A command's writes stay in its folder only where the sandbox holds them there (macOS). On Windows a command counts as staying in its folder
         // when it names no path outside it (no drive, home, environment or parent path); its changes there are still reversible by the checkpoint.
-        let confined = name != "shell" || (!outward && (cfg!(target_os = "macos") || (cfg!(windows) && stays_in_folder(&text_of(&args["command"])))));
-        let covered = !reach.untrusted && name != "job" && confined && reach.allowed.iter().any(covers);
+        let confined = name != "shell"
+            || (!outward
+                && (cfg!(target_os = "macos")
+                    || (cfg!(windows) && stays_in_folder(&text_of(&args["command"])))));
+        let covered =
+            !reach.untrusted && name != "job" && confined && reach.allowed.iter().any(covers);
         if changes && !full && !covered {
-            let scope = folder.as_deref().and_then(allowable).filter(|_| name != "job" && confined && !reach.untrusted);
+            let scope = folder
+                .as_deref()
+                .and_then(allowable)
+                .filter(|_| name != "job" && confined && !reach.untrusted);
             let question = match &scope {
                 Some(scope) => format!("{question}\n\nOnaylarsan {} içindeki değişiklikler {TRUST_DAYS} gün boyunca yeniden sorulmaz (ağa gönderen ve başka programları etkileyen komutlar yine sorulur).", scope.display()),
                 None => question,
@@ -3178,7 +4688,13 @@ impl Chat {
         if changes && name != "job" {
             if let Some(root) = folder.as_deref().and_then(project_root) {
                 if !reach.checkpoints.iter().any(|(known, _)| *known == root) {
-                    let made = { let root = root.clone(); tokio::task::spawn_blocking(move || git_checkpoint(&root)).await.ok().flatten() };
+                    let made = {
+                        let root = root.clone();
+                        tokio::task::spawn_blocking(move || git_checkpoint(&root))
+                            .await
+                            .ok()
+                            .flatten()
+                    };
                     if let Some(commit) = &made {
                         checkpoint_note = format!(" Değişiklikten önce geri dönüş noktası alındı: {} (geri almak: git -C \"{}\" checkout {} -- .).", &commit[..commit.len().min(12)], root.display(), &commit[..commit.len().min(12)]);
                     }
@@ -3206,14 +4722,24 @@ impl Chat {
         if let Some(data) = &data {
             shown["output"] = json!(shown_output(data));
             let value = &data["value"];
-            if let Some(exit_code) = value["exitCode"].as_i64().or_else(|| value["output"]["exitCode"].as_i64()) {
+            if let Some(exit_code) = value["exitCode"]
+                .as_i64()
+                .or_else(|| value["output"]["exitCode"].as_i64())
+            {
                 shown["exitCode"] = json!(exit_code);
             }
             if data["kind"] == "terminalJob" {
                 shown["jobState"] = value["status"].clone();
             }
-            let value = if data["kind"] == "terminalResult" { &data["value"] } else { data };
-            if let (Some(undo), Some(folder)) = (value["undoId"].as_str(), step["payload"]["value"]["workingDirectory"].as_str()) {
+            let value = if data["kind"] == "terminalResult" {
+                &data["value"]
+            } else {
+                data
+            };
+            if let (Some(undo), Some(folder)) = (
+                value["undoId"].as_str(),
+                step["payload"]["value"]["workingDirectory"].as_str(),
+            ) {
                 reach.undo.push((undo.to_string(), folder.to_string()));
             }
             let value = &data["value"];
@@ -3221,8 +4747,19 @@ impl Chat {
                 job = value["jobId"].as_str().map(str::to_string);
             }
         }
-        let brief = result["error"].as_str().or(result["message"].as_str()).unwrap_or("").chars().take(160).collect();
-        ToolOutcome { ok, output: shown.to_string(), brief, job }
+        let brief = result["error"]
+            .as_str()
+            .or(result["message"].as_str())
+            .unwrap_or("")
+            .chars()
+            .take(160)
+            .collect();
+        ToolOutcome {
+            ok,
+            output: shown.to_string(),
+            brief,
+            job,
+        }
     }
 }
 
@@ -3241,10 +4778,17 @@ mod tests {
         assert!(!event.to_string().contains("/private"));
         assert!(!event.to_string().contains("customer name"));
 
-        let outcome = super::ToolOutcome { ok: true, output: serde_json::json!({
-            "status": "completed", "exitCode": 0, "output": "customer name"
-        }).to_string(), brief: "/private/report.txt".into(), job: Some("job-1".into()) };
-        let receipt: serde_json::Value = serde_json::from_str(&super::model_receipt(&outcome)).unwrap();
+        let outcome = super::ToolOutcome {
+            ok: true,
+            output: serde_json::json!({
+                "status": "completed", "exitCode": 0, "output": "customer name"
+            })
+            .to_string(),
+            brief: "/private/report.txt".into(),
+            job: Some("job-1".into()),
+        };
+        let receipt: serde_json::Value =
+            serde_json::from_str(&super::model_receipt(&outcome)).unwrap();
         assert_eq!(receipt["jobId"], "job-1");
         assert_eq!(receipt["exitCode"], 0);
         assert!(!receipt.to_string().contains("customer"));
@@ -3275,10 +4819,26 @@ mod tests {
 
     #[test]
     fn only_read_only_operations_can_be_automatically_recovered() {
-        assert!(!super::effectful_tool("shell", &serde_json::json!({ "command": "git status" }), &[]));
-        assert!(super::effectful_tool("shell", &serde_json::json!({ "command": "npm run build" }), &[]));
-        assert!(super::effectful_tool("write_file", &serde_json::json!({ "path": "a.txt" }), &[]));
-        assert!(super::effectful_tool("computer_files", &serde_json::Value::Null, &["computer_files".into()]));
+        assert!(!super::effectful_tool(
+            "shell",
+            &serde_json::json!({ "command": "git status" }),
+            &[]
+        ));
+        assert!(super::effectful_tool(
+            "shell",
+            &serde_json::json!({ "command": "npm run build" }),
+            &[]
+        ));
+        assert!(super::effectful_tool(
+            "write_file",
+            &serde_json::json!({ "path": "a.txt" }),
+            &[]
+        ));
+        assert!(super::effectful_tool(
+            "computer_files",
+            &serde_json::Value::Null,
+            &["computer_files".into()]
+        ));
     }
 
     #[test]
@@ -3289,7 +4849,12 @@ mod tests {
             { "type": "function", "function": { "name": "repo_find" } },
             { "type": "function", "function": { "name": "write_file" } }
         ]);
-        let names: Vec<String> = super::helper_tools(&all).as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap().to_string()).collect();
+        let names: Vec<String> = super::helper_tools(&all)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
         assert_eq!(names, vec!["web", "repo_find"]);
     }
 
@@ -3297,9 +4862,13 @@ mod tests {
     fn only_requests_that_build_or_change_something_get_an_intent_card() {
         use super::wants_intent_card;
         assert!(wants_intent_card("Masaüstünde matris adında klasör oluştur ve 3 boyutlu matris işlemleri yapabileceğim bir websitesi yap"));
-        assert!(wants_intent_card("Projedeki testleri düzelt ve test dosyalarına dokunma lütfen"));
+        assert!(wants_intent_card(
+            "Projedeki testleri düzelt ve test dosyalarına dokunma lütfen"
+        ));
         assert!(!wants_intent_card("Chrome'da ne açık"));
-        assert!(!wants_intent_card("downloads klasöründe kaç dosya var ve en büyüğü hangisi"));
+        assert!(!wants_intent_card(
+            "downloads klasöründe kaç dosya var ve en büyüğü hangisi"
+        ));
         assert!(!wants_intent_card("düzelt"));
     }
 
@@ -3321,14 +4890,27 @@ mod tests {
             json!({ "role": "tool", "tool_call_id": "d", "content": "{}" }),
         ];
         assert_eq!(dedupe_reads(&mut messages), 2);
-        assert!(messages[2]["content"].as_str().unwrap_or("").contains("yeniden okundu"));
-        assert!(messages[4]["content"].as_str().unwrap_or("").contains("değiştirildi"));
-        assert_eq!(messages[6]["content"].as_str().unwrap_or("").len(), 900, "the newest read stays");
+        assert!(messages[2]["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("yeniden okundu"));
+        assert!(messages[4]["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("değiştirildi"));
+        assert_eq!(
+            messages[6]["content"].as_str().unwrap_or("").len(),
+            900,
+            "the newest read stays"
+        );
     }
 
     #[test]
     fn emoji_are_taken_out_of_the_answer() {
-        assert_eq!(strip_emoji("Hazır 🎉 ✅ ve ✔ doğrulandı → tamam  "), "Hazır ve ✔ doğrulandı → tamam");
+        assert_eq!(
+            strip_emoji("Hazır 🎉 ✅ ve ✔ doğrulandı → tamam  "),
+            "Hazır ve ✔ doğrulandı → tamam"
+        );
     }
 
     #[test]
@@ -3355,7 +4937,10 @@ mod tests {
         assert!(repeated_head(&file, head));
         std::fs::write(&file, format!("{head}  return 1;\n}}\n")).expect("file");
         assert!(!repeated_head(&file, head), "once is how it should be");
-        assert!(!repeated_head(&file, "}\n"), "a short piece repeats on its own");
+        assert!(
+            !repeated_head(&file, "}\n"),
+            "a short piece repeats on its own"
+        );
     }
 
     #[test]
@@ -3363,9 +4948,18 @@ mod tests {
         use super::sse_outcome;
         use serde_json::json;
         let text = "data: {\"delta\":\"Merha\"}\n\ndata: {\"delta\":\"ba\"}\n\ndata: {\"done\":true,\"message\":{\"role\":\"assistant\",\"content\":\"Merhaba\",\"tool_calls\":[]}}\n\n";
-        assert_eq!(sse_outcome(text).expect("an outcome").expect("an answer")["content"], "Merhaba");
-        let refused = "data: {\"error\":{\"status\":503,\"code\":\"MODEL_BUSY\",\"message\":\"x\"}}\n\n";
-        assert_eq!(sse_outcome(refused).expect("an outcome").expect_err("a refusal")["error"]["code"], json!("MODEL_BUSY"));
+        assert_eq!(
+            sse_outcome(text).expect("an outcome").expect("an answer")["content"],
+            "Merhaba"
+        );
+        let refused =
+            "data: {\"error\":{\"status\":503,\"code\":\"MODEL_BUSY\",\"message\":\"x\"}}\n\n";
+        assert_eq!(
+            sse_outcome(refused)
+                .expect("an outcome")
+                .expect_err("a refusal")["error"]["code"],
+            json!("MODEL_BUSY")
+        );
         assert!(sse_outcome("{\"message\":{}}").is_none());
     }
 
@@ -3374,27 +4968,53 @@ mod tests {
         use super::verify_commands;
         let root = std::env::temp_dir().join(format!("wiqo-verify-{}", std::process::id()));
         std::fs::create_dir_all(root.join("tests")).expect("folder");
-        std::fs::write(root.join("package.json"), r#"{"scripts":{"lint":"biome lint","test":"node --test","build":"tsc"}}"#).expect("package.json");
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"scripts":{"lint":"biome lint","test":"node --test","build":"tsc"}}"#,
+        )
+        .expect("package.json");
         std::fs::write(root.join("tsconfig.json"), "{}").expect("tsconfig");
         std::fs::write(root.join("Cargo.toml"), "[package]").expect("cargo");
         let commands = verify_commands(&root, Some("pnpm"));
-        assert_eq!(commands, vec!["npx tsc --noEmit", "pnpm run lint", "pnpm run test", "pnpm run build", "cargo check", "cargo test", "python3 -m pytest -q"]);
+        assert_eq!(
+            commands,
+            vec![
+                "npx tsc --noEmit",
+                "pnpm run lint",
+                "pnpm run test",
+                "pnpm run build",
+                "cargo check",
+                "cargo test",
+                "python3 -m pytest -q"
+            ]
+        );
         let _ = std::fs::remove_dir_all(&root);
-        assert!(verify_commands(&std::env::temp_dir().join("wiqo-no-such-project"), None).is_empty());
+        assert!(
+            verify_commands(&std::env::temp_dir().join("wiqo-no-such-project"), None).is_empty()
+        );
     }
 
     #[test]
     fn a_refused_apple_event_names_the_app_and_the_answer_decides_what_the_model_is_told() {
         use super::{automation_note, denied_app};
         use crate::permissions::AutomationAnswer::*;
-        let command = r#"osascript -e 'tell application "Google Chrome" to get URL of tabs of windows'"#;
+        let command =
+            r#"osascript -e 'tell application "Google Chrome" to get URL of tabs of windows'"#;
         assert_eq!(denied_app(command, "execution error: Google Chrome bir hatayla karşılaştı: Ayrıcalık ihlali oluştu. (-10004)").as_deref(), Some("Google Chrome"));
-        assert!(denied_app(command, "execution error: Not authorized to send Apple events to Google Chrome. (-1743)").is_some());
+        assert!(denied_app(
+            command,
+            "execution error: Not authorized to send Apple events to Google Chrome. (-1743)"
+        )
+        .is_some());
         assert!(denied_app(command, "https://example.com").is_none());
         assert!(denied_app("ls -la", "(-10004)").is_none());
         assert!(automation_note("Google Chrome", &Granted).contains("yeniden çalıştır"));
         let refused = automation_note("Google Chrome", &Refused);
-        assert!(refused.contains("Otomasyon") && refused.contains("devam et") && !refused.contains("yeniden çalıştır"));
+        assert!(
+            refused.contains("Otomasyon")
+                && refused.contains("devam et")
+                && !refused.contains("yeniden çalıştır")
+        );
         assert!(automation_note("Google Chrome", &Unknown).contains("**Wiqo**"));
     }
 
@@ -3402,12 +5022,20 @@ mod tests {
     fn pieces_of_an_answer_reach_the_server_as_one_event() {
         use super::join_pieces;
         use serde_json::json;
-        let events = vec![json!({ "type": "delta", "text": "Test" }), json!({ "type": "delta", "text": "ler geçti." }), json!({ "type": "step_update", "step": {} }), json!({ "type": "delta", "text": "Bitti" })];
+        let events = vec![
+            json!({ "type": "delta", "text": "Test" }),
+            json!({ "type": "delta", "text": "ler geçti." }),
+            json!({ "type": "step_update", "step": {} }),
+            json!({ "type": "delta", "text": "Bitti" }),
+        ];
         let joined = join_pieces(events);
         assert_eq!(joined.len(), 3);
         assert_eq!(joined[0]["text"], "Testler geçti.");
         assert_eq!(joined[2]["text"], "Bitti");
-        let long = vec![json!({ "type": "delta", "text": "a".repeat(3_000) }), json!({ "type": "delta", "text": "b".repeat(1_000) })];
+        let long = vec![
+            json!({ "type": "delta", "text": "a".repeat(3_000) }),
+            json!({ "type": "delta", "text": "b".repeat(1_000) }),
+        ];
         assert_eq!(join_pieces(long).len(), 2);
     }
 
@@ -3415,8 +5043,15 @@ mod tests {
     fn a_stop_says_how_far_the_run_got_not_which_commands_it_ran() {
         use super::steps_in_words;
         assert_eq!(steps_in_words(&[]), "Henüz bir adım tamamlanmadı.");
-        let log = vec!["✓ Komut: ls".to_string(), "✗ Dosya oku: a.txt (bulunamadı)".to_string(), "✓ Komut: pytest -q".to_string()];
-        assert_eq!(steps_in_words(&log), "2 adım tamamlandı, 1 adım başarısız. Son adım: Komut: pytest -q.");
+        let log = vec![
+            "✓ Komut: ls".to_string(),
+            "✗ Dosya oku: a.txt (bulunamadı)".to_string(),
+            "✓ Komut: pytest -q".to_string(),
+        ];
+        assert_eq!(
+            steps_in_words(&log),
+            "2 adım tamamlandı, 1 adım başarısız. Son adım: Komut: pytest -q."
+        );
         let said = steps_in_words(&["✗ Komut: rm -rf x (izin yok)".to_string()]);
         assert!(!said.contains("izin yok"));
     }
@@ -3431,57 +5066,146 @@ mod tests {
         // environment() already carries NOTES.
         let notes = PC_NOTES.len() + PRIVATE_NOTE.len() + environment().len();
         eprintln!("PROMPT tools={tools} notes={notes} total={}", tools + notes);
-        assert!(tools + notes <= PROMPT_BUDGET_CHARS, "fixed prompt is {} chars, budget {PROMPT_BUDGET_CHARS}", tools + notes);
+        assert!(
+            tools + notes <= PROMPT_BUDGET_CHARS,
+            "fixed prompt is {} chars, budget {PROMPT_BUDGET_CHARS}",
+            tools + notes
+        );
     }
 
     #[test]
     fn a_second_dev_server_in_the_same_folder_is_refused_and_servers_are_kept_only_when_asked() {
-        for command in ["npm run dev", "npm start", "pnpm dev", "npx vite", "vite --port 5174", "python3 -m http.server 8000", "next dev", "uvicorn app:app"] {
+        for command in [
+            "npm run dev",
+            "npm start",
+            "pnpm dev",
+            "npx vite",
+            "vite --port 5174",
+            "python3 -m http.server 8000",
+            "next dev",
+            "uvicorn app:app",
+        ] {
             assert!(starts_server(command), "{command}");
         }
-        for command in ["npm run build", "npm test", "vite build", "ls -la", "git status"] {
+        for command in [
+            "npm run build",
+            "npm test",
+            "vite build",
+            "ls -la",
+            "git status",
+        ] {
             assert!(!starts_server(command), "{command}");
         }
         let servers = vec![("/Users/a/Desktop/sayac".to_string(), "job-1".to_string())];
-        assert_eq!(running_server(&servers, &json!({ "command": "npm run dev", "workdir": "/Users/a/Desktop/sayac" })), Some("job-1"));
-        assert_eq!(running_server(&servers, &json!({ "command": "npm run dev", "workdir": "/Users/a/Desktop/baska" })), None, "another folder is another project");
-        assert_eq!(running_server(&servers, &json!({ "command": "npm run build", "workdir": "/Users/a/Desktop/sayac" })), None, "only starting is guarded");
-        assert!(wants_server_kept("React ile sayaç yap, kurup çalıştır ve bana adresini söyle"));
-        assert!(!wants_server_kept("React ile sayaç uygulamasının kodunu yaz ve testlerini geçir"));
+        assert_eq!(
+            running_server(
+                &servers,
+                &json!({ "command": "npm run dev", "workdir": "/Users/a/Desktop/sayac" })
+            ),
+            Some("job-1")
+        );
+        assert_eq!(
+            running_server(
+                &servers,
+                &json!({ "command": "npm run dev", "workdir": "/Users/a/Desktop/baska" })
+            ),
+            None,
+            "another folder is another project"
+        );
+        assert_eq!(
+            running_server(
+                &servers,
+                &json!({ "command": "npm run build", "workdir": "/Users/a/Desktop/sayac" })
+            ),
+            None,
+            "only starting is guarded"
+        );
+        assert!(wants_server_kept(
+            "React ile sayaç yap, kurup çalıştır ve bana adresini söyle"
+        ));
+        assert!(!wants_server_kept(
+            "React ile sayaç uygulamasının kodunu yaz ve testlerini geçir"
+        ));
     }
 
     #[test]
-    fn windows_commands_that_name_a_path_outside_their_folder_or_reach_other_programs_are_told_apart() {
+    fn windows_commands_that_name_a_path_outside_their_folder_or_reach_other_programs_are_told_apart(
+    ) {
         assert!(stays_in_folder("npm install; npm run build"));
-        assert!(stays_in_folder("Get-ChildItem src -Recurse | Select-String TODO"));
+        assert!(stays_in_folder(
+            "Get-ChildItem src -Recurse | Select-String TODO"
+        ));
         assert!(stays_in_folder("python -c \"print(1)\""));
-        for outside in ["Remove-Item C:\\Users\\x\\Desktop\\a.txt", "Copy-Item a.txt ~/Documents", "Set-Content $env:APPDATA\\x.txt hi", "del ..\\other.txt", "copy a %USERPROFILE%\\b", "dir \\\\server\\share"] {
+        for outside in [
+            "Remove-Item C:\\Users\\x\\Desktop\\a.txt",
+            "Copy-Item a.txt ~/Documents",
+            "Set-Content $env:APPDATA\\x.txt hi",
+            "del ..\\other.txt",
+            "copy a %USERPROFILE%\\b",
+            "dir \\\\server\\share",
+        ] {
             assert!(!stays_in_folder(outside), "{outside}");
         }
         assert!(reaches_out("Stop-Process -Name node"));
         assert!(reaches_out("taskkill /F /IM node.exe"));
-        assert!(reaches_out("Invoke-RestMethod -Uri https://x.test -Method Post -Body $b"));
+        assert!(reaches_out(
+            "Invoke-RestMethod -Uri https://x.test -Method Post -Body $b"
+        ));
         assert!(!reaches_out("Invoke-RestMethod -Uri https://x.test/status"));
-        assert!(!reaches_out("Get-Process | Sort-Object CPU -Descending | Select-Object -First 5"));
+        assert!(!reaches_out(
+            "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5"
+        ));
     }
 
     #[test]
     fn a_checkpoint_keeps_the_project_as_it_was_without_touching_the_persons_index_or_files() {
         let root = std::env::temp_dir().join(format!("wiqo-checkpoint-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(&root).args(args).output().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap()
+        };
         git(&["init", "-q"]);
-        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "start",
+        ]);
         std::fs::write(root.join("tracked.txt"), "bir").unwrap();
         git(&["add", "tracked.txt"]);
         std::fs::write(root.join("new.txt"), "yeni").unwrap();
         let staged_before = git(&["diff", "--cached", "--name-only"]).stdout;
         let commit = git_checkpoint(&root).expect("a checkpoint");
-        assert_eq!(git(&["diff", "--cached", "--name-only"]).stdout, staged_before, "the person's staging is untouched");
-        assert_eq!(std::fs::read_to_string(root.join("new.txt")).unwrap(), "yeni");
+        assert_eq!(
+            git(&["diff", "--cached", "--name-only"]).stdout,
+            staged_before,
+            "the person's staging is untouched"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("new.txt")).unwrap(),
+            "yeni"
+        );
         let listed = String::from_utf8(git(&["ls-tree", "--name-only", &commit]).stdout).unwrap();
-        assert!(listed.contains("tracked.txt") && listed.contains("new.txt"), "tracked and untracked files are in it: {listed}");
-        assert!(!String::from_utf8(git(&["for-each-ref", "refs/wiqo/checkpoints"]).stdout).unwrap().is_empty(), "kept under a ref");
+        assert!(
+            listed.contains("tracked.txt") && listed.contains("new.txt"),
+            "tracked and untracked files are in it: {listed}"
+        );
+        assert!(
+            !String::from_utf8(git(&["for-each-ref", "refs/wiqo/checkpoints"]).stdout)
+                .unwrap()
+                .is_empty(),
+            "kept under a ref"
+        );
         assert!(git_checkpoint(&root.join("not-a-repo")).is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3495,17 +5219,41 @@ mod tests {
         let path = file.to_string_lossy().to_string();
         let mut reach = Reach::default();
         let write = json!({ "path": path, "content": "yeni" });
-        assert!(reach.stale("write_file", &write).unwrap().starts_with("FILE_NOT_READ"));
-        assert!(reach.stale("write_file", &json!({ "path": path, "content": "x", "append": true })).is_none(), "an append keeps what is there");
+        assert!(reach
+            .stale("write_file", &write)
+            .unwrap()
+            .starts_with("FILE_NOT_READ"));
+        assert!(
+            reach
+                .stale(
+                    "write_file",
+                    &json!({ "path": path, "content": "x", "append": true })
+                )
+                .is_none(),
+            "an append keeps what is there"
+        );
         reach.note("read_file", &json!({ "path": path }), false);
         assert!(reach.stale("write_file", &write).is_none());
         std::fs::write(&file, "kullanıcı").unwrap();
         let edit = json!({ "path": path, "find": "bir", "replace": "iki" });
-        assert!(reach.stale("edit_file", &edit).unwrap().starts_with("FILE_CHANGED"));
+        assert!(reach
+            .stale("edit_file", &edit)
+            .unwrap()
+            .starts_with("FILE_CHANGED"));
         let patch = json!({ "workdir": folder.to_string_lossy(), "edits": [{ "path": "a.txt", "patch": "@@" }] });
-        assert!(reach.stale("apply_patch", &patch).unwrap().starts_with("FILE_CHANGED"));
-        reach.note("shell", &json!({ "command": "fmt", "workdir": folder.to_string_lossy() }), true);
-        assert!(reach.stale("edit_file", &edit).is_none(), "the agent's own command in that folder is its own change");
+        assert!(reach
+            .stale("apply_patch", &patch)
+            .unwrap()
+            .starts_with("FILE_CHANGED"));
+        reach.note(
+            "shell",
+            &json!({ "command": "fmt", "workdir": folder.to_string_lossy() }),
+            true,
+        );
+        assert!(
+            reach.stale("edit_file", &edit).is_none(),
+            "the agent's own command in that folder is its own change"
+        );
         std::fs::remove_dir_all(folder).ok();
     }
 
@@ -3522,7 +5270,10 @@ mod tests {
             json!({ "role": "tool", "tool_call_id": "a", "content": "ok" }),
         ];
         let whole = repair(saved);
-        let roles: Vec<&str> = whole.iter().map(|message| message["role"].as_str().unwrap()).collect();
+        let roles: Vec<&str> = whole
+            .iter()
+            .map(|message| message["role"].as_str().unwrap())
+            .collect();
         assert_eq!(roles, ["user", "assistant", "tool", "tool"]);
         assert_eq!(whole[3]["tool_call_id"], "b");
         assert!(text_of(&whole[3]["content"]).contains("bilinmiyor"));
@@ -3531,28 +5282,47 @@ mod tests {
     #[test]
     fn old_work_is_made_light_and_the_newest_stays_whole() {
         let long = "x".repeat(5_000);
-        let mut messages = vec![json!({ "role": "system", "content": "s" }), json!({ "role": "user", "content": "iş" })];
+        let mut messages = vec![
+            json!({ "role": "system", "content": "s" }),
+            json!({ "role": "user", "content": "iş" }),
+        ];
         for index in 0..6 {
             let id = format!("c{index}");
             messages.push(json!({ "role": "assistant", "content": "", "tool_calls": [call(&id, "write_file", json!({ "path": "/tmp/a.txt", "content": long }))] }));
             messages.push(json!({ "role": "tool", "tool_call_id": id, "content": long }));
         }
         shorten_old(&mut messages, 2);
-        let first_args: Value = serde_json::from_str(messages[2]["tool_calls"][0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        let first_args: Value = serde_json::from_str(
+            messages[2]["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(first_args["path"], "/tmp/a.txt");
         assert!(text_of(&first_args["content"]).starts_with("(kısaltıldı"));
         assert!(text_of(&messages[3]["content"]).len() < 1_000);
-        assert_eq!(text_of(&messages[13]["content"]).len(), 5_000, "the newest results are untouched");
-        assert!(messages[1].get("tool_calls").is_none(), "a message without calls gains no field");
+        assert_eq!(
+            text_of(&messages[13]["content"]).len(),
+            5_000,
+            "the newest results are untouched"
+        );
+        assert!(
+            messages[1].get("tool_calls").is_none(),
+            "a message without calls gains no field"
+        );
     }
 
     #[test]
     fn the_kept_tail_never_starts_on_a_result_without_its_call() {
-        let mut messages = vec![json!({ "role": "system", "content": "s" }), json!({ "role": "user", "content": "iş" })];
+        let mut messages = vec![
+            json!({ "role": "system", "content": "s" }),
+            json!({ "role": "user", "content": "iş" }),
+        ];
         for index in 0..5 {
             let id = format!("c{index}");
             messages.push(json!({ "role": "assistant", "content": "", "tool_calls": [call(&id, "shell", json!({ "command": "ls" }))] }));
-            messages.push(json!({ "role": "tool", "tool_call_id": id, "content": "y".repeat(400) }));
+            messages
+                .push(json!({ "role": "tool", "tool_call_id": id, "content": "y".repeat(400) }));
         }
         for budget in [300, 700, 1_200, 5_000] {
             let start = tail_start(&messages, budget);
@@ -3580,20 +5350,34 @@ mod tests {
         ]);
         let mut taken = Vec::new();
         let new = said_since(&known, &mut taken, &history);
-        let said: Vec<String> = new.iter().map(|message| text_of(&message["content"])).collect();
+        let said: Vec<String> = new
+            .iter()
+            .map(|message| text_of(&message["content"]))
+            .collect();
         assert_eq!(said, ["bir şiir yaz", "Gül kokulu sabahlar…"]);
         // Summarised away since: what was taken in once is not added again.
-        assert!(said_since(&known[..1], &mut taken, &json!([{ "role": "user", "content": "bir şiir yaz" }])).is_empty());
+        assert!(said_since(
+            &known[..1],
+            &mut taken,
+            &json!([{ "role": "user", "content": "bir şiir yaz" }])
+        )
+        .is_empty());
     }
 
     #[test]
     fn a_long_output_keeps_its_end_and_a_plan_says_what_is_open() {
         let output = format!("{}SON SATIR: error[E0308]", "satır\n".repeat(10_000));
-        let shown = shown_output(&json!({ "kind": "terminalResult", "value": { "kind": "run", "workingDirectory": "/x", "stdout": output, "exitCode": 1 } }));
+        let shown = shown_output(
+            &json!({ "kind": "terminalResult", "value": { "kind": "run", "workingDirectory": "/x", "stdout": output, "exitCode": 1 } }),
+        );
         assert!(shown.contains("error[E0308]"));
         assert!(shown.len() < OUTPUT_CHARS * 3);
         assert!(!shown.contains("workingDirectory"));
-        let plan = vec![json!({ "title": "kur", "status": "done" }), json!({ "title": "derle", "status": "doing" }), json!({ "title": "eski yol", "status": "dropped" })];
+        let plan = vec![
+            json!({ "title": "kur", "status": "done" }),
+            json!({ "title": "derle", "status": "doing" }),
+            json!({ "title": "eski yol", "status": "dropped" }),
+        ];
         assert_eq!(plan_open(&plan), ["derle"]);
         assert!(plan_text(&plan).contains("[x] kur"));
     }

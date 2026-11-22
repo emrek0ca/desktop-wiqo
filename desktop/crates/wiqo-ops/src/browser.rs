@@ -214,7 +214,11 @@ pub fn read_watched_page(url: &str, selector: Option<&str>) -> std::result::Resu
     let _ = ask(json!({ "action": "closeTask", "taskId": task }));
     let page = read.map_err(|error| format!("{}: {}", error.code, error.message))?;
     let text = page["text"].as_str().unwrap_or("");
-    let text = text.split_once('\n').filter(|(head, _)| head.starts_with("[EXTERNAL_CONTENT_UNTRUSTED")).map(|(_, rest)| rest).unwrap_or(text);
+    let text = text
+        .split_once('\n')
+        .filter(|(head, _)| head.starts_with("[EXTERNAL_CONTENT_UNTRUSTED"))
+        .map(|(_, rest)| rest)
+        .unwrap_or(text);
     Ok(json!({ "url": page["url"], "title": page["title"], "text": text }))
 }
 

@@ -177,8 +177,8 @@ fn battery() -> Option<(u8, bool)> {
             .next()?
             .parse::<u8>()
             .ok()?;
-        let discharging = text.contains("discharging");
-        Some((percent, !discharging))
+        // "charging" (not "discharging", "charged" or "AC attached; not charging") is what the person means by "şarj oluyor".
+        Some((percent, text.contains("; charging;")))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -192,7 +192,7 @@ fn battery() -> Option<(u8, bool)> {
             .parse::<u8>()
             .ok()?;
         let charging = std::fs::read_to_string(entry.path().join("status"))
-            .map(|status| status.trim() != "Discharging")
+            .map(|status| status.trim() == "Charging")
             .unwrap_or(false);
         Some((percent, charging))
     }
@@ -207,7 +207,8 @@ fn battery() -> Option<(u8, bool)> {
         if power.BatteryFlag & 128 != 0 || power.BatteryLifePercent > 100 {
             return None;
         }
-        Some((power.BatteryLifePercent, power.ACLineStatus == 1))
+        // ACLineStatus 1 only says the charger is plugged in; a laptop held at its charge limit is plugged in and not charging. Flag 8 is "charging".
+        Some((power.BatteryLifePercent, power.BatteryFlag & 8 != 0))
     }
 }
 

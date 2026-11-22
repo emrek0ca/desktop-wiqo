@@ -66,7 +66,10 @@ impl JobStore {
 
     pub fn started(&self, record: Record) {
         let mut records = self.records.lock().expect("jobs lock");
-        if records.iter().any(|existing| existing.job_id == record.job_id) {
+        if records
+            .iter()
+            .any(|existing| existing.job_id == record.job_id)
+        {
             return;
         }
         records.push(record.clone());
@@ -100,7 +103,10 @@ impl JobStore {
     pub fn recover(&self) {
         let mut records = self.records.lock().expect("jobs lock");
         let mut changed = false;
-        for record in records.iter_mut().filter(|record| record.status == "running") {
+        for record in records
+            .iter_mut()
+            .filter(|record| record.status == "running")
+        {
             record.status = "unknown".into();
             record.finished_at_ms = Some(Utc::now().timestamp_millis());
             changed = true;
@@ -132,11 +138,18 @@ impl JobStore {
             "cancelled" => PcJobStatus::Cancelled,
             _ => PcJobStatus::Unknown,
         };
-        let duration_ms = record.finished_at_ms.unwrap_or(record.started_at_ms)
-            .saturating_sub(record.started_at_ms).max(0);
+        let duration_ms = record
+            .finished_at_ms
+            .unwrap_or(record.started_at_ms)
+            .saturating_sub(record.started_at_ms)
+            .max(0);
         let event = PcJobEvent {
-            phase, job_id: record.job_id.clone(), kind: Some(kind), status: Some(status),
-            exit_code: record.exit_code, duration_ms: Some(duration_ms),
+            phase,
+            job_id: record.job_id.clone(),
+            kind: Some(kind),
+            status: Some(status),
+            exit_code: record.exit_code,
+            duration_ms: Some(duration_ms),
         };
         if let Ok(value) = serde_json::to_value(event) {
             self.events.emit(value);
@@ -162,7 +175,10 @@ pub enum Target {
     /// A file in `folder` whose name matches `pattern` (`*` and `?`), which has appeared and stopped growing.
     File { folder: PathBuf, pattern: String },
     /// A program, by name or process id, that is running and then is not.
-    Process { name: Option<String>, pid: Option<u32> },
+    Process {
+        name: Option<String>,
+        pid: Option<u32>,
+    },
 }
 
 /// How a watch ended.
@@ -181,22 +197,41 @@ pub fn watch(target: &Target, seconds: u64, cancel: &AtomicBool) -> Watched {
             let mut steady = 0;
             while Instant::now() < deadline {
                 if cancel.load(Ordering::SeqCst) {
-                    return Watched { status: "cancelled", message: "İzleme durduruldu.".into(), paths: vec![] };
+                    return Watched {
+                        status: "cancelled",
+                        message: "İzleme durduruldu.".into(),
+                        paths: vec![],
+                    };
                 }
                 let found = newest_match(folder, pattern);
                 match (&found, &last) {
-                    (Some((path, size)), Some((before, before_size))) if path == before && size == before_size => steady += 1,
+                    (Some((path, size)), Some((before, before_size)))
+                        if path == before && size == before_size =>
+                    {
+                        steady += 1
+                    }
                     _ => steady = 0,
                 }
                 last = found;
                 // Two checks in a row (about 4 s) without growth: the download or export is over.
                 if steady >= 2 {
-                    let path = last.as_ref().map(|(path, _)| path.to_string_lossy().to_string()).unwrap_or_default();
-                    return Watched { status: "ok", message: format!("Dosya hazır: {path}"), paths: vec![path] };
+                    let path = last
+                        .as_ref()
+                        .map(|(path, _)| path.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    return Watched {
+                        status: "ok",
+                        message: format!("Dosya hazır: {path}"),
+                        paths: vec![path],
+                    };
                 }
                 std::thread::sleep(Duration::from_secs(2));
             }
-            Watched { status: "unknown", message: "Dosya süre içinde görünmedi.".into(), paths: vec![] }
+            Watched {
+                status: "unknown",
+                message: "Dosya süre içinde görünmedi.".into(),
+                paths: vec![],
+            }
         }
         Target::Process { name, pid } => {
             // A program that is not running at the start is waited for as well: it may be about to open, so it must be seen once before its end counts.
@@ -204,22 +239,38 @@ pub fn watch(target: &Target, seconds: u64, cancel: &AtomicBool) -> Watched {
             let mut grace = 0;
             while Instant::now() < deadline {
                 if cancel.load(Ordering::SeqCst) {
-                    return Watched { status: "cancelled", message: "İzleme durduruldu.".into(), paths: vec![] };
+                    return Watched {
+                        status: "cancelled",
+                        message: "İzleme durduruldu.".into(),
+                        paths: vec![],
+                    };
                 }
                 if running(name.as_deref(), *pid) {
                     seen = true;
                     grace = 0;
                 } else if seen {
-                    return Watched { status: "ok", message: "İşlem bitti.".into(), paths: vec![] };
+                    return Watched {
+                        status: "ok",
+                        message: "İşlem bitti.".into(),
+                        paths: vec![],
+                    };
                 } else {
                     grace += 1;
                     if grace >= 15 {
-                        return Watched { status: "failed", message: "İzlenen işlem çalışmıyor.".into(), paths: vec![] };
+                        return Watched {
+                            status: "failed",
+                            message: "İzlenen işlem çalışmıyor.".into(),
+                            paths: vec![],
+                        };
                     }
                 }
                 std::thread::sleep(Duration::from_secs(2));
             }
-            Watched { status: "unknown", message: "İşlem süre içinde bitmedi.".into(), paths: vec![] }
+            Watched {
+                status: "unknown",
+                message: "İşlem süre içinde bitmedi.".into(),
+                paths: vec![],
+            }
         }
     }
 }
@@ -230,10 +281,15 @@ fn matches(pattern: &str, name: &str) -> bool {
             None => name.is_empty(),
             Some(('*', rest)) => (0..=name.len()).any(|skip| go(rest, &name[skip..])),
             Some(('?', rest)) => !name.is_empty() && go(rest, &name[1..]),
-            Some((c, rest)) => name.first().is_some_and(|n| n.eq_ignore_ascii_case(c)) && go(rest, &name[1..]),
+            Some((c, rest)) => {
+                name.first().is_some_and(|n| n.eq_ignore_ascii_case(c)) && go(rest, &name[1..])
+            }
         }
     }
-    go(&pattern.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
+    go(
+        &pattern.chars().collect::<Vec<_>>(),
+        &name.chars().collect::<Vec<_>>(),
+    )
 }
 
 /// The newest file of the folder whose name fits, with its size. A browser's half-finished download (`.crdownload`, `.part`, `.download`) never counts.
@@ -242,7 +298,11 @@ fn newest_match(folder: &Path, pattern: &str) -> Option<(PathBuf, u64)> {
     for entry in std::fs::read_dir(folder).ok()?.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         let lower = name.to_lowercase();
-        if [".crdownload", ".part", ".download", ".tmp", ".partial"].iter().any(|end| lower.ends_with(end)) || !matches(pattern, &name) {
+        if [".crdownload", ".part", ".download", ".tmp", ".partial"]
+            .iter()
+            .any(|end| lower.ends_with(end))
+            || !matches(pattern, &name)
+        {
             continue;
         }
         let Ok(meta) = entry.metadata() else { continue };
@@ -264,7 +324,12 @@ fn running(name: Option<&str>, pid: Option<u32>) -> bool {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output()
-            .map(|out| (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string()))
+            .map(|out| {
+                (
+                    out.status.success(),
+                    String::from_utf8_lossy(&out.stdout).to_string(),
+                )
+            })
             .unwrap_or((false, String::new()))
     };
     if cfg!(windows) {
@@ -276,7 +341,9 @@ fn running(name: Option<&str>, pid: Option<u32>) -> bool {
         };
         let (_, text) = ok(command);
         // tasklist prints an info line instead of a row when nothing matches.
-        return !text.to_lowercase().contains("no tasks") && !text.trim().is_empty() && !text.contains("INFO:");
+        return !text.to_lowercase().contains("no tasks")
+            && !text.trim().is_empty()
+            && !text.contains("INFO:");
     }
     match (pid, name) {
         (Some(pid), _) => {
@@ -319,7 +386,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wiqo-jobs-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("out.zip"), "abc").unwrap();
-        let target = Target::File { folder: dir.clone(), pattern: "*.zip".into() };
+        let target = Target::File {
+            folder: dir.clone(),
+            pattern: "*.zip".into(),
+        };
         let done = watch(&target, 30, &AtomicBool::new(false));
         assert_eq!(done.status, "ok");
         assert_eq!(done.paths.len(), 1);
@@ -334,8 +404,16 @@ mod tests {
         events.attach(sender);
         let store = JobStore::open(&dir, events.clone());
         store.started(Record {
-            job_id: "j1".into(), label: "Render".into(), kind: "command".into(), status: "running".into(), exit_code: None,
-            started_at_ms: 0, finished_at_ms: None, notify: true, long: true, conversation_id: None,
+            job_id: "j1".into(),
+            label: "Render".into(),
+            kind: "command".into(),
+            status: "running".into(),
+            exit_code: None,
+            started_at_ms: 0,
+            finished_at_ms: None,
+            notify: true,
+            long: true,
+            conversation_id: None,
         });
         let started = reader.try_recv().unwrap();
         assert_eq!(started["phase"], "started");

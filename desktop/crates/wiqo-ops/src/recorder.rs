@@ -39,7 +39,15 @@ pub struct RecordedEvent {
 
 impl RecordedEvent {
     fn new(kind: &'static str) -> RecordedEvent {
-        RecordedEvent { at: Utc::now(), kind, app: None, title: None, url: None, path: None, change: None }
+        RecordedEvent {
+            at: Utc::now(),
+            kind,
+            app: None,
+            title: None,
+            url: None,
+            path: None,
+            change: None,
+        }
     }
 }
 
@@ -54,7 +62,11 @@ static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
 
 /// When the recording in progress started, if one is.
 pub fn recording_since() -> Option<DateTime<Utc>> {
-    RECORDING.lock().expect("recorder lock").as_ref().map(|recording| recording.started)
+    RECORDING
+        .lock()
+        .expect("recorder lock")
+        .as_ref()
+        .map(|recording| recording.started)
 }
 
 /// Starts watching. A second start while one runs keeps the first.
@@ -73,7 +85,12 @@ pub fn start() -> DateTime<Utc> {
             .spawn(move || watch(events, stop, started))
             .ok()
     };
-    *slot = Some(Recording { started, events, stop, thread });
+    *slot = Some(Recording {
+        started,
+        events,
+        stop,
+        thread,
+    });
     started
 }
 
@@ -86,7 +103,11 @@ pub fn stop() -> Vec<RecordedEvent> {
     if let Some(thread) = recording.thread.take() {
         let _ = thread.join();
     }
-    let events = recording.events.lock().expect("recorder events lock").clone();
+    let events = recording
+        .events
+        .lock()
+        .expect("recorder events lock")
+        .clone();
     events
 }
 
@@ -112,16 +133,28 @@ type Snapshot = HashMap<PathBuf, (u64, SystemTime)>;
 fn snapshot(folders: &[(PathBuf, &'static str)]) -> Snapshot {
     let mut files = Snapshot::new();
     for (folder, _) in folders {
-        let Ok(entries) = fs::read_dir(folder) else { continue };
+        let Ok(entries) = fs::read_dir(folder) else {
+            continue;
+        };
         for entry in entries.flatten().take(MAX_FILES_PER_FOLDER) {
             let name = entry.file_name().to_string_lossy().to_string();
             // Half-downloaded and hidden files are noise until they are whole.
-            if name.starts_with('.') || [".crdownload", ".download", ".part", ".tmp"].iter().any(|end| name.ends_with(end)) {
+            if name.starts_with('.')
+                || [".crdownload", ".download", ".part", ".tmp"]
+                    .iter()
+                    .any(|end| name.ends_with(end))
+            {
                 continue;
             }
             if let Ok(meta) = entry.metadata() {
                 if meta.is_file() {
-                    files.insert(entry.path(), (meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
+                    files.insert(
+                        entry.path(),
+                        (
+                            meta.len(),
+                            meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                        ),
+                    );
                 }
             }
         }
@@ -130,21 +163,43 @@ fn snapshot(folders: &[(PathBuf, &'static str)]) -> Snapshot {
 }
 
 /// What changed between two looks at the folders: a file that appeared (or was downloaded), moved between the folders, changed or went away.
-fn file_events(before: &Snapshot, after: &Snapshot, downloads: Option<&PathBuf>) -> Vec<RecordedEvent> {
+fn file_events(
+    before: &Snapshot,
+    after: &Snapshot,
+    downloads: Option<&PathBuf>,
+) -> Vec<RecordedEvent> {
     let mut events = Vec::new();
-    let appeared: Vec<&PathBuf> = after.keys().filter(|path| !before.contains_key(*path)).collect();
-    let gone: Vec<&PathBuf> = before.keys().filter(|path| !after.contains_key(*path)).collect();
+    let appeared: Vec<&PathBuf> = after
+        .keys()
+        .filter(|path| !before.contains_key(*path))
+        .collect();
+    let gone: Vec<&PathBuf> = before
+        .keys()
+        .filter(|path| !after.contains_key(*path))
+        .collect();
     let mut moved_from: Vec<&PathBuf> = Vec::new();
     for path in &appeared {
         let name = path.file_name();
         let size = after[*path].0;
-        let origin = gone.iter().find(|old| old.file_name() == name && before[**old].0 == size && !moved_from.contains(old));
-        let mut event = RecordedEvent::new(if origin.is_none() && downloads.is_some_and(|dir| path.starts_with(dir)) { "download" } else { "file" });
+        let origin = gone.iter().find(|old| {
+            old.file_name() == name && before[**old].0 == size && !moved_from.contains(old)
+        });
+        let mut event = RecordedEvent::new(
+            if origin.is_none() && downloads.is_some_and(|dir| path.starts_with(dir)) {
+                "download"
+            } else {
+                "file"
+            },
+        );
         event.path = Some(crate::fsx::abbreviate(path));
         event.change = Some(match origin {
             Some(old) => {
                 moved_from.push(old);
-                format!("taşındı: {} → {}", crate::fsx::abbreviate(old), crate::fsx::abbreviate(path))
+                format!(
+                    "taşındı: {} → {}",
+                    crate::fsx::abbreviate(old),
+                    crate::fsx::abbreviate(path)
+                )
             }
             None => "oluştu".to_string(),
         });
@@ -170,7 +225,11 @@ fn file_events(before: &Snapshot, after: &Snapshot, downloads: Option<&PathBuf>)
 }
 
 fn clipboard_length() -> Option<usize> {
-    arboard::Clipboard::new().ok()?.get_text().ok().map(|text| text.chars().count())
+    arboard::Clipboard::new()
+        .ok()?
+        .get_text()
+        .ok()
+        .map(|text| text.chars().count())
 }
 
 fn watch(events: Arc<Mutex<Vec<RecordedEvent>>>, stop: Arc<AtomicBool>, started: DateTime<Utc>) {
@@ -181,7 +240,10 @@ fn watch(events: Arc<Mutex<Vec<RecordedEvent>>>, stop: Arc<AtomicBool>, started:
         }
     };
     let folders = watched_folders();
-    let downloads = folders.first().filter(|(_, name)| *name == "İndirilenler").map(|(dir, _)| dir.clone());
+    let downloads = folders
+        .first()
+        .filter(|(_, name)| *name == "İndirilenler")
+        .map(|(dir, _)| dir.clone());
     let mut files = snapshot(&folders);
     let mut last_front: Option<crate::activity::Front> = None;
     let mut last_clipboard = clipboard_length();
@@ -192,12 +254,24 @@ fn watch(events: Arc<Mutex<Vec<RecordedEvent>>>, stop: Arc<AtomicBool>, started:
                 let private = front.is_private();
                 let previous = last_front.as_ref();
                 let app_changed = previous.is_none_or(|previous| previous.app != front.app);
-                let window_changed = previous.is_none_or(|previous| previous.window != front.window);
-                let url_changed = front.url.is_some() && previous.is_none_or(|previous| previous.url != front.url);
+                let window_changed =
+                    previous.is_none_or(|previous| previous.window != front.window);
+                let url_changed = front.url.is_some()
+                    && previous.is_none_or(|previous| previous.url != front.url);
                 if app_changed || window_changed || url_changed {
-                    let mut event = RecordedEvent::new(if app_changed { "app" } else if url_changed { "url" } else { "window" });
+                    let mut event = RecordedEvent::new(if app_changed {
+                        "app"
+                    } else if url_changed {
+                        "url"
+                    } else {
+                        "window"
+                    });
                     event.app = Some(front.app.clone());
-                    event.title = Some(if private { "Gizli pencere (kaydedilmedi)".into() } else { front.window.clone() });
+                    event.title = Some(if private {
+                        "Gizli pencere (kaydedilmedi)".into()
+                    } else {
+                        front.window.clone()
+                    });
                     if !private {
                         event.url = front.url.clone();
                     }
@@ -216,7 +290,10 @@ fn watch(events: Arc<Mutex<Vec<RecordedEvent>>>, stop: Arc<AtomicBool>, started:
             let clipboard = clipboard_length();
             if clipboard.is_some() && clipboard != last_clipboard {
                 let mut event = RecordedEvent::new("clipboard");
-                event.change = Some(format!("metin kopyalandı ({} karakter)", clipboard.unwrap_or(0)));
+                event.change = Some(format!(
+                    "metin kopyalandı ({} karakter)",
+                    clipboard.unwrap_or(0)
+                ));
                 push(event);
                 last_clipboard = clipboard;
             }
@@ -233,18 +310,34 @@ mod tests {
     fn a_file_that_moves_between_folders_is_one_move_and_a_new_download_is_a_download() {
         let downloads = PathBuf::from("/u/Downloads");
         let time = SystemTime::UNIX_EPOCH;
-        let before: Snapshot = [(downloads.join("fatura.pdf"), (10, time))].into_iter().collect();
-        let after: Snapshot = [(PathBuf::from("/u/Documents/fatura.pdf"), (10, time)), (downloads.join("ekstre.pdf"), (5, time))].into_iter().collect();
+        let before: Snapshot = [(downloads.join("fatura.pdf"), (10, time))]
+            .into_iter()
+            .collect();
+        let after: Snapshot = [
+            (PathBuf::from("/u/Documents/fatura.pdf"), (10, time)),
+            (downloads.join("ekstre.pdf"), (5, time)),
+        ]
+        .into_iter()
+        .collect();
         let events = file_events(&before, &after, Some(&downloads));
         assert_eq!(events.len(), 2);
-        assert!(events.iter().any(|event| event.kind == "download" && event.path.as_deref().is_some_and(|path| path.ends_with("ekstre.pdf"))));
-        assert!(events.iter().any(|event| event.change.as_deref().is_some_and(|change| change.starts_with("taşındı"))));
+        assert!(events.iter().any(|event| event.kind == "download"
+            && event
+                .path
+                .as_deref()
+                .is_some_and(|path| path.ends_with("ekstre.pdf"))));
+        assert!(events.iter().any(|event| event
+            .change
+            .as_deref()
+            .is_some_and(|change| change.starts_with("taşındı"))));
     }
 
     #[test]
     fn a_changed_file_is_one_change() {
         let file = PathBuf::from("/u/Desktop/rapor.xlsx");
-        let before: Snapshot = [(file.clone(), (10, SystemTime::UNIX_EPOCH))].into_iter().collect();
+        let before: Snapshot = [(file.clone(), (10, SystemTime::UNIX_EPOCH))]
+            .into_iter()
+            .collect();
         let after: Snapshot = [(file, (12, SystemTime::UNIX_EPOCH))].into_iter().collect();
         let events = file_events(&before, &after, None);
         assert_eq!(events.len(), 1);

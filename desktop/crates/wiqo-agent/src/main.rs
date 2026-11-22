@@ -118,18 +118,31 @@ async fn main() -> Result<()> {
             let token = std::env::var("WIQO_EVAL_TOKEN").unwrap_or_else(|_| "eval".into());
             // The runner's task folder is the only place the agent works; questions that reach past it (network sends, other processes) are refused.
             let risky = regex::Regex::new(r"(?i)\b(push|ssh|scp|rsync|publish|sudo|launchctl|crontab|defaults|osascript|killall|pkill)\b").expect("pattern");
-            let approve: Box<wiqo_agent::chat::Approve> = Box::new(move |_kind: String, question: String| {
-                let yes = !risky.is_match(&question);
-                println!("{}", serde_json::json!({ "type": "approval", "question": question.chars().take(300).collect::<String>(), "yes": yes }));
-                Box::pin(async move { if yes { wiqo_agent::chat::Decision::Yes } else { wiqo_agent::chat::Decision::No } })
-            });
+            let approve: Box<wiqo_agent::chat::Approve> = Box::new(
+                move |_kind: String, question: String| {
+                    let yes = !risky.is_match(&question);
+                    println!(
+                        "{}",
+                        serde_json::json!({ "type": "approval", "question": question.chars().take(300).collect::<String>(), "yes": yes })
+                    );
+                    Box::pin(async move {
+                        if yes {
+                            wiqo_agent::chat::Decision::Yes
+                        } else {
+                            wiqo_agent::chat::Decision::No
+                        }
+                    })
+                },
+            );
             let emit = |event: serde_json::Value| {
                 // Steps, plan and the answer; streamed text deltas are left out.
                 if !matches!(event["type"].as_str(), Some("delta" | "reset" | "thinking")) {
                     println!("{event}");
                 }
             };
-            desktop.eval_task(&handoff, &token, approve.as_ref(), &emit).await?;
+            desktop
+                .eval_task(&handoff, &token, approve.as_ref(), &emit)
+                .await?;
             // The answer is delivered to the gateway in the background: give it a moment before the process ends.
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }

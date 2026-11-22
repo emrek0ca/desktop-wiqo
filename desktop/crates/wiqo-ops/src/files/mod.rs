@@ -541,7 +541,9 @@ fn transfer(ctx: &Context, request: &FileOperation, copy: bool) -> Result<PathBu
             )
         })?;
     // A credential file is not copied or moved under another name (it would then pass the read and send checks).
-    if FilePolicy::get().is_sensitive(&source.to_string_lossy()) || FilePolicy::get().is_sensitive(&request.path) {
+    if FilePolicy::get().is_sensitive(&source.to_string_lossy())
+        || FilePolicy::get().is_sensitive(&request.path)
+    {
         return Err(permission(
             "SENSITIVE_FILE_BLOCKED",
             "Kimlik bilgisi içerebilecek dosyalar Wiqo tarafından kopyalanamaz ya da taşınamaz.",

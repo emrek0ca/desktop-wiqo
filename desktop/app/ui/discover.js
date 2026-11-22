@@ -1512,7 +1512,8 @@
     const list = R.el("div", "share-work-list");
     const status = R.el("p", "muted small", "Yükleniyor…");
     const actions = R.el("div", "modal-actions");
-    actions.append(R.el("span", "spacer"), R.button("Kapat", "secondary", () => root.remove()));
+    // Never a dead end: a project or a result that is not in the list (built on another device, a short last answer) is still written by hand here.
+    actions.append(R.button("Kendim yazayım", "secondary", () => { root.remove(); publish({ mode: "new" }); }), R.el("span", "spacer"), R.button("Kapat", "secondary", () => root.remove()));
     card.append(R.el("h2", "", "Wiqo'da paylaş"), status, list, actions);
     root.append(card);
     document.body.append(root);
@@ -1526,17 +1527,17 @@
     const [tasks, recipes] = await Promise.all([finishedTasks().catch(() => []), invoke("skills_list").then((value) => value.skills || value.recipes || []).catch(() => [])]);
     if (tasks.length) list.append(R.el("h3", "", "Tamamlanan görevler"), ...tasks.map((task) => row(task.title, snippet(task.result), () => publish({ mode: "task", request: task.request, result: task.result }))));
     if (recipes.length) list.append(R.el("h3", "", "Kayıtlı işlerin"), ...recipes.slice(0, 10).map((recipe) => row(recipe.name, snippet(recipe.prompt), () => publish({ mode: "recipe", recipe }))));
-    status.textContent = tasks.length || recipes.length ? "" : "Paylaşılacak bir iş yok. Wiqo'ya bir iş yaptır; bitince buradan paylaşırsın.";
+    status.textContent = tasks.length || recipes.length ? "" : "Listede bir iş yok. Wiqo'ya bir iş yaptırdıysan \"Kendim yazayım\" ile paylaşabilirsin.";
   }
 
   /** The last finished ask of each recent chat: a request and an answer of some substance. */
   async function finishedTasks() {
-    const conversations = ((await invoke("chat_conversations")).conversations || []).slice(0, 10);
+    const conversations = ((await invoke("chat_conversations")).conversations || []).slice(0, 20);
     const found = await Promise.all(conversations.map(async (conversation) => {
       try {
         const messages = ((await invoke("chat_messages", { conversation: conversation.id })).messages || []).filter((item) => item.role === "user" || item.role === "assistant");
         let answer = -1;
-        for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index].role === "assistant" && String(messages[index].content || "").trim().length >= 80) { answer = index; break; }
+        for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index].role === "assistant" && String(messages[index].content || "").trim().length >= 30) { answer = index; break; }
         if (answer < 0) return null;
         let ask = -1;
         for (let index = answer - 1; index >= 0; index -= 1) if (messages[index].role === "user") { ask = index; break; }
@@ -1555,7 +1556,7 @@
     findingsBox.replaceChildren();
     findingsBox.hidden = true;
     $("mission-error").hidden = true;
-    $("mission-dialog-title").textContent = { task: "Wiqo'da paylaş", recipe: "İşi paylaş", edit: "Paylaşımı düzenle", remix: "Kendi versiyonunu paylaş" }[source.mode];
+    $("mission-dialog-title").textContent = { task: "Wiqo'da paylaş", recipe: "İşi paylaş", edit: "Paylaşımı düzenle", remix: "Kendi versiyonunu paylaş", new: "İş paylaş" }[source.mode];
     if (!state.categories.length || !state.needs.length) {
       try {
         const me = await call("GET", "missions/me");

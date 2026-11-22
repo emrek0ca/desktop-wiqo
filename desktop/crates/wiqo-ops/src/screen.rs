@@ -111,7 +111,8 @@ async fn capture(value: &Value) -> Result<Done> {
 
 /// Reading the words is a help, never worth failing the screenshot for: a late or empty reading leaves the picture alone. Windows starts its
 /// recogniser in a PowerShell process, which takes longer.
-const READ_TEXT_FOR: std::time::Duration = std::time::Duration::from_secs(if cfg!(windows) { 10 } else { 3 });
+const READ_TEXT_FOR: std::time::Duration =
+    std::time::Duration::from_secs(if cfg!(windows) { 10 } else { 3 });
 const MAX_SCREEN_TEXT: usize = 6_000;
 /// Windows' recogniser refuses pictures larger than this on either side.
 const OCR_MAX_SIDE: u32 = 4_000;
@@ -124,7 +125,11 @@ fn screen_text(picture: &DynamicImage) -> String {
     let path = std::env::temp_dir().join(format!("wiqo-screen-{}.png", uuid::Uuid::new_v4()));
     let scaled;
     let picture = if picture.width().max(picture.height()) > OCR_MAX_SIDE {
-        scaled = picture.resize(OCR_MAX_SIDE, OCR_MAX_SIDE, image::imageops::FilterType::Triangle);
+        scaled = picture.resize(
+            OCR_MAX_SIDE,
+            OCR_MAX_SIDE,
+            image::imageops::FilterType::Triangle,
+        );
         &scaled
     } else {
         picture

@@ -25,7 +25,16 @@ const REFRESH_SECONDS: i64 = 120;
 const SNIPPET: usize = 220;
 /// Never read, whatever the person chose: password managers and the system's own secret stores.
 const NEVER_READ: [&str; 10] = [
-    "1password", "bitwarden", "lastpass", "keepass", "keychain access", "anahtar zinciri erişimi", "dashlane", "enpass", "keeper", "passwords",
+    "1password",
+    "bitwarden",
+    "lastpass",
+    "keepass",
+    "keychain access",
+    "anahtar zinciri erişimi",
+    "dashlane",
+    "enpass",
+    "keeper",
+    "passwords",
 ];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -90,7 +99,10 @@ fn private_file(path: &Path) {
 }
 
 pub fn settings(data: &Path) -> MemorySettings {
-    fs::read(settings_file(data)).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+    fs::read(settings_file(data))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
 }
 
 fn save_settings(data: &Path, settings: &MemorySettings) -> std::io::Result<()> {
@@ -115,7 +127,12 @@ pub fn set_enabled(data: &Path, on: bool) -> std::io::Result<MemorySettings> {
 
 pub fn set_excluded(data: &Path, apps: Vec<String>) -> std::io::Result<MemorySettings> {
     let mut current = settings(data);
-    current.excluded = apps.into_iter().map(|app| app.trim().to_string()).filter(|app| !app.is_empty()).take(50).collect();
+    current.excluded = apps
+        .into_iter()
+        .map(|app| app.trim().to_string())
+        .filter(|app| !app.is_empty())
+        .take(50)
+        .collect();
     save_settings(data, &current)?;
     Ok(current)
 }
@@ -123,7 +140,8 @@ pub fn set_excluded(data: &Path, apps: Vec<String>) -> std::io::Result<MemorySet
 /// Paused for `hours` (none: until resumed, a year). A pause is the one change a phone may ask for, with resume and forget.
 pub fn pause(data: &Path, hours: Option<i64>) -> std::io::Result<MemorySettings> {
     let mut current = settings(data);
-    current.paused_until = Some(Utc::now() + Duration::hours(hours.unwrap_or(24 * 365).clamp(1, 24 * 365)));
+    current.paused_until =
+        Some(Utc::now() + Duration::hours(hours.unwrap_or(24 * 365).clamp(1, 24 * 365)));
     save_settings(data, &current)?;
     Ok(current)
 }
@@ -137,9 +155,15 @@ pub fn resume(data: &Path) -> std::io::Result<MemorySettings> {
 
 /// Every reading, gone; the settings stay.
 pub fn forget(data: &Path) -> std::io::Result<()> {
-    let Ok(entries) = fs::read_dir(folder(data)) else { return Ok(()) };
+    let Ok(entries) = fs::read_dir(folder(data)) else {
+        return Ok(());
+    };
     for entry in entries.flatten() {
-        if entry.path().extension().is_some_and(|extension| extension == "jsonl") {
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
             fs::remove_file(entry.path())?;
         }
     }
@@ -156,7 +180,10 @@ fn readable(front: &Front, settings: &MemorySettings) -> bool {
     !front.is_private()
         && !app.contains("wiqo")
         && !NEVER_READ.iter().any(|name| app.contains(&fold(name)))
-        && !settings.excluded.iter().any(|name| !name.trim().is_empty() && app.contains(&fold(name)))
+        && !settings
+            .excluded
+            .iter()
+            .any(|name| !name.trim().is_empty() && app.contains(&fold(name)))
 }
 
 /// What the last reading was, so an unchanged screen is not written again and a changed one is read at once.
@@ -183,11 +210,18 @@ pub fn tick(data: &Path) -> bool {
     if !active(&current, now) {
         return false;
     }
-    let Some(front) = crate::activity::front() else { return false };
+    let Some(front) = crate::activity::front() else {
+        return false;
+    };
     if !readable(&front, &current) {
         return false;
     }
-    let key = format!("{}\u{1f}{}\u{1f}{}", front.app, front.window, front.url.clone().unwrap_or_default());
+    let key = format!(
+        "{}\u{1f}{}\u{1f}{}",
+        front.app,
+        front.window,
+        front.url.clone().unwrap_or_default()
+    );
     {
         let last = LAST.lock().expect("screen memory lock");
         if let Some(last) = last.as_ref() {
@@ -196,17 +230,38 @@ pub fn tick(data: &Path) -> bool {
             }
         }
     }
-    let Some(text) = crate::screen::main_screen_text() else { return false };
-    let text: String = crate::terminal::redact_secrets(&text).chars().take(MAX_TEXT).collect();
+    let Some(text) = crate::screen::main_screen_text() else {
+        return false;
+    };
+    let text: String = crate::terminal::redact_secrets(&text)
+        .chars()
+        .take(MAX_TEXT)
+        .collect();
     let text_hash = hash(&text);
     let mut last = LAST.lock().expect("screen memory lock");
-    let unchanged = last.as_ref().is_some_and(|last| last.text_hash == text_hash);
-    *last = Some(Last { key, text_hash, at: now });
+    let unchanged = last
+        .as_ref()
+        .is_some_and(|last| last.text_hash == text_hash);
+    *last = Some(Last {
+        key,
+        text_hash,
+        at: now,
+    });
     drop(last);
     if unchanged {
         return false;
     }
-    write(data, &Entry { at: now, app: front.app, window: front.window, url: front.url, text }).is_ok()
+    write(
+        data,
+        &Entry {
+            at: now,
+            app: front.app,
+            window: front.window,
+            url: front.url,
+            text,
+        },
+    )
+    .is_ok()
 }
 
 fn day_file(data: &Path, day: &str) -> PathBuf {
@@ -215,9 +270,16 @@ fn day_file(data: &Path, day: &str) -> PathBuf {
 
 fn write(data: &Path, entry: &Entry) -> std::io::Result<()> {
     fs::create_dir_all(folder(data))?;
-    let day = entry.at.with_timezone(&Local).format("%Y-%m-%d").to_string();
+    let day = entry
+        .at
+        .with_timezone(&Local)
+        .format("%Y-%m-%d")
+        .to_string();
     let file = day_file(data, &day);
-    let mut out = fs::OpenOptions::new().create(true).append(true).open(&file)?;
+    let mut out = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)?;
     private_file(&file);
     out.write_all(serde_json::to_string(entry)?.as_bytes())?;
     out.write_all(b"\n")?;
@@ -243,7 +305,9 @@ fn day_files(data: &Path) -> Vec<(String, PathBuf)> {
 }
 
 fn prune(data: &Path) {
-    let oldest = (Local::now() - Duration::days(KEEP_DAYS)).format("%Y-%m-%d").to_string();
+    let oldest = (Local::now() - Duration::days(KEEP_DAYS))
+        .format("%Y-%m-%d")
+        .to_string();
     for (day, path) in day_files(data) {
         if day < oldest {
             let _ = fs::remove_file(path);
@@ -264,23 +328,52 @@ pub fn search(data: &Path, query: &str, since: Option<&str>, limit: usize) -> Ve
     }
     let from = match since {
         Some("today") => Local::now().format("%Y-%m-%d").to_string(),
-        Some("month") => (Local::now() - Duration::days(31)).format("%Y-%m-%d").to_string(),
-        _ => (Local::now() - Duration::days(7)).format("%Y-%m-%d").to_string(),
+        Some("month") => (Local::now() - Duration::days(31))
+            .format("%Y-%m-%d")
+            .to_string(),
+        _ => (Local::now() - Duration::days(7))
+            .format("%Y-%m-%d")
+            .to_string(),
     };
     let mut scored: Vec<(usize, Hit)> = Vec::new();
     for (day, path) in day_files(data) {
         if day < from {
             break;
         }
-        let Ok(file) = fs::File::open(&path) else { continue };
-        for line in BufReader::new(file).lines().map_while(std::result::Result::ok) {
-            let Ok(entry) = serde_json::from_str::<Entry>(&line) else { continue };
-            let haystack = fold(&format!("{} {} {} {}", entry.app, entry.window, entry.url.clone().unwrap_or_default(), entry.text));
-            let score = words.iter().filter(|word| haystack.contains(word.as_str())).count();
+        let Ok(file) = fs::File::open(&path) else {
+            continue;
+        };
+        for line in BufReader::new(file)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            let Ok(entry) = serde_json::from_str::<Entry>(&line) else {
+                continue;
+            };
+            let haystack = fold(&format!(
+                "{} {} {} {}",
+                entry.app,
+                entry.window,
+                entry.url.clone().unwrap_or_default(),
+                entry.text
+            ));
+            let score = words
+                .iter()
+                .filter(|word| haystack.contains(word.as_str()))
+                .count();
             if score * 2 < words.len().max(1) {
                 continue;
             }
-            scored.push((score, Hit { at: entry.at, app: entry.app.clone(), window: entry.window.clone(), url: entry.url.clone(), snippet: snippet(&entry.text, &words) }));
+            scored.push((
+                score,
+                Hit {
+                    at: entry.at,
+                    app: entry.app.clone(),
+                    window: entry.window.clone(),
+                    url: entry.url.clone(),
+                    snippet: snippet(&entry.text, &words),
+                },
+            ));
         }
     }
     scored.sort_by(|left, right| right.0.cmp(&left.0).then(right.1.at.cmp(&left.1.at)));
@@ -289,7 +382,14 @@ pub fn search(data: &Path, query: &str, since: Option<&str>, limit: usize) -> Ve
     scored
         .into_iter()
         .map(|(_, hit)| hit)
-        .filter(|hit| seen.insert(format!("{}{}{}", hit.app, hit.window, hit.at.format("%Y%m%d%H"))))
+        .filter(|hit| {
+            seen.insert(format!(
+                "{}{}{}",
+                hit.app,
+                hit.window,
+                hit.at.format("%Y%m%d%H")
+            ))
+        })
         .take(limit.clamp(1, 20))
         .collect()
 }
@@ -301,14 +401,25 @@ fn snippet(text: &str, words: &[String]) -> String {
     let folded_text: String = folded.iter().collect();
     let at = words
         .iter()
-        .filter_map(|word| folded_text.find(word.as_str()).map(|byte| folded_text[..byte].chars().count()))
+        .filter_map(|word| {
+            folded_text
+                .find(word.as_str())
+                .map(|byte| folded_text[..byte].chars().count())
+        })
         .min()
         .unwrap_or(0);
     // Folding can change the length of a few letters; the position is mapped by proportion so the passage still covers the word.
-    let center = if folded.len() == original.len() { at } else { at * original.len() / folded.len().max(1) };
+    let center = if folded.len() == original.len() {
+        at
+    } else {
+        at * original.len() / folded.len().max(1)
+    };
     let start = center.saturating_sub(SNIPPET / 2);
     let end = (start + SNIPPET).min(original.len());
-    let mut passage: String = original[start..end].iter().collect::<String>().replace('\n', " · ");
+    let mut passage: String = original[start..end]
+        .iter()
+        .collect::<String>()
+        .replace('\n', " · ");
     if start > 0 {
         passage.insert(0, '…');
     }
@@ -325,13 +436,27 @@ pub fn status(data: &Path) -> MemoryStatus {
     let mut bytes = 0;
     for (_, path) in &files {
         bytes += fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-        entries += fs::File::open(path).map(|file| BufReader::new(file).lines().count()).unwrap_or(0);
+        entries += fs::File::open(path)
+            .map(|file| BufReader::new(file).lines().count())
+            .unwrap_or(0);
     }
-    MemoryStatus { enabled: current.enabled, paused_until: current.paused_until.filter(|until| *until > Utc::now()), days: files.len(), entries, bytes, excluded: current.excluded }
+    MemoryStatus {
+        enabled: current.enabled,
+        paused_until: current.paused_until.filter(|until| *until > Utc::now()),
+        days: files.len(),
+        entries,
+        bytes,
+        excluded: current.excluded,
+    }
 }
 
 /// The `screenRecall` answer: the passages as a report the model reads (and only those).
-pub(crate) fn recall_report(data: &Path, query: &str, since: Option<&str>, limit: usize) -> crate::op::Result<crate::op::Done> {
+pub(crate) fn recall_report(
+    data: &Path,
+    query: &str,
+    since: Option<&str>,
+    limit: usize,
+) -> crate::op::Result<crate::op::Done> {
     let current = settings(data);
     if !current.enabled {
         return Err(crate::op::tool_failure(
@@ -354,7 +479,10 @@ pub(crate) fn recall_report(data: &Path, query: &str, since: Option<&str>, limit
                 hit.at.with_timezone(&Local).format("%d.%m %H:%M"),
                 hit.app,
                 hit.window,
-                hit.url.as_deref().map(|url| format!(" · {url}")).unwrap_or_default(),
+                hit.url
+                    .as_deref()
+                    .map(|url| format!(" · {url}"))
+                    .unwrap_or_default(),
                 hit.snippet
             )
         })
@@ -371,11 +499,19 @@ pub(crate) fn recall_report(data: &Path, query: &str, since: Option<&str>, limit
 
 /// The `screenMemory` answer: its state, or a pause, a resume, a forget. Turning it on is never done from here.
 pub(crate) fn manage(data: &Path, mode: &str) -> crate::op::Result<crate::op::Done> {
-    let failed = || crate::op::tool_failure("SCREEN_MEMORY_FAILED", "Ekran hafızasının ayarı değiştirilemedi.");
+    let failed = || {
+        crate::op::tool_failure(
+            "SCREEN_MEMORY_FAILED",
+            "Ekran hafızasının ayarı değiştirilemedi.",
+        )
+    };
     let message = match mode {
         "pause" => {
             if !settings(data).enabled {
-                return Err(crate::op::tool_failure("SCREEN_MEMORY_OFF", "Ekran hafızası zaten kapalı."));
+                return Err(crate::op::tool_failure(
+                    "SCREEN_MEMORY_OFF",
+                    "Ekran hafızası zaten kapalı.",
+                ));
             }
             pause(data, None).map_err(|_| failed())?;
             "Ekran hafızası duraklatıldı; sürdürülene kadar ekran okunmayacak.".to_string()
@@ -399,13 +535,28 @@ pub(crate) fn manage(data: &Path, mode: &str) -> crate::op::Result<crate::op::Do
             if !state.enabled {
                 "Ekran hafızası kapalı.".to_string()
             } else if let Some(until) = state.paused_until {
-                format!("Ekran hafızası {} tarihine kadar duraklatılmış; {} günde {} okuma saklı.", until.with_timezone(&Local).format("%d.%m %H:%M"), state.days, state.entries)
+                format!(
+                    "Ekran hafızası {} tarihine kadar duraklatılmış; {} günde {} okuma saklı.",
+                    until.with_timezone(&Local).format("%d.%m %H:%M"),
+                    state.days,
+                    state.entries
+                )
             } else {
-                format!("Ekran hafızası açık; {} günde {} okuma saklı ({} KB).", state.days, state.entries, state.bytes / 1024)
+                format!(
+                    "Ekran hafızası açık; {} günde {} okuma saklı ({} KB).",
+                    state.days,
+                    state.entries,
+                    state.bytes / 1024
+                )
             }
         }
     };
-    Ok(crate::op::Done::new(message, Some(json!({ "kind": "screenMemory", "value": serde_json::to_value(status(data)).unwrap_or(Value::Null) }))))
+    Ok(crate::op::Done::new(
+        message,
+        Some(
+            json!({ "kind": "screenMemory", "value": serde_json::to_value(status(data)).unwrap_or(Value::Null) }),
+        ),
+    ))
 }
 
 #[cfg(test)]
@@ -421,9 +572,33 @@ mod tests {
     #[test]
     fn a_search_finds_the_reading_and_only_a_passage_of_it() {
         let data = temp();
-        let long = format!("{} Çeyrek satış tablosu: Ankara 120, İzmir 95 {}", "x ".repeat(400), "y ".repeat(400));
-        write(&data, &Entry { at: Utc::now(), app: "zoom.us".into(), window: "Haftalık toplantı".into(), url: None, text: long.clone() }).unwrap();
-        write(&data, &Entry { at: Utc::now(), app: "Safari".into(), window: "Hava durumu".into(), url: Some("https://example.com".into()), text: "Yarın yağmur".into() }).unwrap();
+        let long = format!(
+            "{} Çeyrek satış tablosu: Ankara 120, İzmir 95 {}",
+            "x ".repeat(400),
+            "y ".repeat(400)
+        );
+        write(
+            &data,
+            &Entry {
+                at: Utc::now(),
+                app: "zoom.us".into(),
+                window: "Haftalık toplantı".into(),
+                url: None,
+                text: long.clone(),
+            },
+        )
+        .unwrap();
+        write(
+            &data,
+            &Entry {
+                at: Utc::now(),
+                app: "Safari".into(),
+                window: "Hava durumu".into(),
+                url: Some("https://example.com".into()),
+                text: "Yarın yağmur".into(),
+            },
+        )
+        .unwrap();
         let hits = search(&data, "satış tablosu izmir", Some("today"), 5);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].app, "zoom.us");
@@ -436,8 +611,16 @@ mod tests {
 
     #[test]
     fn private_windows_secret_stores_and_excluded_apps_are_never_read() {
-        let on = MemorySettings { enabled: true, paused_until: None, excluded: vec!["WhatsApp".into()] };
-        let front = |app: &str, window: &str| Front { app: app.into(), window: window.into(), ..Default::default() };
+        let on = MemorySettings {
+            enabled: true,
+            paused_until: None,
+            excluded: vec!["WhatsApp".into()],
+        };
+        let front = |app: &str, window: &str| Front {
+            app: app.into(),
+            window: window.into(),
+            ..Default::default()
+        };
         assert!(readable(&front("Safari", "Haberler"), &on));
         assert!(!readable(&front("Safari", "Gizli Pencere"), &on));
         assert!(!readable(&front("1Password 8", "Kasa"), &on));
@@ -454,7 +637,17 @@ mod tests {
         pause(&data, Some(2)).unwrap();
         assert!(!active(&settings(&data), Utc::now()));
         resume(&data).unwrap();
-        write(&data, &Entry { at: Utc::now(), app: "Notes".into(), window: "Not".into(), url: None, text: "gizli plan".into() }).unwrap();
+        write(
+            &data,
+            &Entry {
+                at: Utc::now(),
+                app: "Notes".into(),
+                window: "Not".into(),
+                url: None,
+                text: "gizli plan".into(),
+            },
+        )
+        .unwrap();
         set_enabled(&data, false).unwrap();
         assert_eq!(status(&data).entries, 0);
     }

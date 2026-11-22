@@ -45,8 +45,15 @@ fn system_utility(ctx: &Context, value: &Value) -> Result<Done> {
     let request: Request = payload(value, "systemUtility", "sistem işlemi")?;
     let data = ctx.services.data_dir.path();
     match request.action.as_str() {
-        "screenRecall" => crate::screen_memory::recall_report(data, request.text.as_deref().unwrap_or(""), request.mode.as_deref(), request.limit.clamp(1, 20)),
-        "screenMemory" => crate::screen_memory::manage(data, request.mode.as_deref().unwrap_or("status")),
+        "screenRecall" => crate::screen_memory::recall_report(
+            data,
+            request.text.as_deref().unwrap_or(""),
+            request.mode.as_deref(),
+            request.limit.clamp(1, 20),
+        ),
+        "screenMemory" => {
+            crate::screen_memory::manage(data, request.mode.as_deref().unwrap_or("status"))
+        }
         "darkMode" => dark_mode(request.mode.as_deref()),
         "topProcesses" => top_processes(request.limit.clamp(1, 50)),
         "battery" => battery(),
@@ -295,7 +302,12 @@ fn ps_processes() -> Vec<ProcessRow> {
             let cpu = parts.next()?.replace(',', ".").parse().ok()?;
             let memory_percent = parts.next()?.replace(',', ".").parse().ok()?;
             let name = parts.collect::<Vec<_>>().join(" ");
-            (!name.is_empty()).then_some(ProcessRow { pid, cpu, memory_percent, name })
+            (!name.is_empty()).then_some(ProcessRow {
+                pid,
+                cpu,
+                memory_percent,
+                name,
+            })
         })
         .collect()
 }
@@ -316,7 +328,10 @@ fn process_lines(limit: usize) -> Vec<String> {
     }
     let mut lines = vec!["PID  %CPU  %MEM  AD".to_string()];
     lines.extend(rank(rows, limit).iter().map(|row| {
-        format!("{}  {:.1}  {:.1}  {}", row.pid, row.cpu, row.memory_percent, row.name)
+        format!(
+            "{}  {:.1}  {:.1}  {}",
+            row.pid, row.cpu, row.memory_percent, row.name
+        )
     }));
     lines
 }
@@ -501,7 +516,12 @@ fn battery_details() -> Result<Done> {
     } else {
         let out = run(
             "powershell",
-            &["-NoProfile", "-Command", "Get-CimInstance Win32_Battery | ForEach-Object { \"Şarj: %$($_.EstimatedChargeRemaining) (durum $($_.BatteryStatus))\" }"],
+            &[
+                "-NoProfile",
+                "-Command",
+                // BatteryStatus 2 is "on AC power", not "charging": the words are decoded here so no reader has to guess from a number.
+                r#"Get-CimInstance Win32_Battery | ForEach-Object { $durum = switch ([int]$_.BatteryStatus) { 1 {'pille çalışıyor'} 2 {'fişe takılı, şarj olmayabilir'} 3 {'tam dolu'} 4 {'düşük'} 5 {'kritik'} {$_ -in 6,7,8,9} {'şarj oluyor'} default {'bilinmiyor'} }; "Şarj: %$($_.EstimatedChargeRemaining) ($durum)" }"#,
+            ],
             15,
         )
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -678,9 +698,26 @@ mod tests {
 
     #[test]
     fn ranking_puts_the_busiest_first_then_the_biggest_in_memory() {
-        let row = |pid, cpu, memory_percent: f32| ProcessRow { pid, cpu, memory_percent, name: format!("p{pid}") };
-        let ranked = rank(vec![row(1, 0.0, 9.0), row(2, 40.0, 0.1), row(3, 0.0, 12.0), row(4, 75.5, 0.0), row(5, 40.0, 3.0)], 4);
-        assert_eq!(ranked.iter().map(|r| r.pid).collect::<Vec<_>>(), vec![4, 5, 2, 3]);
+        let row = |pid, cpu, memory_percent: f32| ProcessRow {
+            pid,
+            cpu,
+            memory_percent,
+            name: format!("p{pid}"),
+        };
+        let ranked = rank(
+            vec![
+                row(1, 0.0, 9.0),
+                row(2, 40.0, 0.1),
+                row(3, 0.0, 12.0),
+                row(4, 75.5, 0.0),
+                row(5, 40.0, 3.0),
+            ],
+            4,
+        );
+        assert_eq!(
+            ranked.iter().map(|r| r.pid).collect::<Vec<_>>(),
+            vec![4, 5, 2, 3]
+        );
     }
 
     #[test]
@@ -691,7 +728,9 @@ mod tests {
             std::thread::spawn(move || {
                 let mut x = 0u64;
                 while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    x = x
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
                     std::hint::black_box(x);
                 }
             })
@@ -705,7 +744,10 @@ mod tests {
             .find(|line| line.split_whitespace().next() == Some(mine.as_str()))
             .unwrap_or_else(|| panic!("the busy test process is not in the top 10: {lines:#?}"));
         let cpu: f32 = ours.split_whitespace().nth(1).unwrap().parse().unwrap();
-        assert!(cpu > 30.0, "a spinning thread should read as busy, got {cpu}: {lines:#?}");
+        assert!(
+            cpu > 30.0,
+            "a spinning thread should read as busy, got {cpu}: {lines:#?}"
+        );
         let first: f32 = lines[1].split_whitespace().nth(1).unwrap().parse().unwrap();
         assert!(first > 0.0, "the busiest process must not read 0.0");
     }

@@ -409,7 +409,11 @@ impl Observer for Shared {
 
 /// An open question as the phone reads it (frames.json `approvalRequest`). `push` asks for the server's generic approval push, for a phone whose app is
 /// closed: when the question is raised, not when a phone asks what is still open.
-fn approval_request(question: &PendingApproval, seconds_left: u64, push: bool) -> serde_json::Value {
+fn approval_request(
+    question: &PendingApproval,
+    seconds_left: u64,
+    push: bool,
+) -> serde_json::Value {
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(seconds_left as i64);
     wiqo_core::relay::to_phone(
         serde_json::json!({ "kind": wiqo_contract::frames::APPROVAL_REQUEST, "approvalId": question.id, "requestId": question.request_id,
@@ -432,8 +436,13 @@ struct ActivityLine {
 impl ActivityLine {
     fn new(title: String) -> ActivityLine {
         ActivityLine {
-            title, detail: String::new(), steps: Default::default(), failed: false,
-            outcome: None, saw_final_reply: false, last_sent: None,
+            title,
+            detail: String::new(),
+            steps: Default::default(),
+            failed: false,
+            outcome: None,
+            saw_final_reply: false,
+            last_sent: None,
         }
     }
 
@@ -448,14 +457,18 @@ impl ActivityLine {
             Some("step_update") => {
                 let id = event["step"]["id"].as_str().unwrap_or("").to_string();
                 let status = event["step"]["status"].as_str().unwrap_or("running");
-                if let Some(summary) = event["step"]["summary"].as_str().filter(|summary| !summary.is_empty()) {
+                if let Some(summary) = event["step"]["summary"]
+                    .as_str()
+                    .filter(|summary| !summary.is_empty())
+                {
                     self.detail = summary.chars().take(120).collect();
                 }
                 if matches!(status, "failed" | "denied") {
                     self.failed = true;
                 }
                 if !id.is_empty() {
-                    self.steps.insert(id, matches!(status, "succeeded" | "completed"));
+                    self.steps
+                        .insert(id, matches!(status, "succeeded" | "completed"));
                 }
                 false
             }
@@ -485,7 +498,11 @@ impl ActivityLine {
     }
 
     fn send(&mut self, status: &str, urgent: bool) -> Option<serde_json::Value> {
-        if !urgent && self.last_sent.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+        if !urgent
+            && self
+                .last_sent
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
+        {
             return None;
         }
         self.last_sent = Some(std::time::Instant::now());
@@ -595,8 +612,23 @@ pub struct Desktop {
 impl Desktop {
     /// Opens the desktop's state in the platform's application data folder (or `WIQO_DATA_DIR`). `server` overrides the paired server.
     /// One project task through the local agent (see `Chat::eval_task`), for `wiqo-agent eval`.
-    pub async fn eval_task(&self, handoff: &serde_json::Value, token: &str, approve: &chat::Approve, emit: &(dyn Fn(serde_json::Value) + Sync)) -> Result<()> {
-        self.chat.eval_task(&self.runtime.engine, &self.runtime.identity.device_id, handoff, token, approve, emit).await
+    pub async fn eval_task(
+        &self,
+        handoff: &serde_json::Value,
+        token: &str,
+        approve: &chat::Approve,
+        emit: &(dyn Fn(serde_json::Value) + Sync),
+    ) -> Result<()> {
+        self.chat
+            .eval_task(
+                &self.runtime.engine,
+                &self.runtime.identity.device_id,
+                handoff,
+                token,
+                approve,
+                emit,
+            )
+            .await
     }
 
     pub fn open(server: Option<String>) -> Result<Arc<Desktop>> {
@@ -635,7 +667,12 @@ impl Desktop {
             permissions: permissions.clone(),
             asked_at: Mutex::new(std::collections::HashMap::new()),
         });
-        let mut engine = Engine::new(platform, settings, Arc::new(Ledger::open(&dir)), services.clone());
+        let mut engine = Engine::new(
+            platform,
+            settings,
+            Arc::new(Ledger::open(&dir)),
+            services.clone(),
+        );
         wiqo_ops::register_all(&mut engine).map_err(anyhow::Error::msg)?;
         // Jobs the last run left open are over: they are told as "not known" (the process did not survive the restart).
         if let Some(terminal) = engine.terminal() {
@@ -847,6 +884,7 @@ impl Desktop {
     }
 
     /// Sends one chat message; the answer arrives as `Event::Chat` with this `turn`, ending with `turnEnd` (and an error text when it failed).
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat_send(
         self: &Arc<Self>,
         turn: &str,
@@ -908,12 +946,17 @@ impl Desktop {
                 Inbox::ResumeLocalTasks => {
                     let desktop = self.clone();
                     tokio::spawn(async move {
-                        let Ok(_scan) = desktop.resume_scan.try_lock() else { return; };
-                        desktop.chat.resume_safe_tasks(
-                            &desktop.runtime.engine,
-                            &desktop.runtime.identity.device_id,
-                            &desktop.shared.events,
-                        ).await;
+                        let Ok(_scan) = desktop.resume_scan.try_lock() else {
+                            return;
+                        };
+                        desktop
+                            .chat
+                            .resume_safe_tasks(
+                                &desktop.runtime.engine,
+                                &desktop.runtime.identity.device_id,
+                                &desktop.shared.events,
+                            )
+                            .await;
                     });
                     continue;
                 }
@@ -938,7 +981,13 @@ impl Desktop {
                     tokio::spawn(remote_screen::serve(session, move |on| {
                         let key = "remote-screen";
                         if on {
-                            wiqo_core::relay::Observer::started(shared.as_ref(), key, "remoteScreen", "Telefondan uzaktan kontrol", None);
+                            wiqo_core::relay::Observer::started(
+                                shared.as_ref(),
+                                key,
+                                "remoteScreen",
+                                "Telefondan uzaktan kontrol",
+                                None,
+                            );
                         } else {
                             wiqo_core::relay::Observer::finished(shared.as_ref(), key);
                         }
@@ -974,7 +1023,9 @@ impl Desktop {
                 // again, with the time it has left. A question of this window's own turn stays on this computer.
                 wiqo_contract::frames::APPROVALS_OPEN => self.say_open_approvals().await,
                 wiqo_contract::frames::CANCEL_JOB => {
-                    if let (Some(id), Some(terminal)) = (value["jobId"].as_str(), self.runtime.engine.terminal()) {
+                    if let (Some(id), Some(terminal)) =
+                        (value["jobId"].as_str(), self.runtime.engine.terminal())
+                    {
                         if !terminal.cancel_job(id) {
                             tracing::info!("cancelJob {id}: no such running job");
                         }
@@ -1003,7 +1054,14 @@ impl Desktop {
     async fn run_agent_steps(self: &Arc<Self>, units: Vec<serde_json::Value>) {
         use wiqo_contract::schema_generated::{PcUnitClaim, PcUnitDone};
         for unit in units {
-            let Ok(PcUnitClaim { unit_id, request_id, conversation_id, prompt, .. }) = serde_json::from_value(unit) else {
+            let Ok(PcUnitClaim {
+                unit_id,
+                request_id,
+                conversation_id,
+                prompt,
+                ..
+            }) = serde_json::from_value(unit)
+            else {
                 continue;
             };
             let device = self.runtime.identity.device_id.clone();
@@ -1063,15 +1121,23 @@ impl Desktop {
     /// and what it says goes back as `watchObserved`; the server compares it with the last reading. Nothing on the page is pressed or typed.
     async fn read_watches(self: &Arc<Self>, watches: Vec<serde_json::Value>) {
         for watch in watches {
-            let Some(trigger) = watch["triggerId"].as_i64() else { continue };
+            let Some(trigger) = watch["triggerId"].as_i64() else {
+                continue;
+            };
             let url = watch["url"].as_str().unwrap_or("").to_string();
             let selector = watch["selector"].as_str().map(str::to_string);
-            let read = tokio::task::spawn_blocking(move || wiqo_ops::read_watched_page(&url, selector.as_deref()))
-                .await
-                .unwrap_or_else(|_| Err("BROWSER_FAILED: okunamadı".into()));
+            let read = tokio::task::spawn_blocking(move || {
+                wiqo_ops::read_watched_page(&url, selector.as_deref())
+            })
+            .await
+            .unwrap_or_else(|_| Err("BROWSER_FAILED: okunamadı".into()));
             let answer = match read {
-                Ok(page) => serde_json::json!({ "type": "watchObserved", "triggerId": trigger, "page": page }),
-                Err(error) => serde_json::json!({ "type": "watchObserved", "triggerId": trigger, "error": error }),
+                Ok(page) => {
+                    serde_json::json!({ "type": "watchObserved", "triggerId": trigger, "page": page })
+                }
+                Err(error) => {
+                    serde_json::json!({ "type": "watchObserved", "triggerId": trigger, "error": error })
+                }
             };
             self.runtime.outbox.deliver(&answer).await;
         }
@@ -1142,7 +1208,9 @@ impl Desktop {
             )
             .await;
         if let (Err(_), chat::Asker::Phone { forward, .. }) = (&outcome, &asker) {
-            forward(serde_json::json!({ "type": "error", "message": "Masaüstü görevi tamamlanamadı." }));
+            forward(
+                serde_json::json!({ "type": "error", "message": "Masaüstü görevi tamamlanamadı." }),
+            );
         }
         drop(asker);
         let _ = drain.await;
@@ -1363,7 +1431,10 @@ impl Desktop {
 
     /// Turned on or off here, the only place it can be turned on. It takes effect for the next step.
     pub fn set_full_access(&self, on: bool) -> Result<bool> {
-        self.runtime.engine.settings().update(|data| data.full_access = on)?;
+        self.runtime
+            .engine
+            .settings()
+            .update(|data| data.full_access = on)?;
         wiqo_ops::set_full_access(on);
         Ok(on)
     }
@@ -1380,13 +1451,21 @@ impl Desktop {
     }
 
     /// `action`: "pause" (for `hours`, or until resumed), "resume", "forget"; `excluded`: the applications never read.
-    pub fn screen_memory_action(&self, action: &str, hours: Option<i64>, excluded: Option<Vec<String>>) -> Result<serde_json::Value> {
+    pub fn screen_memory_action(
+        &self,
+        action: &str,
+        hours: Option<i64>,
+        excluded: Option<Vec<String>>,
+    ) -> Result<serde_json::Value> {
         let data = self.data_path();
         match action {
             "pause" => drop(wiqo_ops::screen_memory::pause(data, hours)?),
             "resume" => drop(wiqo_ops::screen_memory::resume(data)?),
             "forget" => wiqo_ops::screen_memory::forget(data)?,
-            "exclude" => drop(wiqo_ops::screen_memory::set_excluded(data, excluded.unwrap_or_default())?),
+            "exclude" => drop(wiqo_ops::screen_memory::set_excluded(
+                data,
+                excluded.unwrap_or_default(),
+            )?),
             _ => anyhow::bail!("Bu ekran hafızası işlemi tanınmıyor."),
         }
         Ok(self.screen_memory())
@@ -1405,7 +1484,10 @@ impl Desktop {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             let desktop = self.clone();
-            let _ = tokio::task::spawn_blocking(move || wiqo_ops::screen_memory::tick(desktop.data_path())).await;
+            let _ = tokio::task::spawn_blocking(move || {
+                wiqo_ops::screen_memory::tick(desktop.data_path())
+            })
+            .await;
         }
     }
 
@@ -1766,7 +1848,10 @@ mod tests {
         }));
         assert_eq!(activity.end()["step"], 1);
         assert_eq!(activity.end()["status"], "cancelled");
-        assert_eq!(ActivityLine::new("Wiqo görevi".into()).end()["status"], "unknown");
+        assert_eq!(
+            ActivityLine::new("Wiqo görevi".into()).end()["status"],
+            "unknown"
+        );
     }
 
     /// One desktop on a data folder of its own, with what it sends to the server captured.
@@ -1868,21 +1953,36 @@ mod tests {
     async fn a_phone_that_opens_late_is_told_the_question_that_still_waits_without_a_second_push() {
         let (desktop, mut sent) = desktop();
         let asking = desktop.clone();
-        let decision = tokio::spawn(async move { asking.ask("deleteFile", "a.txt", Some("phone-request")).await });
+        let decision = tokio::spawn(async move {
+            asking
+                .ask("deleteFile", "a.txt", Some("phone-request"))
+                .await
+        });
         let id = open_question(&desktop).await;
         let first = frames(&mut sent);
-        assert!(first.iter().any(|frame| frame["frame"]["kind"] == "approvalRequest" && frame["notify"] == id.as_str()));
+        assert!(first
+            .iter()
+            .any(|frame| frame["frame"]["kind"] == "approvalRequest"
+                && frame["notify"] == id.as_str()));
         desktop.say_open_approvals().await;
         let again = frames(&mut sent);
         assert_eq!(again.len(), 1);
         assert_eq!(again[0]["frame"]["kind"], "approvalRequest");
         assert_eq!(again[0]["frame"]["approvalId"], id.as_str());
         assert_eq!(again[0]["frame"]["requestId"], "phone-request");
-        assert!(again[0].get("notify").is_none(), "asking again sends no second push");
+        assert!(
+            again[0].get("notify").is_none(),
+            "asking again sends no second push"
+        );
         desktop.answer_approval(&id, true);
         assert!(decision.await.unwrap());
         desktop.say_open_approvals().await;
-        assert!(frames(&mut sent).iter().all(|frame| frame["frame"]["kind"] != "approvalRequest"), "a settled question is not said again");
+        assert!(
+            frames(&mut sent)
+                .iter()
+                .all(|frame| frame["frame"]["kind"] != "approvalRequest"),
+            "a settled question is not said again"
+        );
     }
 
     #[tokio::test]

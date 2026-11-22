@@ -400,10 +400,16 @@ pub(super) fn plain(text: &str) -> String {
 
 /// The look, cut down to the controls whose name or content holds the words: how the model reaches a control a long window pushed off its list.
 pub(super) fn narrow(observation: &mut Observation, words: &str) {
-    let holds = |target: &Target| plain(&target.name).contains(words) || plain(&target.value).contains(words);
+    let holds = |target: &Target| {
+        plain(&target.name).contains(words) || plain(&target.value).contains(words)
+    };
     let mut kept: Vec<Target> = Vec::new();
     let mut rest: Vec<Target> = Vec::new();
-    for target in observation.targets.drain(..).chain(observation.hidden.drain(..)) {
+    for target in observation
+        .targets
+        .drain(..)
+        .chain(observation.hidden.drain(..))
+    {
         if holds(&target) && kept.len() < MAX_TARGETS {
             kept.push(target);
         } else {

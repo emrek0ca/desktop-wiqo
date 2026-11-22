@@ -42,10 +42,10 @@ mod session;
 use actions::*;
 pub use cursor::set_cursor_sink;
 use cursor::*;
+pub use guard::note_frontmost;
 use guard::*;
 use observe::*;
 pub use session::stop_all;
-pub use guard::note_frontmost;
 use session::*;
 
 pub(crate) fn operations() -> Vec<Op> {
@@ -478,14 +478,22 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
                 None if front_is_wiqo => app_behind_wiqo(),
                 None => None,
             };
-            if !request.person && (named.is_some_and(is_wiqo) || (named.is_none() && front_is_wiqo && target.is_none())) {
+            if !request.person
+                && (named.is_some_and(is_wiqo)
+                    || (named.is_none() && front_is_wiqo && target.is_none()))
+            {
                 return Err(own_window_refused());
             }
             let mut observation = observe(engine, target.as_deref())?;
             if !request.person && is_wiqo(&observation.application) {
                 return Err(own_window_refused());
             }
-            if let Some(words) = request.label.as_deref().map(plain).filter(|words| !words.is_empty()) {
+            if let Some(words) = request
+                .label
+                .as_deref()
+                .map(plain)
+                .filter(|words| !words.is_empty())
+            {
                 narrow(&mut observation, &words);
             }
             remember(&request.task_id, &observation);
@@ -522,7 +530,10 @@ fn control(engine: &dyn Engine, value: &Value) -> Result<Done> {
         }
         "fillForm" => {
             let fields = request.fields.clone().unwrap_or_default();
-            if fields.is_empty() || fields.len() > MAX_FIELDS || fields.iter().any(|field| field.value.is_empty()) {
+            if fields.is_empty()
+                || fields.len() > MAX_FIELDS
+                || fields.iter().any(|field| field.value.is_empty())
+            {
                 return Err(tool_failure(
                     "DESKTOP_STEPS_INVALID",
                     "Form alanları geçersiz.",
@@ -686,7 +697,13 @@ fn run_steps(engine: &dyn Engine, request: &Request, steps: Vec<Request>) -> Res
                 [&next.target_ref, &next.source_ref, &next.destination_ref]
                     .into_iter()
                     .flatten()
-                    .any(|reference| !after.targets.iter().chain(&after.hidden).any(|target| &target.reference == reference))
+                    .any(|reference| {
+                        !after
+                            .targets
+                            .iter()
+                            .chain(&after.hidden)
+                            .any(|target| &target.reference == reference)
+                    })
             };
             if last || steps[index + 1..].iter().any(names_a_word) {
                 add_screen_text(engine, after);

@@ -27,10 +27,10 @@ use wiqo_core::wire::{timestamp, CommandResult, CommandStatus, WireError};
 
 pub use edit::undo_recorded;
 pub use policy::{full_access, is_forbidden, is_read_only, redact_secrets, set_full_access};
-pub use shell::windows_powershell;
-pub use step::starts_server;
 use policy::{READ_WITHOUT_GRANT_ID, SCRATCH_FOLDER};
+pub use shell::windows_powershell;
 use shell::{Control, Input, WriteScope};
+pub use step::starts_server;
 
 const FEATURES: [&str; 5] = [
     "terminal-session-v1",
@@ -332,7 +332,12 @@ impl Terminal for Sessions {
 }
 
 impl Sessions {
-    async fn dispatch(&self, session: &Session, request: Request, command_id: &str) -> CommandResult {
+    async fn dispatch(
+        &self,
+        session: &Session,
+        request: Request,
+        command_id: &str,
+    ) -> CommandResult {
         let action = request.action.clone().unwrap_or_else(|| "run".into());
         self.prune();
         if action == "undo_file" {
@@ -460,24 +465,46 @@ impl Sessions {
                     .await
             }
             "watch" => {
-                let target = match request.watch.as_deref() {
-                    Some("file") => {
-                        let folder = request.folder.as_deref().and_then(policy::resolve_directory);
-                        match folder.filter(|folder| policy::is_within(folder, &root)) {
-                            Some(folder) => jobs::Target::File {
-                                folder,
-                                pattern: request.pattern.clone().unwrap_or_else(|| "*".into()),
-                            },
-                            None => return denied("TERMINAL_OUTSIDE_GRANT", "İzlenecek klasör onaylanan klasörün dışında."),
+                let target =
+                    match request.watch.as_deref() {
+                        Some("file") => {
+                            let folder = request
+                                .folder
+                                .as_deref()
+                                .and_then(policy::resolve_directory);
+                            match folder.filter(|folder| policy::is_within(folder, &root)) {
+                                Some(folder) => jobs::Target::File {
+                                    folder,
+                                    pattern: request.pattern.clone().unwrap_or_else(|| "*".into()),
+                                },
+                                None => {
+                                    return denied(
+                                        "TERMINAL_OUTSIDE_GRANT",
+                                        "İzlenecek klasör onaylanan klasörün dışında.",
+                                    )
+                                }
+                            }
                         }
-                    }
-                    Some("process") if request.name.is_some() || request.pid.is_some() => jobs::Target::Process {
-                        name: request.name.clone(),
-                        pid: request.pid,
-                    },
-                    _ => return denied("TERMINAL_ACTION_INVALID", "İzleme için file (folder, pattern) ya da process (name, pid) gerekli."),
-                };
-                self.start_job(session, &request, &grant, &root, &directory, String::new(), Some(target))
+                        Some("process") if request.name.is_some() || request.pid.is_some() => {
+                            jobs::Target::Process {
+                                name: request.name.clone(),
+                                pid: request.pid,
+                            }
+                        }
+                        _ => return denied(
+                            "TERMINAL_ACTION_INVALID",
+                            "İzleme için file (folder, pattern) ya da process (name, pid) gerekli.",
+                        ),
+                    };
+                self.start_job(
+                    session,
+                    &request,
+                    &grant,
+                    &root,
+                    &directory,
+                    String::new(),
+                    Some(target),
+                )
             }
             "run" | "start_job" => {
                 let command = request.command.clone().unwrap_or_default();
@@ -494,15 +521,19 @@ impl Sessions {
                     return denied("TERMINAL_READ_ONLY", "Bu oturum yalnızca okuma izni veriyor; değiştiren komut için yeni onay gerekiyor.");
                 }
                 if action == "start_job" {
-                    return self.start_job(session, &request, &grant, &root, &directory, command, None);
+                    return self
+                        .start_job(session, &request, &grant, &root, &directory, command, None);
                 }
-                self.run_once(&request, &grant, &root, &directory, command, started, command_id)
-                    .await
+                self.run_once(
+                    &request, &grant, &root, &directory, command, started, command_id,
+                )
+                .await
             }
             _ => denied("TERMINAL_ACTION_INVALID", "Terminal işlemi desteklenmiyor."),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_once(
         &self,
         request: &Request,
@@ -552,8 +583,7 @@ impl Sessions {
         if let Some(id) = live {
             wiqo_core::engine::clear_live_output(id);
         }
-        let Some(outcome) = outcome
-        else {
+        let Some(outcome) = outcome else {
             return denied(
                 "OUTCOME_UNKNOWN",
                 "Terminal işlemi beklenmedik şekilde durdu.",
@@ -1102,7 +1132,12 @@ fn file_action(
             })?;
             let mut content = content.unwrap_or_default();
             if request.append == Some(true) && path.is_file() {
-                let held = std::fs::read_to_string(&path).map_err(|_| deny("TERMINAL_FILE_SCOPE", format!("{raw} metin olarak okunamadı; sonuna eklenemedi.")))?;
+                let held = std::fs::read_to_string(&path).map_err(|_| {
+                    deny(
+                        "TERMINAL_FILE_SCOPE",
+                        format!("{raw} metin olarak okunamadı; sonuna eklenemedi."),
+                    )
+                })?;
                 content = format!("{held}{content}");
             }
             let created = edit::write(&path, &content)?;

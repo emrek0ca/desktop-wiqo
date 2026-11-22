@@ -26,24 +26,48 @@ pub enum Button {
 /// What the phone does on the screen. `x`, `y` are fractions of the main display.
 #[derive(Clone, Debug)]
 pub enum Input {
-    Move { x: f64, y: f64 },
-    Down { x: f64, y: f64, button: Button },
-    Up { x: f64, y: f64, button: Button },
-    Click { x: f64, y: f64, button: Button, count: u8 },
-    Scroll { x: f64, y: f64, dx: i32, dy: i32 },
+    Move {
+        x: f64,
+        y: f64,
+    },
+    Down {
+        x: f64,
+        y: f64,
+        button: Button,
+    },
+    Up {
+        x: f64,
+        y: f64,
+        button: Button,
+    },
+    Click {
+        x: f64,
+        y: f64,
+        button: Button,
+        count: u8,
+    },
+    Scroll {
+        x: f64,
+        y: f64,
+        dx: i32,
+        dy: i32,
+    },
     Text(String),
-    Key { key: String, modifiers: Vec<String> },
+    Key {
+        key: String,
+        modifiers: Vec<String>,
+    },
 }
 
 fn digest(bytes: &[u8]) -> u64 {
     // Every byte counts (one typed letter must change it), eight at a time: a few milliseconds for a full frame.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ bytes.len() as u64;
-    let mut chunks = bytes.chunks_exact(8);
-    for chunk in &mut chunks {
-        let word = u64::from_le_bytes(chunk.try_into().expect("eight bytes"));
+    let (chunks, rest) = bytes.as_chunks::<8>();
+    for chunk in chunks {
+        let word = u64::from_le_bytes(*chunk);
         hash = (hash ^ word).wrapping_mul(0x0100_0000_01b3).rotate_left(29);
     }
-    for byte in chunks.remainder() {
+    for byte in rest {
         hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
     }
     hash
@@ -51,7 +75,12 @@ fn digest(bytes: &[u8]) -> u64 {
 
 fn encode_rgb(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity((width * height / 6) as usize);
-    JpegEncoder::new_with_quality(&mut out, quality.clamp(20, 95)).encode(rgb, width, height, ExtendedColorType::Rgb8)?;
+    JpegEncoder::new_with_quality(&mut out, quality.clamp(20, 95)).encode(
+        rgb,
+        width,
+        height,
+        ExtendedColorType::Rgb8,
+    )?;
     Ok(out)
 }
 
@@ -64,7 +93,12 @@ pub fn capture(max_width: u32, quality: u8, previous: Option<u64>) -> Result<Opt
         return Ok(None);
     }
     let jpeg = encode_rgb(&rgb, width, height, quality)?;
-    Ok(Some(Frame { jpeg, width, height, digest }))
+    Ok(Some(Frame {
+        jpeg,
+        width,
+        height,
+        digest,
+    }))
 }
 
 /// The main display's size in the units input uses (points on macOS, pixels on Windows).
@@ -89,7 +123,10 @@ mod platform {
     use core_graphics::color_space::CGColorSpace;
     use core_graphics::context::{CGContext, CGInterpolationQuality};
     use core_graphics::display::CGDisplay;
-    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit, EventField, CGKeyCode};
+    use core_graphics::event::{
+        CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton,
+        EventField, ScrollEventUnit,
+    };
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 
@@ -111,7 +148,9 @@ mod platform {
     /// The display's picture drawn straight into a small RGBA buffer by the system (no full-size copy, no resize pass in Rust), then made RGB.
     pub fn grab_rgb(max_width: u32) -> Result<(Vec<u8>, u32, u32)> {
         let display = CGDisplay::main();
-        let image = display.image().ok_or_else(|| anyhow!("SCREEN_CAPTURE_FAILED"))?;
+        let image = display
+            .image()
+            .ok_or_else(|| anyhow!("SCREEN_CAPTURE_FAILED"))?;
         let (source_width, source_height) = (image.width() as f64, image.height() as f64);
         if source_width < 1.0 || source_height < 1.0 {
             return Err(anyhow!("SCREEN_CAPTURE_FAILED"));
@@ -120,16 +159,30 @@ mod platform {
         let width = ((source_width * scale).round() as usize).max(2) & !1;
         let height = ((source_height * scale).round() as usize).max(2) & !1;
         let space = CGColorSpace::create_device_rgb();
-        let mut context = CGContext::create_bitmap_context(None, width, height, 8, width * 4, &space,
-            core_graphics::base::kCGImageAlphaNoneSkipLast | core_graphics::base::kCGBitmapByteOrder32Big);
+        let mut context = CGContext::create_bitmap_context(
+            None,
+            width,
+            height,
+            8,
+            width * 4,
+            &space,
+            core_graphics::base::kCGImageAlphaNoneSkipLast
+                | core_graphics::base::kCGBitmapByteOrder32Big,
+        );
         context.set_interpolation_quality(CGInterpolationQuality::CGInterpolationQualityMedium);
-        context.draw_image(CGRect::new(&CGPoint::new(0.0, 0.0), &CGSize::new(width as f64, height as f64)), &image);
+        context.draw_image(
+            CGRect::new(
+                &CGPoint::new(0.0, 0.0),
+                &CGSize::new(width as f64, height as f64),
+            ),
+            &image,
+        );
         let row = context.bytes_per_row();
         let data = context.data();
         let mut rgb = Vec::with_capacity(width * height * 3);
         for y in 0..height {
             let line = &data[y * row..y * row + width * 4];
-            for pixel in line.chunks_exact(4) {
+            for pixel in line.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&pixel[..3]);
             }
         }
@@ -137,16 +190,21 @@ mod platform {
     }
 
     fn source() -> Result<CGEventSource> {
-        CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| anyhow!("INPUT_FAILED"))
+        CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow!("INPUT_FAILED"))
     }
 
     fn point(x: f64, y: f64) -> CGPoint {
         let bounds = CGDisplay::main().bounds();
-        CGPoint::new(bounds.origin.x + x.clamp(0.0, 1.0) * bounds.size.width, bounds.origin.y + y.clamp(0.0, 1.0) * bounds.size.height)
+        CGPoint::new(
+            bounds.origin.x + x.clamp(0.0, 1.0) * bounds.size.width,
+            bounds.origin.y + y.clamp(0.0, 1.0) * bounds.size.height,
+        )
     }
 
     fn mouse(kind: CGEventType, at: CGPoint, button: CGMouseButton, clicks: i64) -> Result<()> {
-        let event = CGEvent::new_mouse_event(source()?, kind, at, button).map_err(|_| anyhow!("INPUT_FAILED"))?;
+        let event = CGEvent::new_mouse_event(source()?, kind, at, button)
+            .map_err(|_| anyhow!("INPUT_FAILED"))?;
         if clicks > 0 {
             event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, clicks);
         }
@@ -156,8 +214,16 @@ mod platform {
 
     fn kinds(button: Button) -> (CGEventType, CGEventType, CGMouseButton) {
         match button {
-            Button::Left => (CGEventType::LeftMouseDown, CGEventType::LeftMouseUp, CGMouseButton::Left),
-            Button::Right => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, CGMouseButton::Right),
+            Button::Left => (
+                CGEventType::LeftMouseDown,
+                CGEventType::LeftMouseUp,
+                CGMouseButton::Left,
+            ),
+            Button::Right => (
+                CGEventType::RightMouseDown,
+                CGEventType::RightMouseUp,
+                CGMouseButton::Right,
+            ),
         }
     }
 
@@ -179,7 +245,19 @@ mod platform {
             "down" => 125,
             "up" => 126,
             "f5" => 96,
-            "a" => 0, "c" => 8, "v" => 9, "x" => 7, "z" => 6, "s" => 1, "f" => 3, "t" => 17, "w" => 13, "r" => 15, "n" => 45, "l" => 37, "q" => 12,
+            "a" => 0,
+            "c" => 8,
+            "v" => 9,
+            "x" => 7,
+            "z" => 6,
+            "s" => 1,
+            "f" => 3,
+            "t" => 17,
+            "w" => 13,
+            "r" => 15,
+            "n" => 45,
+            "l" => 37,
+            "q" => 12,
             _ => return None,
         })
     }
@@ -201,7 +279,12 @@ mod platform {
 
     pub fn inject(input: &Input) -> Result<()> {
         match input {
-            Input::Move { x, y } => mouse(CGEventType::MouseMoved, point(*x, *y), CGMouseButton::Left, 0),
+            Input::Move { x, y } => mouse(
+                CGEventType::MouseMoved,
+                point(*x, *y),
+                CGMouseButton::Left,
+                0,
+            ),
             Input::Down { x, y, button } => {
                 let (down, _, which) = kinds(*button);
                 mouse(down, point(*x, *y), which, 1)
@@ -210,7 +293,12 @@ mod platform {
                 let (_, up, which) = kinds(*button);
                 mouse(up, point(*x, *y), which, 1)
             }
-            Input::Click { x, y, button, count } => {
+            Input::Click {
+                x,
+                y,
+                button,
+                count,
+            } => {
                 let at = point(*x, *y);
                 let (down, up, which) = kinds(*button);
                 mouse(CGEventType::MouseMoved, at, CGMouseButton::Left, 0)?;
@@ -221,9 +309,21 @@ mod platform {
                 Ok(())
             }
             Input::Scroll { x, y, dx, dy } => {
-                mouse(CGEventType::MouseMoved, point(*x, *y), CGMouseButton::Left, 0)?;
-                let event = CGEvent::new_scroll_event(source()?, ScrollEventUnit::PIXEL, 2, (*dy).clamp(-2000, 2000), (*dx).clamp(-2000, 2000), 0)
-                    .map_err(|_| anyhow!("INPUT_FAILED"))?;
+                mouse(
+                    CGEventType::MouseMoved,
+                    point(*x, *y),
+                    CGMouseButton::Left,
+                    0,
+                )?;
+                let event = CGEvent::new_scroll_event(
+                    source()?,
+                    ScrollEventUnit::PIXEL,
+                    2,
+                    (*dy).clamp(-2000, 2000),
+                    (*dx).clamp(-2000, 2000),
+                    0,
+                )
+                .map_err(|_| anyhow!("INPUT_FAILED"))?;
                 event.post(CGEventTapLocation::HID);
                 Ok(())
             }
@@ -232,7 +332,8 @@ mod platform {
                 let units: Vec<u16> = text.encode_utf16().collect();
                 for chunk in units.chunks(16) {
                     for down in [true, false] {
-                        let event = CGEvent::new_keyboard_event(source()?, 0, down).map_err(|_| anyhow!("INPUT_FAILED"))?;
+                        let event = CGEvent::new_keyboard_event(source()?, 0, down)
+                            .map_err(|_| anyhow!("INPUT_FAILED"))?;
                         event.set_string_from_utf16_unchecked(chunk);
                         event.post(CGEventTapLocation::HID);
                     }
@@ -243,7 +344,8 @@ mod platform {
                 let code = key_code(key).ok_or_else(|| anyhow!("UNKNOWN_KEY"))?;
                 let flags = flags(modifiers);
                 for down in [true, false] {
-                    let event = CGEvent::new_keyboard_event(source()?, code, down).map_err(|_| anyhow!("INPUT_FAILED"))?;
+                    let event = CGEvent::new_keyboard_event(source()?, code, down)
+                        .map_err(|_| anyhow!("INPUT_FAILED"))?;
                     event.set_flags(flags);
                     event.post(CGEventTapLocation::HID);
                 }
@@ -267,25 +369,57 @@ mod platform {
 
     pub fn display_size() -> (f64, f64) {
         // SAFETY: plain metric queries.
-        unsafe { (f64::from(GetSystemMetrics(SM_CXSCREEN)), f64::from(GetSystemMetrics(SM_CYSCREEN))) }
+        unsafe {
+            (
+                f64::from(GetSystemMetrics(SM_CXSCREEN)),
+                f64::from(GetSystemMetrics(SM_CYSCREEN)),
+            )
+        }
     }
 
     pub fn grab_rgb(max_width: u32) -> Result<(Vec<u8>, u32, u32)> {
         let monitors = xcap::Monitor::all().map_err(|_| anyhow!("SCREEN_CAPTURE_FAILED"))?;
-        let monitor = monitors.iter().find(|monitor| monitor.is_primary().unwrap_or(false)).or_else(|| monitors.first()).ok_or_else(|| anyhow!("DISPLAY_NOT_FOUND"))?;
-        let picture = monitor.capture_image().map_err(|_| anyhow!("SCREEN_CAPTURE_FAILED"))?;
+        let monitor = monitors
+            .iter()
+            .find(|monitor| monitor.is_primary().unwrap_or(false))
+            .or_else(|| monitors.first())
+            .ok_or_else(|| anyhow!("DISPLAY_NOT_FOUND"))?;
+        let picture = monitor
+            .capture_image()
+            .map_err(|_| anyhow!("SCREEN_CAPTURE_FAILED"))?;
         let scale = (f64::from(max_width) / f64::from(picture.width())).min(1.0);
         let width = ((f64::from(picture.width()) * scale).round() as u32).max(2) & !1;
         let height = ((f64::from(picture.height()) * scale).round() as u32).max(2) & !1;
-        let small = if width == picture.width() { picture } else { image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle) };
-        let rgb = image::DynamicImage::ImageRgba8(small).into_rgb8().into_raw();
+        let small = if width == picture.width() {
+            picture
+        } else {
+            image::imageops::resize(
+                &picture,
+                width,
+                height,
+                image::imageops::FilterType::Triangle,
+            )
+        };
+        let rgb = image::DynamicImage::ImageRgba8(small)
+            .into_rgb8()
+            .into_raw();
         Ok((rgb, width, height))
     }
 
     fn send(inputs: &[INPUT]) -> Result<()> {
         // SAFETY: the slice is a valid array of INPUT structures for its length.
-        let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) };
-        if sent as usize == inputs.len() { Ok(()) } else { Err(anyhow!("INPUT_FAILED")) }
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                size_of::<INPUT>() as i32,
+            )
+        };
+        if sent as usize == inputs.len() {
+            Ok(())
+        } else {
+            Err(anyhow!("INPUT_FAILED"))
+        }
     }
 
     fn mouse_input(flags: u32, x: f64, y: f64, data: i32) -> INPUT {
@@ -306,7 +440,18 @@ mod platform {
     }
 
     fn key_input(vk: u16, scan: u16, flags: u32) -> INPUT {
-        INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } } }
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: scan,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
     }
 
     fn virtual_key(name: &str) -> Option<u16> {
@@ -326,7 +471,9 @@ mod platform {
             "down" => VK_DOWN,
             "up" => VK_UP,
             "f5" => VK_F5,
-            single if single.len() == 1 && single.as_bytes()[0].is_ascii_lowercase() => u16::from(single.as_bytes()[0].to_ascii_uppercase()),
+            single if single.len() == 1 && single.as_bytes()[0].is_ascii_lowercase() => {
+                u16::from(single.as_bytes()[0].to_ascii_uppercase())
+            }
             _ => return None,
         })
     }
@@ -350,7 +497,12 @@ mod platform {
             Input::Move { x, y } => send(&[mouse_input(0, *x, *y, 0)]),
             Input::Down { x, y, button } => send(&[mouse_input(buttons(*button).0, *x, *y, 0)]),
             Input::Up { x, y, button } => send(&[mouse_input(buttons(*button).1, *x, *y, 0)]),
-            Input::Click { x, y, button, count } => {
+            Input::Click {
+                x,
+                y,
+                button,
+                count,
+            } => {
                 let (down, up) = buttons(*button);
                 let mut inputs = vec![mouse_input(0, *x, *y, 0)];
                 for _ in 0..(*count).clamp(1, 3) {
@@ -362,8 +514,22 @@ mod platform {
             Input::Scroll { x, y, dx, dy } => {
                 // Wheel units: 120 is one notch; the phone sends pixels, about a third of a notch each.
                 let mut inputs = vec![mouse_input(0, *x, *y, 0)];
-                if *dy != 0 { inputs.push(mouse_input(MOUSEEVENTF_WHEEL, *x, *y, (*dy * 3).clamp(-2400, 2400))); }
-                if *dx != 0 { inputs.push(mouse_input(MOUSEEVENTF_HWHEEL, *x, *y, (-*dx * 3).clamp(-2400, 2400))); }
+                if *dy != 0 {
+                    inputs.push(mouse_input(
+                        MOUSEEVENTF_WHEEL,
+                        *x,
+                        *y,
+                        (*dy * 3).clamp(-2400, 2400),
+                    ));
+                }
+                if *dx != 0 {
+                    inputs.push(mouse_input(
+                        MOUSEEVENTF_HWHEEL,
+                        *x,
+                        *y,
+                        (-*dx * 3).clamp(-2400, 2400),
+                    ));
+                }
                 send(&inputs)
             }
             Input::Text(text) => {
@@ -377,10 +543,15 @@ mod platform {
             Input::Key { key, modifiers } => {
                 let vk = virtual_key(key).ok_or_else(|| anyhow!("UNKNOWN_KEY"))?;
                 let held: Vec<u16> = modifiers.iter().filter_map(|name| modifier(name)).collect();
-                let mut inputs: Vec<INPUT> = held.iter().map(|code| key_input(*code, 0, 0)).collect();
+                let mut inputs: Vec<INPUT> =
+                    held.iter().map(|code| key_input(*code, 0, 0)).collect();
                 inputs.push(key_input(vk, 0, 0));
                 inputs.push(key_input(vk, 0, KEYEVENTF_KEYUP));
-                inputs.extend(held.iter().rev().map(|code| key_input(*code, 0, KEYEVENTF_KEYUP)));
+                inputs.extend(
+                    held.iter()
+                        .rev()
+                        .map(|code| key_input(*code, 0, KEYEVENTF_KEYUP)),
+                );
                 send(&inputs)
             }
         }
@@ -402,13 +573,28 @@ mod platform {
 
     pub fn grab_rgb(max_width: u32) -> Result<(Vec<u8>, u32, u32)> {
         let monitors = xcap::Monitor::all().map_err(|_| anyhow!("SCREEN_CAPTURE_FAILED"))?;
-        let monitor = monitors.first().ok_or_else(|| anyhow!("DISPLAY_NOT_FOUND"))?;
-        let picture = monitor.capture_image().map_err(|_| anyhow!("SCREEN_CAPTURE_FAILED"))?;
+        let monitor = monitors
+            .first()
+            .ok_or_else(|| anyhow!("DISPLAY_NOT_FOUND"))?;
+        let picture = monitor
+            .capture_image()
+            .map_err(|_| anyhow!("SCREEN_CAPTURE_FAILED"))?;
         let scale = (f64::from(max_width) / f64::from(picture.width())).min(1.0);
         let width = ((f64::from(picture.width()) * scale).round() as u32).max(2) & !1;
         let height = ((f64::from(picture.height()) * scale).round() as u32).max(2) & !1;
-        let small = image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle);
-        Ok((image::DynamicImage::ImageRgba8(small).into_rgb8().into_raw(), width, height))
+        let small = image::imageops::resize(
+            &picture,
+            width,
+            height,
+            image::imageops::FilterType::Triangle,
+        );
+        Ok((
+            image::DynamicImage::ImageRgba8(small)
+                .into_rgb8()
+                .into_raw(),
+            width,
+            height,
+        ))
     }
 
     pub fn inject(_input: &Input) -> Result<()> {

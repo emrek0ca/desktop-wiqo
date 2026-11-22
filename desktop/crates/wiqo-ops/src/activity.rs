@@ -16,9 +16,16 @@ impl Front {
     /// A private window says so in its title; nothing of it is remembered or recorded.
     pub fn is_private(&self) -> bool {
         let title = self.window.to_lowercase();
-        ["private browsing", "gizli pencere", "gizli sekme", "inprivate", "incognito", "özel tarama"]
-            .iter()
-            .any(|mark| title.contains(mark))
+        [
+            "private browsing",
+            "gizli pencere",
+            "gizli sekme",
+            "inprivate",
+            "incognito",
+            "özel tarama",
+        ]
+        .iter()
+        .any(|mark| title.contains(mark))
     }
 }
 
@@ -65,14 +72,20 @@ return appName & sep & winTitle & sep & pageAddress & sep & picked
     if !out.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+    let text = String::from_utf8_lossy(&out.stdout)
+        .trim_end_matches('\n')
+        .to_string();
     let mut parts = text.split(FIELD);
     let app = parts.next().unwrap_or_default().trim().to_string();
     if app.is_empty() {
         return None;
     }
     let window = parts.next().unwrap_or_default().trim().to_string();
-    let url = parts.next().map(str::trim).filter(|url| !url.is_empty()).map(str::to_string);
+    let url = parts
+        .next()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string);
     let selection = parts
         .next()
         .unwrap_or_default()
@@ -82,14 +95,23 @@ return appName & sep & winTitle & sep & pageAddress & sep & picked
         .take(20)
         .map(str::to_string)
         .collect();
-    Some(Front { app, window, url, selection })
+    Some(Front {
+        app,
+        window,
+        url,
+        selection,
+    })
 }
 
 #[cfg(windows)]
 pub fn front() -> Option<Front> {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    };
     unsafe {
         let window = GetForegroundWindow();
         if window.is_null() {
@@ -132,12 +154,18 @@ pub fn front() -> Option<Front> {
 
 /// The reading as the lines of the `context` report.
 pub fn lines(front: &Front) -> String {
-    let mut out = format!("Ön plandaki uygulama: {}\nPencere: {}", front.app, front.window);
+    let mut out = format!(
+        "Ön plandaki uygulama: {}\nPencere: {}",
+        front.app, front.window
+    );
     if let Some(url) = &front.url {
         out.push_str(&format!("\nSekme adresi: {url}"));
     }
     if !front.selection.is_empty() {
-        out.push_str(&format!("\nFinder'da seçili:\n{}", front.selection.join("\n")));
+        out.push_str(&format!(
+            "\nFinder'da seçili:\n{}",
+            front.selection.join("\n")
+        ));
     }
     out
 }
@@ -148,7 +176,11 @@ mod tests {
 
     #[test]
     fn a_private_window_is_known_by_its_title() {
-        let window = |title: &str| Front { app: "Safari".into(), window: title.into(), ..Default::default() };
+        let window = |title: &str| Front {
+            app: "Safari".into(),
+            window: title.into(),
+            ..Default::default()
+        };
         assert!(window("Gizli Pencere — Banka").is_private());
         assert!(window("Yeni sekme - Google Chrome (Incognito)").is_private());
         assert!(!window("Faturalar — Turkcell").is_private());
@@ -156,7 +188,12 @@ mod tests {
 
     #[test]
     fn the_report_lists_what_there_is() {
-        let front = Front { app: "Finder".into(), window: "İndirilenler".into(), url: None, selection: vec!["/Users/a/x.pdf".into()] };
+        let front = Front {
+            app: "Finder".into(),
+            window: "İndirilenler".into(),
+            url: None,
+            selection: vec!["/Users/a/x.pdf".into()],
+        };
         assert_eq!(lines(&front), "Ön plandaki uygulama: Finder\nPencere: İndirilenler\nFinder'da seçili:\n/Users/a/x.pdf");
     }
 }

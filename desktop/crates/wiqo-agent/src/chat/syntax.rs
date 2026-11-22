@@ -10,8 +10,16 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn run(program: &str, args: &[&str]) -> Option<(bool, String)> {
-    let output = Command::new(program).args(args).stdin(Stdio::null()).output().ok()?;
-    let text = format!("{}{}", String::from_utf8_lossy(&output.stderr), String::from_utf8_lossy(&output.stdout));
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
     Some((output.status.success(), text))
 }
 
@@ -32,7 +40,11 @@ pub fn error_of(path: &Path) -> Option<String> {
         return None;
     }
     // The tool's own wording, without its own stack of internals: the first lines name the place and the mistake.
-    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).take(7).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(7)
+        .collect();
     Some(lines.join("\n").chars().take(700).collect())
 }
 
@@ -51,9 +63,16 @@ mod tests {
     #[test]
     fn a_script_with_a_declaration_repeated_is_caught_and_a_clean_one_is_not() {
         if Command_exists("node") {
-            let broken = scratch("broken.js", "let matrix = null;\nfunction a() {}\nlet matrix = null;\nfunction b(\n");
+            let broken = scratch(
+                "broken.js",
+                "let matrix = null;\nfunction a() {}\nlet matrix = null;\nfunction b(\n",
+            );
             assert!(error_of(&broken).expect("an error").contains("SyntaxError"));
-            assert!(error_of(&scratch("fine.js", "let matrix = null;\nfunction a() { return matrix; }\n")).is_none());
+            assert!(error_of(&scratch(
+                "fine.js",
+                "let matrix = null;\nfunction a() { return matrix; }\n"
+            ))
+            .is_none());
         }
     }
 
@@ -72,6 +91,9 @@ mod tests {
 
     #[allow(non_snake_case)]
     fn Command_exists(program: &str) -> bool {
-        std::process::Command::new(program).arg("--version").output().is_ok()
+        std::process::Command::new(program)
+            .arg("--version")
+            .output()
+            .is_ok()
     }
 }

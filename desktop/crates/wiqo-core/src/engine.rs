@@ -133,22 +133,33 @@ pub fn progress_of(command_id: Uuid) -> Option<Progress> {
 }
 
 fn live_board() -> &'static Mutex<HashMap<Uuid, (String, String)>> {
-    static BOARD: std::sync::OnceLock<Mutex<HashMap<Uuid, (String, String)>>> = std::sync::OnceLock::new();
+    static BOARD: std::sync::OnceLock<Mutex<HashMap<Uuid, (String, String)>>> =
+        std::sync::OnceLock::new();
     BOARD.get_or_init(Default::default)
 }
 
 /// What a running command has printed so far (stdout, stderr), as its operation last reported it: the agent that runs the command shows the end of it on the
 /// task while it works. Gone when the command ends (`clear_live_output`).
 pub fn set_live_output(command_id: Uuid, stdout: String, stderr: String) {
-    live_board().lock().expect("live output lock").insert(command_id, (stdout, stderr));
+    live_board()
+        .lock()
+        .expect("live output lock")
+        .insert(command_id, (stdout, stderr));
 }
 
 pub fn live_output_of(command_id: Uuid) -> Option<(String, String)> {
-    live_board().lock().expect("live output lock").get(&command_id).cloned()
+    live_board()
+        .lock()
+        .expect("live output lock")
+        .get(&command_id)
+        .cloned()
 }
 
 pub fn clear_live_output(command_id: Uuid) {
-    live_board().lock().expect("live output lock").remove(&command_id);
+    live_board()
+        .lock()
+        .expect("live output lock")
+        .remove(&command_id);
 }
 
 /// The desktop's own state that operations need: where it keeps files, and the tokens for talking to the server (saving an artifact downloads it from there).

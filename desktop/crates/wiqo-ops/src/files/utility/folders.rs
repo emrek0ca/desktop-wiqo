@@ -78,7 +78,10 @@ pub(super) fn move_documents(ctx: &Context, request: &Request, limit: usize) -> 
         vec![destination.clone()]
     };
     if request.preview {
-        let planned: Vec<(PathBuf, PathBuf)> = documents.iter().map(|document| (document.clone(), destination.join(name_of(document)))).collect();
+        let planned: Vec<(PathBuf, PathBuf)> = documents
+            .iter()
+            .map(|document| (document.clone(), destination.join(name_of(document))))
+            .collect();
         return Ok(preview_of(&planned, &made));
     }
     if !destination.exists() {

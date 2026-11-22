@@ -11,23 +11,50 @@ pub fn wake_targets() -> Value {
     let mut targets = Vec::new();
     for (name, data) in &networks {
         let lowered = name.to_lowercase();
-        if ["lo", "utun", "awdl", "llw", "bridge", "vmnet", "vbox", "docker", "veth", "tailscale", "zerotier", "wg", "anpi", "ap1", "gif", "stf"]
-            .iter()
-            .any(|prefix| lowered.starts_with(prefix))
+        if [
+            "lo",
+            "utun",
+            "awdl",
+            "llw",
+            "bridge",
+            "vmnet",
+            "vbox",
+            "docker",
+            "veth",
+            "tailscale",
+            "zerotier",
+            "wg",
+            "anpi",
+            "ap1",
+            "gif",
+            "stf",
+        ]
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix))
             || lowered.contains("virtual")
             || lowered.contains("loopback")
             || lowered.contains("vpn")
         {
             continue;
         }
-        let mac = data.mac_address().to_string().to_lowercase().replace('-', ":");
+        let mac = data
+            .mac_address()
+            .to_string()
+            .to_lowercase()
+            .replace('-', ":");
         if mac == "00:00:00:00:00:00" {
             continue;
         }
-        let Some((address, prefix)) = data.ip_networks().iter().find_map(|network| match network.addr {
-            IpAddr::V4(address) if !address.is_loopback() && !address.is_link_local() => Some((address, network.prefix)),
-            _ => None,
-        }) else {
+        let Some((address, prefix)) =
+            data.ip_networks()
+                .iter()
+                .find_map(|network| match network.addr {
+                    IpAddr::V4(address) if !address.is_loopback() && !address.is_link_local() => {
+                        Some((address, network.prefix))
+                    }
+                    _ => None,
+                })
+        else {
             continue;
         };
         targets.push(json!({ "mac": mac, "address": address.to_string(), "broadcast": broadcast(address, prefix).to_string() }));
@@ -39,7 +66,11 @@ pub fn wake_targets() -> Value {
 }
 
 fn broadcast(address: Ipv4Addr, prefix: u8) -> Ipv4Addr {
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - u32::from(prefix.min(32))) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix.min(32)))
+    };
     Ipv4Addr::from(u32::from(address) | !mask)
 }
 
@@ -49,7 +80,13 @@ mod tests {
 
     #[test]
     fn the_broadcast_address_is_the_network_with_every_host_bit_set() {
-        assert_eq!(broadcast(Ipv4Addr::new(192, 168, 1, 23), 24), Ipv4Addr::new(192, 168, 1, 255));
-        assert_eq!(broadcast(Ipv4Addr::new(10, 0, 5, 7), 16), Ipv4Addr::new(10, 0, 255, 255));
+        assert_eq!(
+            broadcast(Ipv4Addr::new(192, 168, 1, 23), 24),
+            Ipv4Addr::new(192, 168, 1, 255)
+        );
+        assert_eq!(
+            broadcast(Ipv4Addr::new(10, 0, 5, 7), 16),
+            Ipv4Addr::new(10, 0, 255, 255)
+        );
     }
 }

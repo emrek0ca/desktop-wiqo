@@ -11,9 +11,9 @@ mod ocr;
 mod op;
 mod personal;
 mod process;
-mod screen;
 pub mod recorder;
 pub mod remote;
+mod screen;
 pub mod screen_memory;
 mod system;
 pub mod terminal;
@@ -22,16 +22,20 @@ use std::sync::Arc;
 
 use wiqo_core::engine::Engine;
 
+/// A signed-in page read for a watcher (the server compares it).
+pub use browser::read_watched_page;
 /// Masks tokens and keys in text that leaves the computer (terminal output, a diagnostics bundle).
-pub use desktop_control::{note_frontmost, set_cursor_sink, stop_all as stop_desktop_control, CursorEvent};
-/// Takes back a file change by its undo id (terminal sessions call this for the phone's "Geri al").
-pub use files::undo::undo_file;
+pub use desktop_control::{
+    note_frontmost, set_cursor_sink, stop_all as stop_desktop_control, CursorEvent,
+};
 /// What a batch of file changes would do, for the question before the person's yes ("Önce prova").
 pub use files::batch_preview;
 pub use files::installed_browsers;
-/// A signed-in page read for a watcher (the server compares it).
-pub use browser::read_watched_page;
-pub use terminal::{full_access, is_read_only, redact_secrets, set_full_access, windows_powershell};
+/// Takes back a file change by its undo id (terminal sessions call this for the phone's "Geri al").
+pub use files::undo::undo_file;
+pub use terminal::{
+    full_access, is_read_only, redact_secrets, set_full_access, windows_powershell,
+};
 
 /// Every operation this build implements, one module per area. `sessions` are the terminal sessions the `terminal` step runs in.
 fn all_operations(sessions: std::sync::Arc<terminal::Sessions>) -> Vec<Op> {

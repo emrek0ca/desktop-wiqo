@@ -16,11 +16,34 @@ const MAX_DAYS: u64 = 430;
 const TYPES: [&str; 5] = ["pdf", "csv", "xlsx", "xls", "txt"];
 /// Lines that are a statement's own bookkeeping, not a merchant: carried balance, interest and its taxes, totals, refunds.
 const NOT_A_CHARGE: [&str; 14] = [
-    "devir", "bakiye", "faiz", "bsmv", "kkdf", "toplam", "iade", "refund", "asgari", "odeme tutari", "son odeme", "ekstre", "limit", "puan",
+    "devir",
+    "bakiye",
+    "faiz",
+    "bsmv",
+    "kkdf",
+    "toplam",
+    "iade",
+    "refund",
+    "asgari",
+    "odeme tutari",
+    "son odeme",
+    "ekstre",
+    "limit",
+    "puan",
 ];
 
 /// Names of the services that take a payment for someone else.
-const PLATFORMS: [&str; 9] = ["google", "apple", "paypal", "iyzico", "amzn", "amazon", "param", "microsoft", "steam"];
+const PLATFORMS: [&str; 9] = [
+    "google",
+    "apple",
+    "paypal",
+    "iyzico",
+    "amzn",
+    "amazon",
+    "param",
+    "microsoft",
+    "steam",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 struct Charge {
@@ -63,14 +86,20 @@ fn merchant_of(text: &str) -> Option<(String, String)> {
         .split_whitespace()
         .filter(|word| {
             let digits = word.chars().filter(char::is_ascii_digit).count();
-            digits * 2 < word.chars().count().max(1) && !word.contains('*') && word.chars().count() > 1
+            digits * 2 < word.chars().count().max(1)
+                && !word.contains('*')
+                && word.chars().count() > 1
         })
         .take(6)
         .collect::<Vec<_>>()
         .join(" ");
-    let cleaned = cleaned.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let cleaned = cleaned
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
     let folded = fold(&cleaned);
-    if folded.chars().filter(|c| c.is_alphabetic()).count() < 3 || NOT_A_CHARGE.iter().any(|word| folded.contains(word)) {
+    if folded.chars().filter(|c| c.is_alphabetic()).count() < 3
+        || NOT_A_CHARGE.iter().any(|word| folded.contains(word))
+    {
         return None;
     }
     // The key is the merchant's first word: "NETFLIX.COM AMSTERDAM NL" and "NETFLIX.COM 866-579" are one merchant. A payment platform's name
@@ -80,7 +109,11 @@ fn merchant_of(text: &str) -> Option<(String, String)> {
         .filter(|word| word.len() >= 2 && !["www", "com", "tr"].contains(word))
         .collect();
     let first = *words.first()?;
-    let key = if PLATFORMS.contains(&first) { words.iter().take(2).copied().collect::<Vec<_>>().join(" ") } else { first.to_string() };
+    let key = if PLATFORMS.contains(&first) {
+        words.iter().take(2).copied().collect::<Vec<_>>().join(" ")
+    } else {
+        first.to_string()
+    };
     (!key.is_empty()).then(|| (display_name(&cleaned), key))
 }
 
@@ -90,7 +123,10 @@ fn display_name(text: &str) -> String {
         .map(|word| {
             let lower = word.to_lowercase();
             let mut chars = lower.chars();
-            chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or_default()
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -103,24 +139,42 @@ fn charges(text: &str) -> Vec<Charge> {
     let mut found = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        let Some(date_match) = date_pattern.captures(line) else { continue };
+        let Some(date_match) = date_pattern.captures(line) else {
+            continue;
+        };
         let day: u32 = date_match["d"].parse().unwrap_or(0);
         let month: u32 = date_match["m"].parse().unwrap_or(0);
         let mut year: i32 = date_match["y"].parse().unwrap_or(0);
         if year < 100 {
             year += 2000;
         }
-        let Some(date) = NaiveDate::from_ymd_opt(year, month, day) else { continue };
+        let Some(date) = NaiveDate::from_ymd_opt(year, month, day) else {
+            continue;
+        };
         let rest = &line[date_match.get(0).map(|m| m.end()).unwrap_or(0)..];
-        let Some(amount_match) = amount_pattern.captures(rest) else { continue };
-        let Some(whole) = amount_match.get(0) else { continue };
+        let Some(amount_match) = amount_pattern.captures(rest) else {
+            continue;
+        };
+        let Some(whole) = amount_match.get(0) else {
+            continue;
+        };
         let words = rest[..whole.start()].replace([';', '\t', '"'], " ");
-        let Some(amount) = parse_amount(&amount_match["n"]) else { continue };
+        let Some(amount) = parse_amount(&amount_match["n"]) else {
+            continue;
+        };
         if amount <= 0.0 || amount > 1_000_000.0 {
             continue;
         }
-        let Some((merchant, key)) = merchant_of(&words) else { continue };
-        found.push(Charge { date, merchant, key, amount, currency: currency(amount_match.name("c").map(|m| m.as_str())) });
+        let Some((merchant, key)) = merchant_of(&words) else {
+            continue;
+        };
+        found.push(Charge {
+            date,
+            merchant,
+            key,
+            amount,
+            currency: currency(amount_match.name("c").map(|m| m.as_str())),
+        });
     }
     found
 }
@@ -132,23 +186,44 @@ fn invoice_charge(text: &str) -> Option<Charge> {
         return None;
     }
     let (date_pattern, amount_pattern) = patterns();
-    let lines: Vec<&str> = text.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    let issuer = lines.iter().find(|line| line.chars().filter(|c| c.is_alphabetic()).count() >= 4 && !fold(line).contains("fatura"))?;
-    let date_line = lines.iter().find(|line| fold(line).contains("fatura tarihi")).or_else(|| lines.iter().find(|line| date_pattern.is_match(line)))?;
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let issuer = lines.iter().find(|line| {
+        line.chars().filter(|c| c.is_alphabetic()).count() >= 4 && !fold(line).contains("fatura")
+    })?;
+    let date_line = lines
+        .iter()
+        .find(|line| fold(line).contains("fatura tarihi"))
+        .or_else(|| lines.iter().find(|line| date_pattern.is_match(line)))?;
     let date_match = date_pattern.captures(date_line)?;
     let mut year: i32 = date_match["y"].parse().ok()?;
     if year < 100 {
         year += 2000;
     }
-    let date = NaiveDate::from_ymd_opt(year, date_match["m"].parse().ok()?, date_match["d"].parse().ok()?)?;
+    let date = NaiveDate::from_ymd_opt(
+        year,
+        date_match["m"].parse().ok()?,
+        date_match["d"].parse().ok()?,
+    )?;
     let total_line = lines.iter().find(|line| {
         let folded = fold(line);
-        folded.contains("odenecek tutar") || folded.contains("vergiler dahil") || folded.contains("genel toplam")
+        folded.contains("odenecek tutar")
+            || folded.contains("vergiler dahil")
+            || folded.contains("genel toplam")
     })?;
     let amount_match = amount_pattern.captures_iter(total_line).last()?;
     let amount = parse_amount(&amount_match["n"])?;
     let (merchant, key) = merchant_of(issuer)?;
-    Some(Charge { date, merchant, key, amount, currency: currency(amount_match.name("c").map(|m| m.as_str())) })
+    Some(Charge {
+        date,
+        merchant,
+        key,
+        amount,
+        currency: currency(amount_match.name("c").map(|m| m.as_str())),
+    })
 }
 
 #[derive(Debug, PartialEq)]
@@ -168,14 +243,21 @@ fn recurring(mut all: Vec<Charge>) -> Vec<Recurring> {
     all.dedup_by(|a, b| a.key == b.key && a.date == b.date && (a.amount - b.amount).abs() < 0.005);
     let mut by_merchant: BTreeMap<String, Vec<Charge>> = BTreeMap::new();
     for charge in all {
-        by_merchant.entry(charge.key.clone()).or_default().push(charge);
+        by_merchant
+            .entry(charge.key.clone())
+            .or_default()
+            .push(charge);
     }
     let mut found = Vec::new();
     for charges in by_merchant.into_values() {
         if charges.len() < 2 {
             continue;
         }
-        let mut gaps: Vec<i64> = charges.windows(2).map(|pair| (pair[1].date - pair[0].date).num_days()).filter(|gap| *gap > 0).collect();
+        let mut gaps: Vec<i64> = charges
+            .windows(2)
+            .map(|pair| (pair[1].date - pair[0].date).num_days())
+            .filter(|gap| *gap > 0)
+            .collect();
         if gaps.is_empty() {
             continue;
         }
@@ -190,14 +272,38 @@ fn recurring(mut all: Vec<Charge>) -> Vec<Recurring> {
         let mut amounts: Vec<f64> = charges.iter().map(|charge| charge.amount).collect();
         amounts.sort_by(f64::total_cmp);
         let median = amounts[amounts.len() / 2];
-        if charges.iter().filter(|charge| (charge.amount - median).abs() <= median * 0.35).count() * 3 < charges.len() * 2 {
+        if charges
+            .iter()
+            .filter(|charge| (charge.amount - median).abs() <= median * 0.35)
+            .count()
+            * 3
+            < charges.len() * 2
+        {
             continue;
         }
         let last = charges.last().expect("two charges");
-        let previous = charges.iter().rev().nth(1).map(|charge| charge.amount).filter(|amount| (amount - last.amount).abs() >= 0.01);
+        let previous = charges
+            .iter()
+            .rev()
+            .nth(1)
+            .map(|charge| charge.amount)
+            .filter(|amount| (amount - last.amount).abs() >= 0.01);
         // The plainest of the ways the statement wrote it ("Netflix.com", not "Netflix.com Amsterdam Nl").
-        let name = charges.iter().map(|charge| charge.merchant.as_str()).min_by_key(|name| name.chars().count()).unwrap_or(&last.merchant).to_string();
-        found.push(Recurring { name, amount: last.amount, currency: last.currency, period, count: charges.len(), last: last.date, previous });
+        let name = charges
+            .iter()
+            .map(|charge| charge.merchant.as_str())
+            .min_by_key(|name| name.chars().count())
+            .unwrap_or(&last.merchant)
+            .to_string();
+        found.push(Recurring {
+            name,
+            amount: last.amount,
+            currency: last.currency,
+            period,
+            count: charges.len(),
+            last: last.date,
+            previous,
+        });
     }
     found.sort_by(|left, right| monthly(right).total_cmp(&monthly(left)));
     found
@@ -212,11 +318,24 @@ fn monthly(item: &Recurring) -> f64 {
 }
 
 fn folders(request: &Request) -> Result<Vec<PathBuf>> {
-    let asked: Vec<String> = request.paths.clone().unwrap_or_default().into_iter().chain(request.path.clone()).collect();
+    let asked: Vec<String> = request
+        .paths
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .chain(request.path.clone())
+        .collect();
     if asked.is_empty() {
-        return Ok([dirs::download_dir(), dirs::document_dir()].into_iter().flatten().filter(|dir| dir.is_dir()).collect());
+        return Ok([dirs::download_dir(), dirs::document_dir()]
+            .into_iter()
+            .flatten()
+            .filter(|dir| dir.is_dir())
+            .collect());
     }
-    asked.iter().map(|path| existing_folder(&Some(path.clone()))).collect()
+    asked
+        .iter()
+        .map(|path| existing_folder(&Some(path.clone())))
+        .collect()
 }
 
 pub(super) fn find_subscriptions(request: &Request) -> Result<Done> {
@@ -232,7 +351,9 @@ pub(super) fn find_subscriptions(request: &Request) -> Result<Done> {
     let mut all = Vec::new();
     let mut read = 0;
     for file in &files {
-        let Ok(text) = crate::files::documents::extract_text(file) else { continue };
+        let Ok(text) = crate::files::documents::extract_text(file) else {
+            continue;
+        };
         if let Some(charge) = invoice_charge(&text) {
             all.push(charge);
             read += 1;
@@ -247,7 +368,11 @@ pub(super) fn find_subscriptions(request: &Request) -> Result<Done> {
     }
     let items = recurring(all);
     let currency = items.first().map(|item| item.currency).unwrap_or("TRY");
-    let total: f64 = items.iter().filter(|item| item.currency == currency).map(monthly).sum();
+    let total: f64 = items
+        .iter()
+        .filter(|item| item.currency == currency)
+        .map(monthly)
+        .sum();
     let value = json!({
         "items": items.iter().map(|item| json!({
             "name": item.name, "amount": (item.amount * 100.0).round() / 100.0, "currency": item.currency, "period": item.period,
@@ -280,7 +405,11 @@ mod tests {
             15.10.2026 ÖNCEKİ DÖNEM DEVİR 5.000,00 TL\n\
             20.10.2026 SPOTIFY P1 STOCKHOLM 99,00 TL\n";
         let found = charges(statement);
-        assert_eq!(found.len(), 5, "the carried balance is not a charge: {found:?}");
+        assert_eq!(
+            found.len(),
+            5,
+            "the carried balance is not a charge: {found:?}"
+        );
         let items = recurring(found);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "Netflix.com");

@@ -26,9 +26,9 @@ mod ledger;
 mod local;
 mod memory;
 mod page;
-mod syntax;
 mod progress;
 mod repo;
+mod syntax;
 mod vault;
 
 const CLIENT_FEATURES: [&str; 6] = [
@@ -130,17 +130,46 @@ fn with_facts(step: &Value, question: String) -> String {
     let payload = payload_of(step);
     let value = payload.get("value").unwrap_or(&payload);
     let mut facts = Vec::new();
-    for key in ["path", "from", "to", "source", "destination", "target", "recipient", "recipients", "email", "subject", "workingDirectory", "command", "url", "app", "name"] {
+    for key in [
+        "path",
+        "from",
+        "to",
+        "source",
+        "destination",
+        "target",
+        "recipient",
+        "recipients",
+        "email",
+        "subject",
+        "workingDirectory",
+        "command",
+        "url",
+        "app",
+        "name",
+    ] {
         let shown = match &value[key] {
             Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
-            Value::Array(items) if !items.is_empty() => Some(items.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")),
+            Value::Array(items) if !items.is_empty() => Some(
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
             _ => None,
         };
         if let Some(text) = shown.filter(|text| !text.is_empty()) {
-            facts.push(format!("{key}: {}", text.chars().take(200).collect::<String>()));
+            facts.push(format!(
+                "{key}: {}",
+                text.chars().take(200).collect::<String>()
+            ));
         }
     }
-    if facts.is_empty() { question } else { format!("{question}\n\n{}", facts.join("\n")) }
+    if facts.is_empty() {
+        question
+    } else {
+        format!("{question}\n\n{}", facts.join("\n"))
+    }
 }
 
 /// The step's payload as an object, whether the server wrote it as JSON text or as an object.
@@ -160,7 +189,12 @@ fn rest_after_yes(step: &Value, refused: &Value) -> Value {
         .as_str()
         .and_then(|text| serde_json::from_str::<Value>(text).ok())
         .and_then(|data| data["value"]["evidence"].as_array().cloned())
-        .map(|evidence| evidence.iter().take_while(|entry| entry["ok"] == true).count())
+        .map(|evidence| {
+            evidence
+                .iter()
+                .take_while(|entry| entry["ok"] == true)
+                .count()
+        })
         .unwrap_or(0);
     if let Some(value) = payload["value"].as_object_mut() {
         value.insert("cardApproved".into(), json!(true));
@@ -187,7 +221,10 @@ fn fit_desktop(data: &Value) -> (Value, Option<String>) {
         .filter(|image| image.len() >= 32 && image.len() <= 1_200_000);
     for list in ["targets", "addedTargets"] {
         while shown.to_string().len() > DATA_TEXT_MOST {
-            let Some(items) = shown["value"][list].as_array_mut().filter(|items| !items.is_empty()) else {
+            let Some(items) = shown["value"][list]
+                .as_array_mut()
+                .filter(|items| !items.is_empty())
+            else {
                 break;
             };
             let keep = items.len() - (items.len() / 8).max(1);
@@ -204,7 +241,9 @@ fn fit_desktop(data: &Value) -> (Value, Option<String>) {
 /// for its own yes (and an unattended automation refuses it) instead of believing it.
 fn removes_something(step: &Value) -> bool {
     let kind = step["type"].as_str().unwrap_or("").to_lowercase();
-    ["delete", "trash", "remove", "uninstall", "empty"].iter().any(|word| kind.contains(word))
+    ["delete", "trash", "remove", "uninstall", "empty"]
+        .iter()
+        .any(|word| kind.contains(word))
 }
 
 fn asks_to_send(step: &Value) -> bool {
@@ -238,7 +277,10 @@ pub enum Asker {
     /// The person typed it in this window. `mission`: the message came from a Mission in Keşfet (someone else's words); the server reads the whole
     /// task as an outsider's instruction.
     Window { mission: Option<String> },
-    AutoResume { prior_run: String, device_token: String },
+    AutoResume {
+        prior_run: String,
+        device_token: String,
+    },
     /// A paired phone handed its message here (frames.json `remoteMessage`): `request` is the `/copilot/chat` body the phone would have sent itself. It
     /// goes out as it is, written from the phone with the phone's features and language; only what describes the computer is this computer's. Every
     /// event of the answer also goes to `forward`.
@@ -288,7 +330,9 @@ impl Asker {
     /// computer, and the results of PC steps, are never taken from it.
     fn own_fields(&self) -> Value {
         match self {
-            Asker::Window { mission: Some(code) } => json!({ "missionCode": code }),
+            Asker::Window {
+                mission: Some(code),
+            } => json!({ "missionCode": code }),
             Asker::Window { mission: None } => json!({}),
             Asker::AutoResume { .. } => json!({}),
             Asker::Phone { request, .. } => {
@@ -373,12 +417,37 @@ impl Chat {
 
     /// The project-task evals (`wiqo-agent eval`): one task through the real local agent loop, against the gateway the runner names. The account is
     /// held in memory only, approvals are the runner's (`approve`), and every event goes to `emit` (the last one is `done` with the reply).
-    pub async fn eval_task(&self, engine: &Engine, device_id: &str, handoff: &Value, token: &str, approve: &Approve, emit: &(dyn Fn(Value) + Sync)) -> Result<()> {
-        *self.account.lock().expect("account lock") = Some(Account { email: "eval@wiqo.invalid".into(), token: token.to_string() });
+    pub async fn eval_task(
+        &self,
+        engine: &Engine,
+        device_id: &str,
+        handoff: &Value,
+        token: &str,
+        approve: &Approve,
+        emit: &(dyn Fn(Value) + Sync),
+    ) -> Result<()> {
+        *self.account.lock().expect("account lock") = Some(Account {
+            email: "eval@wiqo.invalid".into(),
+            token: token.to_string(),
+        });
         let goal = handoff["goal"].as_str().unwrap_or("").to_string();
         let stop = Stop::default();
         let conversation = Uuid::new_v4().to_string();
-        self.local_agent(engine, device_id, handoff, &conversation, &conversation, &json!([]), &goal, token, approve, &stop, false, &|event: Value| emit(event)).await
+        self.local_agent(
+            engine,
+            device_id,
+            handoff,
+            &conversation,
+            &conversation,
+            &json!([]),
+            &goal,
+            token,
+            approve,
+            &stop,
+            false,
+            &|event: Value| emit(event),
+        )
+        .await
     }
 
     fn token(&self) -> Result<String> {
@@ -891,28 +960,44 @@ impl Chat {
             bail!("Keşfet isteğindeki bilgiler geçersiz.");
         }
         let token = self.token()?;
-        let mut request = self.http.request(contract.method.clone(), format!("{}/{path}", self.server)).timeout(contract.timeout()).bearer_auth(&token);
+        let mut request = self
+            .http
+            .request(contract.method.clone(), format!("{}/{path}", self.server))
+            .timeout(contract.timeout())
+            .bearer_auth(&token);
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = request.send().await.map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
+        let response = request
+            .send()
+            .await
+            .map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
         let status = response.status();
         if status.as_u16() == 401 {
             let _ = self.store(None, Some(&token));
             bail!("Oturumun sona erdi; yeniden giriş yap.");
         }
-        let data = response.text().await.map_err(|_| anyhow!("Keşfet yanıtı okunamadı."))?;
+        let data = response
+            .text()
+            .await
+            .map_err(|_| anyhow!("Keşfet yanıtı okunamadı."))?;
         if status.is_success() {
             if !contract.accepts_response(&data) {
                 bail!("Keşfet sunucusundan uyumsuz yanıt alındı.");
             }
             return serde_json::from_str(&data).map_err(|_| anyhow!("Keşfet yanıtı okunamadı."));
         }
-        let error = if matches!(wiqo_contract::schema_generated::decodes("DiscoverError", &data), Ok(true)) {
-            serde_json::from_str::<Value>(&data).ok().and_then(|value| value.get("error").cloned())
+        let error = if matches!(
+            wiqo_contract::schema_generated::decodes("DiscoverError", &data),
+            Ok(true)
+        ) {
+            serde_json::from_str::<Value>(&data)
+                .ok()
+                .and_then(|value| value.get("error").cloned())
         } else {
             None
-        }.unwrap_or_else(|| json!({ "message": "İstek reddedildi." }));
+        }
+        .unwrap_or_else(|| json!({ "message": "İstek reddedildi." }));
         Ok(json!({ "status": status.as_u16(), "error": error }))
     }
 
@@ -924,14 +1009,21 @@ impl Chat {
     /// The person's recipes ("Tariflerim", rova-backend agent/skills.ts): their own, recorded and imported, most used first.
     pub async fn skills(&self) -> Result<Value> {
         let token = self.token()?;
-        self.call(reqwest::Method::GET, "skills", None, Some(&token)).await
+        self.call(reqwest::Method::GET, "skills", None, Some(&token))
+            .await
     }
 
     /// A recording made on this computer becomes a recipe: the server's model writes the request that repeats it. `events` are what the person
     /// read and approved in the panel; `note` is their own sentence about the task, if they wrote one.
     pub async fn skill_from_recording(&self, events: Value, note: Option<&str>) -> Result<Value> {
         let token = self.token()?;
-        self.call(reqwest::Method::POST, "skills/from-recording", Some(json!({ "events": events, "note": note })), Some(&token)).await
+        self.call(
+            reqwest::Method::POST,
+            "skills/from-recording",
+            Some(json!({ "events": events, "note": note })),
+            Some(&token),
+        )
+        .await
     }
 
     /// `action`: "used" (the recipe went into the composer) or "delete". Sharing goes through Keşfet (`missions`).
@@ -949,10 +1041,22 @@ impl Chat {
     pub async fn skill_packs(&self, import: Option<&str>) -> Result<Value> {
         let token = self.token()?;
         match import {
-            None => self.call(reqwest::Method::GET, "skills/packs", None, Some(&token)).await,
+            None => {
+                self.call(reqwest::Method::GET, "skills/packs", None, Some(&token))
+                    .await
+            }
             Some(id) => {
-                let id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
-                self.call(reqwest::Method::POST, &format!("skills/packs/{id}/import"), Some(json!({})), Some(&token)).await
+                let id: String = id
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                    .collect();
+                self.call(
+                    reqwest::Method::POST,
+                    &format!("skills/packs/{id}/import"),
+                    Some(json!({})),
+                    Some(&token),
+                )
+                .await
             }
         }
     }
@@ -1242,7 +1346,10 @@ impl Chat {
             )
             .await;
         // Drop every alias, including a canonical task id received in a resume handoff.
-        self.stops.lock().expect("stops lock").retain(|_, current| !Arc::ptr_eq(current, &stop));
+        self.stops
+            .lock()
+            .expect("stops lock")
+            .retain(|_, current| !Arc::ptr_eq(current, &stop));
         outcome
     }
 
@@ -1297,11 +1404,17 @@ impl Chat {
         if let Asker::AutoResume { prior_run, .. } = asker {
             // The legacy chat body is intentionally absent. An older server must refuse this.
             body = serde_json::to_value(wiqo_contract::schema_generated::LocalRunResumeRequest {
-                resume_local_only: true, resume_local_run_id: prior_run.clone(), request_id,
-                conversation_id: conversation.to_string(), task_id: task.clone(), device_id: device_id.to_string(),
+                resume_local_only: true,
+                resume_local_run_id: prior_run.clone(),
+                request_id,
+                conversation_id: conversation.to_string(),
+                task_id: task.clone(),
+                device_id: device_id.to_string(),
             })?;
         }
-        let mut answer = self.stream_with_device(token, &body, auto_resume, &emit).await?;
+        let mut answer = self
+            .stream_with_device(token, &body, auto_resume, &emit)
+            .await?;
         let started = std::time::Instant::now();
         let mut stalls = 0usize;
         while started.elapsed() < Duration::from_secs(TASK_MINUTES * 60) {
@@ -1311,22 +1424,44 @@ impl Chat {
             // PC work handed to this computer's own agent (at the first answer, or in a later round, when the model reached for the terminal): the loop
             // runs here from now on.
             if answer["localAgent"].is_object() {
-                let task_id = answer["localAgent"]["taskId"].as_str()
-                    .or_else(|| answer["taskId"].as_str()).unwrap_or(&task);
-                if auto_resume.is_some() && (answer["localAgent"]["resumes"] != true || task_id != task) {
+                let task_id = answer["localAgent"]["taskId"]
+                    .as_str()
+                    .or_else(|| answer["taskId"].as_str())
+                    .unwrap_or(&task);
+                if auto_resume.is_some()
+                    && (answer["localAgent"]["resumes"] != true || task_id != task)
+                {
                     bail!("Otomatik devam için aynı yerel görev doğrulanamadı.");
                 }
                 if task_id != task {
                     let mut stops = self.stops.lock().expect("stops lock");
                     let canonical = task_id.to_ascii_lowercase();
-                    if stops.get(&canonical).is_some_and(|other| !Arc::ptr_eq(other, stop)) {
+                    if stops
+                        .get(&canonical)
+                        .is_some_and(|other| !Arc::ptr_eq(other, stop))
+                    {
                         bail!("Bu görev zaten bu bilgisayarda yürütülüyor.");
                     }
                     stops.insert(canonical, stop.clone());
                     drop(stops);
                     emit(json!({ "type": "task", "taskId": task_id }));
                 }
-                return self.local_agent(engine, device_id, &answer["localAgent"], conversation, task_id, &history, text, token, approve, stop, auto_resume.is_some(), &emit).await;
+                return self
+                    .local_agent(
+                        engine,
+                        device_id,
+                        &answer["localAgent"],
+                        conversation,
+                        task_id,
+                        &history,
+                        text,
+                        token,
+                        approve,
+                        stop,
+                        auto_resume.is_some(),
+                        &emit,
+                    )
+                    .await;
             }
             if auto_resume.is_some() {
                 return Ok(());
@@ -1364,9 +1499,17 @@ impl Chat {
                 let summary = step["summary"].as_str().unwrap_or("").to_string();
                 let kind = step["type"].as_str().unwrap_or("").to_string();
                 // "Önce prova": a batch says what it would do before the yes is asked, so the question lists the files and where each goes.
-                let question = if needs_yes(step) { with_facts(step, with_preview(engine, step, &summary)) } else { summary.clone() };
+                let question = if needs_yes(step) {
+                    with_facts(step, with_preview(engine, step, &summary))
+                } else {
+                    summary.clone()
+                };
                 let asked = needs_yes(step);
-                let answer = if asked { approve(kind.clone(), question).await } else { Decision::Yes };
+                let answer = if asked {
+                    approve(kind.clone(), question).await
+                } else {
+                    Decision::Yes
+                };
                 let mut result = match answer {
                     Decision::Yes => run_with_progress(engine, step, &emit, asked, stop).await,
                     Decision::No => refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı."),
@@ -1389,7 +1532,12 @@ impl Chat {
                         refused_step(step, "Onay verilmedi; bu adım çalıştırılmadı.")
                     };
                 }
-                emit(progress::planned(step, result["status"].as_str().unwrap_or("failed"), result["message"].as_str(), None));
+                emit(progress::planned(
+                    step,
+                    result["status"].as_str().unwrap_or("failed"),
+                    result["message"].as_str(),
+                    None,
+                ));
                 uncertain = result["sideEffectUncertain"] == true;
                 let ok = result["status"] == "completed";
                 results.push(result);
@@ -1421,7 +1569,9 @@ impl Chat {
             }
             stalls = if progressed { 0 } else { stalls + 1 };
             if stalls >= STALL_ROUNDS {
-                emit(json!({ "type": "status", "text": "Üç turdur hiçbir adım tamamlanmadı; görevi burada durdurdum. Neyi farklı yapmamı istediğini yazarsan devam ederim." }));
+                emit(
+                    json!({ "type": "status", "text": "Üç turdur hiçbir adım tamamlanmadı; görevi burada durdurdum. Neyi farklı yapmamı istediğini yazarsan devam ederim." }),
+                );
                 return Ok(());
             }
         }
@@ -1444,7 +1594,8 @@ impl Chat {
                 continue;
             };
             let token = account.token;
-            let _ = tokio::time::timeout(Duration::from_secs(8), self.flush_local_finishes(&token)).await;
+            let _ = tokio::time::timeout(Duration::from_secs(8), self.flush_local_finishes(&token))
+                .await;
             let request = self
                 .http
                 .get(format!("{}/runs/events", self.server))
@@ -1479,8 +1630,16 @@ impl Chat {
                         while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
                             let line: Vec<u8> = buffer.drain(..=end).collect();
                             if let Some(event) = parse_event_line(&String::from_utf8_lossy(&line)) {
-                                let decoded = serde_json::from_value::<wiqo_contract::schema_generated::RunSyncEvent>(event.clone());
-                                if !matches!(decoded, Ok(wiqo_contract::schema_generated::RunSyncEvent::Snapshot(_) | wiqo_contract::schema_generated::RunSyncEvent::Copilot(_))) {
+                                let decoded = serde_json::from_value::<
+                                    wiqo_contract::schema_generated::RunSyncEvent,
+                                >(event.clone());
+                                if !matches!(
+                                    decoded,
+                                    Ok(wiqo_contract::schema_generated::RunSyncEvent::Snapshot(_)
+                                        | wiqo_contract::schema_generated::RunSyncEvent::Copilot(
+                                            _
+                                        ))
+                                ) {
                                     continue;
                                 }
                                 delay = 1;
@@ -1503,7 +1662,13 @@ impl Chat {
         self.stream_with_device(token, body, None, emit).await
     }
 
-    async fn stream_with_device(&self, token: &str, body: &Value, device_token: Option<&str>, emit: &impl Fn(Value)) -> Result<Value> {
+    async fn stream_with_device(
+        &self,
+        token: &str,
+        body: &Value,
+        device_token: Option<&str>,
+        emit: &impl Fn(Value),
+    ) -> Result<Value> {
         let request_id = body["requestId"].as_str().unwrap_or("").to_string();
         let mut request = self
             .http
@@ -1515,7 +1680,9 @@ impl Chat {
         if let Some(device_token) = device_token {
             request = request.header("X-Wiqo-Device-Token", device_token);
         }
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|_| anyhow::Error::new(Unreachable))?;
         if response.status().as_u16() == 401 {
             let _ = self.store(None, Some(token));
@@ -1567,7 +1734,9 @@ impl Chat {
         loop {
             match self.stream(token, body, emit).await {
                 Err(error) if error.is::<Unreachable>() && started.elapsed() < RESULTS_KEPT_FOR => {
-                    emit(json!({ "type": "status", "text": "Sunucuya ulaşılamıyor; PC adımlarının sonucu bağlantı gelince iletilecek…" }));
+                    emit(
+                        json!({ "type": "status", "text": "Sunucuya ulaşılamıyor; PC adımlarının sonucu bağlantı gelince iletilecek…" }),
+                    );
                     tokio::time::sleep(pause).await;
                     pause = (pause * 2).min(Duration::from_secs(30));
                 }
@@ -1755,7 +1924,10 @@ pub(crate) fn with_preview(engine: &Engine, step: &Value, summary: &str) -> Stri
         Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
         other => other.clone(),
     };
-    let context = wiqo_core::engine::Context { command_id: Uuid::new_v4(), services: engine.services().clone() };
+    let context = wiqo_core::engine::Context {
+        command_id: Uuid::new_v4(),
+        services: engine.services().clone(),
+    };
     let Some(preview) = wiqo_ops::batch_preview(&context, &payload) else {
         return summary.to_string();
     };
@@ -1768,8 +1940,18 @@ pub(crate) fn with_preview(engine: &Engine, step: &Value, summary: &str) -> Stri
         .iter()
         .take(SHOWN)
         .map(|item| {
-            let (from, to) = (item["from"].as_str().unwrap_or(""), item["to"].as_str().unwrap_or(""));
-            let (from_folder, to_folder) = (from.rsplit_once(['/', '\\']).map(|(dir, _)| dir).unwrap_or(""), to.rsplit_once(['/', '\\']).map(|(dir, _)| dir).unwrap_or(""));
+            let (from, to) = (
+                item["from"].as_str().unwrap_or(""),
+                item["to"].as_str().unwrap_or(""),
+            );
+            let (from_folder, to_folder) = (
+                from.rsplit_once(['/', '\\'])
+                    .map(|(dir, _)| dir)
+                    .unwrap_or(""),
+                to.rsplit_once(['/', '\\'])
+                    .map(|(dir, _)| dir)
+                    .unwrap_or(""),
+            );
             if from_folder == to_folder {
                 format!("• {} → {}", name(from), name(to))
             } else {
@@ -1778,7 +1960,10 @@ pub(crate) fn with_preview(engine: &Engine, step: &Value, summary: &str) -> Stri
         })
         .collect();
     let more = moves.len().saturating_sub(SHOWN);
-    let folders = preview["newFolders"].as_array().map(|list| list.len()).unwrap_or(0);
+    let folders = preview["newFolders"]
+        .as_array()
+        .map(|list| list.len())
+        .unwrap_or(0);
     format!(
         "{summary}\n\nÖnce prova: {} dosya{}\n{}{}\n\nOnaylarsan tek seferde yapılır ve 7 gün içinde tek dokunuşla geri alınabilir.",
         moves.len(),
@@ -1805,7 +1990,13 @@ fn stopped_step(step: &Value) -> Value {
     json!({ "stepId": step["id"], "type": step["type"], "status": "denied", "message": "Kullanıcı görevi durdurdu; bu adım yarıda bırakıldı.", "errorCode": "PERMISSION_DENIED", "sideEffectUncertain": true })
 }
 
-async fn run_with_progress(engine: &Engine, step: &Value, emit: &impl Fn(Value), local_yes: bool, stop: &Stop) -> Value {
+async fn run_with_progress(
+    engine: &Engine,
+    step: &Value,
+    emit: &impl Fn(Value),
+    local_yes: bool,
+    stop: &Stop,
+) -> Value {
     let id = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok());
     let summary = step["summary"].as_str().unwrap_or("").to_string();
     let run = run_step_as(engine, step, false, local_yes);
@@ -1839,21 +2030,39 @@ pub(crate) async fn run_step(engine: &Engine, step: &Value) -> Value {
 
 /// Runs a step the server planned. `card_approved` is set only by this computer's own re-run after the person's yes to an irreversible press,
 /// `send_approved` only after this computer's yes to a send from a signed-in account.
-pub(crate) async fn run_step_as(engine: &Engine, step: &Value, card_approved: bool, send_approved: bool) -> Value {
-    run_step_whole(engine, step, card_approved, send_approved).await.0
+pub(crate) async fn run_step_as(
+    engine: &Engine,
+    step: &Value,
+    card_approved: bool,
+    send_approved: bool,
+) -> Value {
+    run_step_whole(engine, step, card_approved, send_approved)
+        .await
+        .0
 }
 
 /// `run_step_as`, with the step's data as the operation gave it. What goes to the server is fitted to a size (`dataText`); this computer's own agent
 /// (chat/local.rs) reads the whole thing and keeps the end of a long output, where a build says what went wrong.
-pub(crate) async fn run_step_whole(engine: &Engine, step: &Value, card_approved: bool, send_approved: bool) -> (Value, Option<Value>) {
+pub(crate) async fn run_step_whole(
+    engine: &Engine,
+    step: &Value,
+    card_approved: bool,
+    send_approved: bool,
+) -> (Value, Option<Value>) {
     let kind = step["type"].as_str().unwrap_or("unknown").to_string();
     let refused = |message: &str, code: &str| json!({ "stepId": step["id"], "type": kind, "status": "denied", "message": message, "errorCode": code });
     let Some(id) = step["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) else {
-        return (refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP"), None);
+        return (
+            refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP"),
+            None,
+        );
     };
     let payload = payload_of(step);
     if payload.is_null() {
-        return (refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP"), None);
+        return (
+            refused("PC adımı okunamadı; işlem yapılmadı.", "INVALID_STEP"),
+            None,
+        );
     }
     let payload = without_server_authority(payload, card_approved, send_approved);
     let summary = step["summary"].as_str().unwrap_or("").to_string();
@@ -1981,7 +2190,9 @@ mod tests {
     }
 
     fn chat_at(server: &str) -> Chat {
-        let dir = DataDir::new(std::env::temp_dir().join(format!("wiqo-chat-test-{}", Uuid::new_v4()))).unwrap();
+        let dir =
+            DataDir::new(std::env::temp_dir().join(format!("wiqo-chat-test-{}", Uuid::new_v4())))
+                .unwrap();
         Chat::new(server, Arc::new(Vault::new(false)), &dir)
     }
 
@@ -1996,12 +2207,19 @@ mod tests {
         assert!(data.to_string().len() > DATA_TEXT_MOST);
         let (fitted, picture) = fit_desktop(&data);
         assert!(fitted.to_string().len() <= DATA_TEXT_MOST);
-        assert_eq!(picture.as_deref(), Some("A".repeat(64).as_str()), "the picture travels beside the data");
+        assert_eq!(
+            picture.as_deref(),
+            Some("A".repeat(64).as_str()),
+            "the picture travels beside the data"
+        );
         assert!(fitted["value"]["picture"].is_null());
         let kept = fitted["value"]["targets"].as_array().unwrap().len();
         assert!(kept > 20 && kept < 120);
         assert_eq!(fitted["value"]["moreTargets"], 3 + 120 - kept as u64);
-        assert_eq!(fitted["value"]["targets"][0]["ref"], "d-00000000", "the first controls, the ones a person acts with, stay");
+        assert_eq!(
+            fitted["value"]["targets"][0]["ref"], "d-00000000",
+            "the first controls, the ones a person acts with, stay"
+        );
     }
 
     #[test]
@@ -2036,8 +2254,14 @@ mod tests {
         assert!(phone.is_asked());
         assert!(!background.is_asked());
         assert!(!chat.stop_turn("a turn that is not running"));
-        assert!(tokio::time::timeout(Duration::from_secs(1), phone.asked()).await.is_ok());
-        assert!(tokio::time::timeout(Duration::from_millis(50), background.asked()).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_secs(1), phone.asked())
+            .await
+            .is_ok());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), background.asked())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -2049,19 +2273,26 @@ mod tests {
         };
         tokio::time::sleep(Duration::from_millis(20)).await;
         stop.ask();
-        assert!(tokio::time::timeout(Duration::from_secs(1), waiting).await.is_ok());
+        assert!(tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
     async fn the_results_of_steps_that_ran_reach_a_server_that_was_away() {
         use std::io::{Read, Write};
         // Nobody listens at first: the address is taken and given back, and the server comes up a moment later.
-        let address = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let address = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
         let server = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(400));
             let listener = std::net::TcpListener::bind(address).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = [0u8; 4096];
             let read = stream.read(&mut request).unwrap();
             let body = format!("data: {}\n\n", json!({ "type": "done", "reply": "tamam" }));
@@ -2071,12 +2302,25 @@ mod tests {
         let chat = chat_at(&format!("http://{address}"));
         let said = Mutex::new(Vec::new());
         let answer = chat
-            .stream_kept("test-only-token", &json!({ "requestId": "the-same-request", "deviceResults": [] }), &|event| said.lock().unwrap().push(event))
+            .stream_kept(
+                "test-only-token",
+                &json!({ "requestId": "the-same-request", "deviceResults": [] }),
+                &|event| said.lock().unwrap().push(event),
+            )
             .await
             .unwrap();
         assert_eq!(answer["reply"], "tamam");
-        assert!(said.lock().unwrap().iter().any(|event| event["type"] == "status"), "the person is told the results wait for the connection");
-        assert!(server.join().unwrap().contains("the-same-request"), "the same request goes again, so the server takes it once");
+        assert!(
+            said.lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["type"] == "status"),
+            "the person is told the results wait for the connection"
+        );
+        assert!(
+            server.join().unwrap().contains("the-same-request"),
+            "the same request goes again, so the server takes it once"
+        );
     }
 
     #[tokio::test]
@@ -2086,14 +2330,19 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = [0u8; 4096];
             let _ = stream.read(&mut request).unwrap();
             let body = json!({ "error": { "message": "Günlük sınır doldu." } }).to_string();
             write!(stream, "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
         });
         let chat = chat_at(&format!("http://{address}"));
-        let error = chat.stream_kept("test-only-token", &json!({ "requestId": "r" }), &|_| {}).await.unwrap_err();
+        let error = chat
+            .stream_kept("test-only-token", &json!({ "requestId": "r" }), &|_| {})
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "Günlük sınır doldu.");
         server.join().unwrap();
     }
@@ -2259,7 +2508,13 @@ mod tests {
         assert_eq!(body["locale"], "de");
         assert_eq!(
             body["clientFeatures"],
-            json!(["receipt-card-v1", "voice-reply-v1", "relay-execution-v1", "local-agent-v1", "local-agent-v2"]),
+            json!([
+                "receipt-card-v1",
+                "voice-reply-v1",
+                "relay-execution-v1",
+                "local-agent-v1",
+                "local-agent-v2"
+            ]),
             "the phone's features, run here"
         );
         assert_eq!(body["agentId"], 7, "the phone's own fields go as they are");
