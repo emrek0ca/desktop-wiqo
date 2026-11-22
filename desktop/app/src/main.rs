@@ -20,6 +20,8 @@ const HIDDEN_ARG: &str = "--hidden";
 
 struct App {
     desktop: Arc<Desktop>,
+    /// The version of a newer release the updater found, waiting for the person's click on the small update button.
+    update: Mutex<Option<String>>,
     /// The one pairing code that is waiting for a phone, and the task that waits. Asking for a code again returns this one while it is valid:
     /// two live codes would mean one of them is never watched, and a phone that scans it waits for nothing.
     pairing: Mutex<Option<(PairingOffer, tokio::task::JoinHandle<()>)>>,
@@ -120,6 +122,27 @@ async fn request_permission(
 #[tauri::command]
 fn restart_app(handle: AppHandle) {
     handle.restart();
+}
+
+/// The version waiting to be installed, for a window that opened after the updater found it.
+#[tauri::command]
+fn pending_update(app: State<'_, App>) -> Option<String> {
+    app.update.lock().ok().and_then(|version| version.clone())
+}
+
+/// The small update button: downloads the newer release (the updater checks its signature against the key in tauri.conf.json), installs it and restarts.
+#[tauri::command]
+async fn install_update(handle: AppHandle) -> Reply<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = handle.updater().map_err(text)?;
+    let Some(update) = updater.check().await.map_err(text)? else {
+        return Ok(());
+    };
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(text)?;
+    handle.restart()
 }
 
 /// Starts with the computer (hidden, in the tray), so the phone never finds the desktop offline after a restart.
@@ -1098,8 +1121,8 @@ fn tray(handle: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Looks for a new version at start and every six hours, downloads and verifies it (the updater checks its signature against the key in
-/// tauri.conf.json) and installs it; the window offers the restart, so a running task is never cut off.
+/// Looks for a new version at start and every six hours. It only looks: a newer release is announced to the window (`update-available`), which shows a small
+/// button; the person decides when to install, so a running task is never cut off (on Windows the installer closes the app).
 fn keep_updated(handle: AppHandle) {
     use tauri_plugin_updater::UpdaterExt;
     tauri::async_runtime::spawn(async move {
@@ -1107,15 +1130,12 @@ fn keep_updated(handle: AppHandle) {
             match handle.updater() {
                 Ok(updater) => match updater.check().await {
                     Ok(Some(update)) => {
-                        let version = update.version.clone();
-                        match update.download_and_install(|_, _| {}, || {}).await {
-                            Ok(()) => {
-                                tracing::info!("update {version} installed; waiting for a restart");
-                                let _ = handle.emit("update-ready", version);
-                                return;
-                            }
-                            Err(error) => tracing::warn!("update {version}: {error}"),
+                        tracing::info!("update {} is available", update.version);
+                        if let Ok(mut waiting) = handle.state::<App>().update.lock() {
+                            *waiting = Some(update.version.clone());
                         }
+                        let _ = handle.emit("update-available", update.version);
+                        return;
                     }
                     Ok(None) => {}
                     Err(error) => tracing::info!("update check: {error}"),
@@ -1178,6 +1198,7 @@ fn main() {
         ))
         .manage(App {
             desktop: desktop.clone(),
+            update: Mutex::new(None),
             pairing: Mutex::new(None),
             google_cancel: Arc::new(tokio::sync::Notify::new()),
             ear: ear::Ear::new(desktop.voice_dir()),
@@ -1265,7 +1286,9 @@ fn main() {
             unseen_crashes,
             permissions,
             request_permission,
-            restart_app
+            restart_app,
+            pending_update,
+            install_update
         ])
         .setup(move |app| {
             {

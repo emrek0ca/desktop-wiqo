@@ -817,11 +817,27 @@ listen("wiqo", async (message) => {
   await refresh();
 });
 
-listen("update-ready", (message) => {
-  $("update-text").textContent = `Wiqo ${message.payload} hazır; yeniden başlatınca geçer.`;
-  $("update-banner").hidden = false;
-});
-$("update-restart").onclick = () => invoke("restart_app");
+// The small update button in the top bar: shown when a newer release is found; one click downloads, installs and restarts.
+function showUpdate(version) {
+  if (!version) return;
+  $("update-label").textContent = `Güncelle · ${version}`;
+  $("update-mini").hidden = false;
+}
+listen("update-available", (message) => showUpdate(message.payload));
+invoke("pending_update").then(showUpdate).catch(() => {});
+$("update-mini").onclick = async () => {
+  const button = $("update-mini");
+  const label = $("update-label");
+  const before = label.textContent;
+  button.disabled = true;
+  label.textContent = "Yükleniyor…";
+  try {
+    await invoke("install_update");
+  } catch {
+    label.textContent = "Güncellenemedi, tekrar dene";
+    setTimeout(() => { label.textContent = before; button.disabled = false; }, 4000);
+  }
+};
 
 window.WiqoReady = loadPermissions().then(refresh).then(() => {
   showSection("chat");
