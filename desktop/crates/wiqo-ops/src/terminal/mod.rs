@@ -26,7 +26,7 @@ use wiqo_core::terminal::{Grant, Session, Terminal};
 use wiqo_core::wire::{timestamp, CommandResult, CommandStatus, WireError};
 
 pub use edit::undo_recorded;
-pub use policy::{full_access, is_read_only, redact_secrets, set_full_access};
+pub use policy::{full_access, is_forbidden, is_read_only, redact_secrets, set_full_access};
 pub use shell::windows_powershell;
 use policy::{READ_WITHOUT_GRANT_ID, SCRATCH_FOLDER};
 use shell::{Control, Input, WriteScope};
