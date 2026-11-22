@@ -1,0 +1,1135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wiqo wire schema",
+  "$defs": {
+    "JsonObject": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {},
+      "description": "An object described by its own contract (a card, a planned PC command)."
+    },
+    "StepStatus": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "awaiting_confirmation",
+        "dispatching",
+        "running",
+        "succeeded",
+        "failed",
+        "denied",
+        "blocked"
+      ]
+    },
+    "StepKind": {
+      "type": "string",
+      "enum": [
+        "device",
+        "backend",
+        "service"
+      ]
+    },
+    "FileChangeKind": {
+      "type": "string",
+      "enum": [
+        "created",
+        "modified",
+        "deleted"
+      ]
+    },
+    "FileChange": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/FileChangeKind"
+        },
+        "added": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "path",
+        "change"
+      ],
+      "additionalProperties": false,
+      "description": "A file a step changed, with the lines it added and removed."
+    },
+    "AgentStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "kind": {
+          "$ref": "#/$defs/StepKind"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "requiresConfirmation": {
+          "type": "boolean"
+        },
+        "requiresUserPresence": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "confirmationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "errorCode": {
+          "type": "string"
+        },
+        "sideEffectFree": {
+          "type": "boolean"
+        },
+        "outcomeUncertain": {
+          "type": "boolean"
+        },
+        "localId": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "workdir": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "output": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FileChange"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "summary",
+        "requiresConfirmation",
+        "requiresUserPresence",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "ActivityPhase": {
+      "type": "string",
+      "enum": [
+        "understand",
+        "plan",
+        "tool",
+        "device",
+        "verify",
+        "compose",
+        "recover",
+        "resume"
+      ]
+    },
+    "Persona": {
+      "type": "string",
+      "enum": [
+        "general",
+        "research",
+        "developer",
+        "execution"
+      ]
+    },
+    "ActivityHint": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "image"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "refine",
+            "draw",
+            "check"
+          ]
+        },
+        "aspect": {
+          "type": "string"
+        },
+        "palette": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "stage"
+      ],
+      "additionalProperties": false
+    },
+    "ActivityUpdate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ActivityPhase"
+        },
+        "label": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "persona": {
+          "$ref": "#/$defs/Persona"
+        },
+        "hint": {
+          "$ref": "#/$defs/ActivityHint"
+        }
+      },
+      "required": [
+        "id",
+        "phase",
+        "label",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "DeltaEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "delta"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ResetEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reset"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ThinkingEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "thinking"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "StatusEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "status"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ActivityEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "activity"
+        },
+        "activity": {
+          "$ref": "#/$defs/ActivityUpdate"
+        }
+      },
+      "required": [
+        "type",
+        "activity"
+      ],
+      "additionalProperties": false
+    },
+    "StepUpdateEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "step_update"
+        },
+        "step": {
+          "$ref": "#/$defs/AgentStep"
+        }
+      },
+      "required": [
+        "type",
+        "step"
+      ],
+      "additionalProperties": false
+    },
+    "ToolOutputEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tool_output"
+        },
+        "stepId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "stream": {
+          "type": "string",
+          "enum": [
+            "stdout",
+            "stderr"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "stepId",
+        "stream",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "WidgetUpdateEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "widget_update"
+        },
+        "widget": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "type",
+        "widget"
+      ],
+      "additionalProperties": false
+    },
+    "ConfirmationNeededEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "confirmation_needed"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "backendConfirmations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "steps",
+        "backendConfirmations"
+      ],
+      "additionalProperties": false
+    },
+    "UsageEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "usage"
+        },
+        "messages": {
+          "type": "object",
+          "properties": {
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "used",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "messages"
+      ],
+      "additionalProperties": false
+    },
+    "ErrorEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "error"
+        },
+        "message": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "LocationRequiredEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "location_required"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "requestId",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "PcApprovalSettledEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "pc_approval_settled"
+        },
+        "id": {
+          "type": "string"
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "timedOut": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "approved"
+      ],
+      "additionalProperties": false
+    },
+    "DoneEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "done"
+        },
+        "reply": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "executionState": {
+          "type": "string"
+        },
+        "executionTarget": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "widgets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "backendConfirmations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "replyIsProgress": {
+          "type": "boolean"
+        },
+        "localRun": {
+          "type": "string"
+        },
+        "privateKept": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "type",
+        "reply"
+      ],
+      "additionalProperties": {}
+    },
+    "StreamEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/ResetEvent"
+        },
+        {
+          "$ref": "#/$defs/ThinkingEvent"
+        },
+        {
+          "$ref": "#/$defs/StatusEvent"
+        },
+        {
+          "$ref": "#/$defs/ActivityEvent"
+        },
+        {
+          "$ref": "#/$defs/StepUpdateEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolOutputEvent"
+        },
+        {
+          "$ref": "#/$defs/WidgetUpdateEvent"
+        },
+        {
+          "$ref": "#/$defs/ConfirmationNeededEvent"
+        },
+        {
+          "$ref": "#/$defs/UsageEvent"
+        },
+        {
+          "$ref": "#/$defs/ErrorEvent"
+        },
+        {
+          "$ref": "#/$defs/LocationRequiredEvent"
+        },
+        {
+          "$ref": "#/$defs/PcApprovalSettledEvent"
+        },
+        {
+          "$ref": "#/$defs/DoneEvent"
+        }
+      ]
+    },
+    "RunKind": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "task",
+        "automation",
+        "device",
+        "project",
+        "act"
+      ]
+    },
+    "RunState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "waiting_user",
+        "waiting_device",
+        "paused",
+        "scheduled",
+        "watching",
+        "done",
+        "failed",
+        "cancelled",
+        "unknown"
+      ]
+    },
+    "RunSurface": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "background",
+        "schedule",
+        "device"
+      ]
+    },
+    "RunStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "done",
+            "failed",
+            "skipped"
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/Persona"
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "cloud",
+            "pc",
+            "phone"
+          ]
+        },
+        "brief": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "builds": {
+          "type": "string",
+          "enum": [
+            "web",
+            "desktop",
+            "mobile"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string",
+                "enum": [
+                  "build_brief",
+                  "site",
+                  "preview",
+                  "act_project",
+                  "file"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "filename",
+              "mimeType",
+              "purpose"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "RunApproval": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "backend"
+        },
+        "title": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "isDestructive": {
+          "type": "boolean"
+        },
+        "requiresUserPresence": {
+          "type": "boolean"
+        },
+        "expiresAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "summary",
+        "details",
+        "isDestructive",
+        "requiresUserPresence",
+        "expiresAt"
+      ],
+      "additionalProperties": false,
+      "description": "What is being asked of the person, for a run that waits for a yes or no."
+    },
+    "Run": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RunKind"
+        },
+        "state": {
+          "$ref": "#/$defs/RunState"
+        },
+        "role": {
+          "$ref": "#/$defs/Persona"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "surface": {
+          "$ref": "#/$defs/RunSurface"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "partial"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "stateVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "error": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunStep"
+          }
+        },
+        "progress": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "done",
+            "total"
+          ],
+          "additionalProperties": false
+        },
+        "waiting": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": [
+                "approval",
+                "answer",
+                "device"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "approval": {
+          "$ref": "#/$defs/RunApproval"
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "kind",
+        "state",
+        "role",
+        "title",
+        "surface",
+        "at",
+        "stateVersion"
+      ],
+      "additionalProperties": false
+    },
+    "RunSyncCopilot": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "copilot"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "event": {
+          "$ref": "#/$defs/StreamEvent"
+        }
+      },
+      "required": [
+        "type",
+        "requestId",
+        "conversationId",
+        "taskId",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "SyncedReply": {
+      "type": "object",
+      "properties": {
+        "reply": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "widgets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "backendConfirmations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "executionState": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentStep"
+          }
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "agentTask": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "reply"
+      ],
+      "additionalProperties": false
+    },
+    "SyncedRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "deviceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "goal": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "cancelled": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SyncedReply"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "requestId",
+        "conversationId",
+        "taskId",
+        "deviceId",
+        "goal",
+        "status",
+        "cancelled",
+        "revision",
+        "response"
+      ],
+      "additionalProperties": false
+    },
+    "RunSyncSnapshot": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "snapshot"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runs": {
+          "$ref": "#/$defs/JsonObject"
+        },
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonObject"
+          }
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SyncedRequest"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "cursor",
+        "runs",
+        "conversations",
+        "devices",
+        "requests"
+      ],
+      "additionalProperties": false
+    },
+    "RunSyncEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RunSyncCopilot"
+        },
+        {
+          "$ref": "#/$defs/RunSyncSnapshot"
+        }
+      ]
+    }
+  }
+}
