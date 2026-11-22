@@ -12,12 +12,16 @@ use super::*;
 const MAX_TURNS: usize = 400;
 const MAX_MINUTES: u64 = 345;
 /// What one tool result may give the model.
-const OUTPUT_CHARS: usize = 14_000;
+const OUTPUT_CHARS: usize = 7_000;
 /// What the working context may weigh (bytes of its JSON) before it is shortened: the model reads about 130 000 tokens, and the answer and the tools need
 /// their share. Past it, old results are shortened first; if that is not enough, the older part of the work is replaced by a summary of it.
 const CONTEXT_BYTES: usize = 280_000;
 const CONTEXT_BYTES_LEAST: usize = 80_000;
 const KEEP_FULL_RESULTS: usize = 8;
+/// Old results are shortened in one batch when the working context passes MASK_AT (not a little every turn: each change to an old message makes the provider read everything after it
+/// again, uncached), keeping the newest MASK_KEEP whole. The batch brings the context back to a third of what it was; the next one comes after it has grown again.
+const MASK_AT: usize = 70_000;
+const MASK_KEEP: usize = 6;
 /// How long a model that is busy or out of reach is waited for before the run stops (seconds between tries; about twelve minutes in all).
 const MODEL_WAITS: [u64; 12] = [2, 5, 10, 20, 30, 60, 60, 60, 120, 120, 120, 120];
 /// Turns in a row that change nothing while everything changed so far is verified: at the first the model is told to write the result, at the second the run
@@ -36,7 +40,7 @@ const FAILURES_MOST: usize = 24;
 const SESSION_DAYS: i64 = 7;
 
 /// How the loop itself works, said to the model once: what it can rely on and what is expected at the end.
-const NOTES: &str = "UZUN İŞ\n- Üç adımdan uzun işte önce plan aracıyla adımları yaz, ilerledikçe güncelle; \"bitti\" demeden her adım done ya da dropped olsun.\n- Uzun çalışmada eski sonuçlar kısaltılır, eski bölüm özetlenir: önemli bulduğunu (yol, sürüm, karar) plana ya da yanıtına yaz; lazım olanı dosyadan yeniden oku.\n- Aynı çağrı iki kez aynı hatayı verdiyse üçüncü kez deneme; hatanın nedenini araştır.\n- Bu sohbette önceki işin (dosyalar, komutlar) yukarıdaki kayıtta durur; \"devam et\" denirse oradan sürdür.\n\nYAZILIM İŞİ\n- Projede her komutta workdir olarak proje klasörünü ver. İlk dokunuşta PROJE özeti gelir (dosyalar, betikler, git durumu, kurallar, notlar); kurallarına uy.\n- Büyük kod tabanını baştan okuma: repo_map ile tanı (query ilgili dosyaları, file ona bağlıları bulur), metin için search, sonra read_file ile yalnız o satır aralığı.\n- Bir dosyayı değiştirmeden önce oku; FILE_CHANGED dönerse kullanıcı dosyayı sen okuduktan sonra değiştirmiştir: yeniden oku ve onun haline göre düzenle, üzerine yazma.\n- Değiştirdiğin dosyaya bağlı olanları (repo_map file) düşün; testi/derlemeyi onları da kapsayacak şekilde çalıştır.\n- Değişikliği küçük yap (edit_file, birden çok dosyada apply_patch), sonra projenin kendi test/derleme/lint komutunu çalıştır; kırılırsa çıktıyı oku ve düzelt. Test etmediğin şeye \"çalışıyor\" deme.\n- Bir değişikliği geri almak gerekirse undo aracını, yazma sonucunda dönen undo_id ile kullan.\n- Telefondan gelen değişiklikler GitHub'da wiqo/ dalındadır (PROJE özetinde görünür). İstenirse git fetch ile al, önce git diff göster; birleştirmede çakışma çıkarsa kendin seçme, sor.\n- Git: kullanıcı istemedikçe commit, push, reset, dal silme yapma. Commit istenirse önce git status/diff ile neyi kaydettiğini gör.\n- Hata mesajı, paket belgesi, sürüm gibi bilmediğin şeyi web aracıyla ara ya da sayfayı oku; tahmin etme.\n\nGERÇEK UYGULAMA\n- Kapsamlı bir yazılım isteğinde (backend, veritabanı, giriş, dış API) koda başlamadan: bilmediğin ya da sürümü önemli olan her şeyi (kütüphane, API, kurulum) web ile resmî belgesinden doğrula, sonra plan aracıyla adımları ve her adımın nasıl doğrulanacağını (hangi test/komut/istek) yaz. Basit işte araştırma ve uzun plan yapma.\n- Kullanıcının açıkça yazdığı kısıt her zaman kazanır (\"değer tarayıcıda kalıcı olsun\" = localStorage, \"tek dosya\", \"backend yok\"): onu değiştirme, istenmeyen altyapı ya da özellik önerme. Sahte buton ya da koda gömülü sahte veri teslim etme. Backend ve veritabanı yalnız istek paylaşılan/sunucu verisi, hesap, birden çok kullanıcı ya da bir API gerektiriyorsa kurulur; ön yüz/statik uygulamada (sayaç, oyun, hesap makinesi, tanıtım sitesi) backend ekleme.\n- Bu bilgisayarda olanı kullan (shell ile which/psql --version/docker --version bak); PostgreSQL yoksa kullanıcıya sor ya da projeye uygun yerel bir seçenek öner, kurulmuş gibi davranma.\n- Gizli değerleri (API anahtarı, veritabanı şifresi) koda yazma: .env dosyası (gitignore'da) ve .env.example kullan. Kullanıcının eklediği API'ler için api aracını kullan; anahtarı sohbette isteme.\n- API/backend yazdıysan başlat (arka plan işi), uç noktalarını curl ile gerçekten çağır: başarılı isteklerin yanında bozuk JSON, eksik/boş alan ve olmayan id de dene, 4xx dönmeli, sunucu çökmemeli. Ön yüz/statik uygulamada bitti ölçütü: derleme geçer, geliştirme sunucusu istenen adreste 200 döner, sayfa içeriği doğru (curl ile gövdeyi gör); 4xx denemesi gerekmez. Betik yazdıysan örnek girdiyle çalıştır ve çıktıya bak. \"Ran 0 tests\" doğrulama değildir. Testleri çalıştır. Yanıtında ne yapıldı, ne doğrulandı, ne doğrulanamadı ayrı ayrı yazılır; doğrulanmamış şeye çalışıyor deme.\n- Geliştirme sunucusu: başlatmadan önce bu çalışmada açtığın var mı bak (job status); varsa onu kullan, port meşgulse eskisini job cancel ile kapat; her başlatışta yeni port açma (aynı klasörde ikinci başlatma reddedilir). İş bitince başlattığın sunucu kapatılır; kullanıcı \"çalıştır/adresini söyle\" dediyse açık kalır ve yanıtın sonunda bunu söylenir.\n- Arayüz yaptıysan açıp ekran araçlarıyla (computer_interface observe) gerçekten göründüğünü doğrula.\n- Projede sonradan işe yarayacak şeyi (çalıştırma/test komutu, önemli yol, karar) project_notes ile projenin notuna yaz; bir sonraki işte PROJE özetinde gelir.\n- sudo yönetici şifresi ister ve Wiqo şifre giremez; sudo'suz yol seç (brew, kullanıcı klasörüne kurulum) ya da komutu kullanıcıya ver.";
+const NOTES: &str = "UZUN İŞ\n- Üç adımdan uzun işte önce plan aracıyla adımları yaz, ilerledikçe güncelle; \"bitti\" demeden her adım done ya da dropped olsun.\n- Uzun çalışmada eski sonuçlar kısaltılır, eski bölüm özetlenir: önemli bulduğunu (yol, sürüm, karar) plana ya da yanıtına yaz; lazım olanı dosyadan yeniden oku.\n- Aynı çağrı iki kez aynı hatayı verdiyse üçüncü kez deneme; hatanın nedenini araştır.\n- Bu sohbette önceki işin (dosyalar, komutlar) yukarıdaki kayıtta durur; \"devam et\" denirse oradan sürdür.\n\nYAZILIM İŞİ\n- Projede her komutta workdir olarak proje klasörünü ver. İlk dokunuşta PROJE özeti gelir (dosyalar, betikler, git durumu, kurallar, notlar); kurallarına uy.\n- Bir dosyayı değiştirmeden önce oku; FILE_CHANGED dönerse kullanıcı dosyayı sen okuduktan sonra değiştirmiştir: yeniden oku ve onun haline göre düzenle, üzerine yazma.\n- Değiştirdiğin dosyaya bağlı olanları (repo_map file) düşün; testi/derlemeyi onları da kapsayacak şekilde çalıştır.\n- Bir değişikliği geri almak gerekirse undo aracını, yazma sonucunda dönen undo_id ile kullan.\n- Telefondan gelen değişiklikler GitHub'da wiqo/ dalındadır (PROJE özetinde görünür). İstenirse git fetch ile al, önce git diff göster; birleştirmede çakışma çıkarsa kendin seçme, sor.\n- Git: kullanıcı istemedikçe commit, push, reset, dal silme yapma. Commit istenirse önce git status/diff ile neyi kaydettiğini gör.\n- Hata mesajı, paket belgesi, sürüm gibi bilmediğin şeyi web aracıyla ara ya da sayfayı oku; tahmin etme.\n\nGERÇEK UYGULAMA\n- Kapsamlı bir yazılım isteğinde (backend, veritabanı, giriş, dış API) koda başlamadan: bilmediğin ya da sürümü önemli olan her şeyi (kütüphane, API, kurulum) web ile resmî belgesinden doğrula, sonra plan aracıyla adımları ve her adımın nasıl doğrulanacağını (hangi test/komut/istek) yaz. Basit işte araştırma ve uzun plan yapma.\n- Kullanıcının açıkça yazdığı kısıt her zaman kazanır (\"değer tarayıcıda kalıcı olsun\" = localStorage, \"tek dosya\", \"backend yok\"): onu değiştirme, istenmeyen altyapı ya da özellik önerme. Sahte buton ya da koda gömülü sahte veri teslim etme. Backend ve veritabanı yalnız istek paylaşılan/sunucu verisi, hesap, birden çok kullanıcı ya da bir API gerektiriyorsa kurulur; ön yüz/statik uygulamada (sayaç, oyun, hesap makinesi, tanıtım sitesi) backend ekleme.\n- Bu bilgisayarda olanı kullan (shell ile which/psql --version/docker --version bak); PostgreSQL yoksa kullanıcıya sor ya da projeye uygun yerel bir seçenek öner, kurulmuş gibi davranma.\n- Gizli değerleri (API anahtarı, veritabanı şifresi) koda yazma: .env dosyası (gitignore'da) ve .env.example kullan. Kullanıcının eklediği API'ler için api aracını kullan; anahtarı sohbette isteme.\n- API/backend yazdıysan başlat (arka plan işi), uç noktalarını curl ile gerçekten çağır: başarılı isteklerin yanında bozuk JSON, eksik/boş alan ve olmayan id de dene, 4xx dönmeli, sunucu çökmemeli. Ön yüz/statik uygulamada bitti ölçütü: derleme geçer, geliştirme sunucusu istenen adreste 200 döner, sayfa içeriği doğru (curl ile gövdeyi gör); 4xx denemesi gerekmez. Betik yazdıysan örnek girdiyle çalıştır ve çıktıya bak. \"Ran 0 tests\" doğrulama değildir. Testleri çalıştır. Yanıtında ne yapıldı, ne doğrulandı, ne doğrulanamadı ayrı ayrı yazılır; doğrulanmamış şeye çalışıyor deme.\n- Geliştirme sunucusu: başlatmadan önce bu çalışmada açtığın var mı bak (job status); varsa onu kullan, port meşgulse eskisini job cancel ile kapat; her başlatışta yeni port açma (aynı klasörde ikinci başlatma reddedilir). İş bitince başlattığın sunucu kapatılır; kullanıcı \"çalıştır/adresini söyle\" dediyse açık kalır ve yanıtın sonunda bunu söylenir.\n- Arayüz ya da sayfa yaptıysan browser_check ile aç ve kullan (ekran araçlarıyla görsel doğrulama yalnız bununla yetmediğinde).\n- Projede sonradan işe yarayacak şeyi (çalıştırma/test komutu, önemli yol, karar) project_notes ile projenin notuna yaz; bir sonraki işte PROJE özetinde gelir.\n- sudo yönetici şifresi ister ve Wiqo şifre giremez; sudo'suz yol seç (brew, kullanıcı klasörüne kurulum) ya da komutu kullanıcıya ver.";
 
 /// Said only when this computer's tools beyond the terminal are on offer.
 const PC_NOTES: &str = "EKRAN VE SİSTEM ARAÇLARI (dosya, komut, kurulum, kod, sistem durumu, çalışan uygulamalar, sekmeler terminalle; daha hızlı ve kesin)\n- computer_interface: yalnız ekranda görüp tıklamak/yazmak gereken işler; önce observe, sonra ref'lerle çalış.\n- computer_files: terminalin yapamadığı dosya işleri (send_to_phone, Word/Excel/PDF oku ve yaz, PDF'e çevir, çöpten geri al). Dosya bulmak, listelemek, taşımak, silmek için bu değil, shell.\n- computer_system: ses, parlaklık, medya, kilit/uyku, karanlık mod, pencere dizme, ekranda ne var (context), ekran görüntüsü (telefona kendiliğinden gitmez: saveTo ile kaydet, sonra send_to_phone).\n- Biri reddederse nedenini oku; terminalle yapabiliyorsan öyle yap.";
@@ -79,7 +83,7 @@ fn tools() -> Value {
             "parameters": { "type": "object", "properties": { "undo_id": { "type": "string" } }, "required": ["undo_id"] } } },
         { "type": "function", "function": { "name": "web", "description": "İnternette arar (query) ya da bir sayfayı metin olarak okur (url). Hata mesajı, belge, sürüm, örnek kod için.",
             "parameters": { "type": "object", "properties": { "query": { "type": "string" }, "url": { "type": "string" } } } } },
-        { "type": "function", "function": { "name": "browser_check", "description": "Bir web sayfasını gerçek (başsız) Chrome/Edge'de açar, kullanır ve neyin bozuk olduğunu söyler: konsol hataları, başarısız istekler (404...), sayfanın çıkardığı alert/prompt metinleri ve verdiğin adımların sonucu. Sayfa ya da betik yazdıysan teslim etmeden önce bununla dene; sözdizimi denetimi ya da başlığı curl ile saymak sayfanın çalıştığını göstermez. url: http://localhost:8000 ya da file:///Users/.../index.html. steps (en çok 25, sırayla; tutmayan adımda durur): {click: css}, {type: css, text}, {wait_ms}, {expect_text}, {expect_selector}, {eval: js ifadesi, doğru/dolu dönmeli}. alert/prompt kendiliğinden kabul edilir. screenshot: kaydedilecek png yolu.",
+        { "type": "function", "function": { "name": "browser_check", "description": "Sayfayı gerçek başsız Chrome/Edge'de açar, kullanır, neyin bozuk olduğunu söyler: konsol hataları, 404'ler, alert/prompt metinleri, adım sonuçları. Sayfa ya da betik yazdıysan teslimden önce dene. url: http://localhost:8000 ya da file:///…/index.html. steps (en çok 25; tutmayan adımda durur): {click: css}, {type: css, text}, {wait_ms}, {expect_text}, {expect_selector}, {eval: js ifadesi}. alert/prompt kendiliğinden kabul edilir. screenshot: png yolu.",
             "parameters": { "type": "object", "properties": { "url": { "type": "string" }, "steps": { "type": "array", "items": { "type": "object" } }, "wait_ms": { "type": "integer", "description": "Yüklemeden sonra bekleme, varsayılan 800" }, "screenshot": { "type": "string" } }, "required": ["url"] } } },
         { "type": "function", "function": { "name": "project_notes", "description": "Projenin Wiqo notunu baştan yazar (yalnız bu bilgisayarda): çalıştırma/test komutları, önemli yollar, kararlar; sonraki işte PROJE özetinde gelir. Mevcut notu koruyup tamamını gönder.",
             "parameters": { "type": "object", "properties": { "project": { "type": "string", "description": "Proje klasörü" }, "content": { "type": "string" } }, "required": ["project", "content"] } } },
@@ -104,7 +108,7 @@ fn tools() -> Value {
                 "action": { "type": "string", "description": "O hesabın eylemi, ör. search, list, read_thread" },
                 "args": { "type": "object", "description": "Eylemin alanları, ör. {\"kind\":\"issues\",\"query\":\"is:open author:@me\"}" }
             }, "required": ["operation"] } } },
-        { "type": "function", "function": { "name": "repo_find", "description": "Projede bir konunun, davranışın ya da hatanın nerede olduğunu bulur; sembol adı bilmene gerek yok (\"kupon nerede düşülüyor\", \"giriş hatası mesajı\"). Dosyaları satır pencerelerine böler, sözcüklere göre sıralar (modelsiz, yerel); en ilgili yerleri `dosya:satır-aralığı` olarak verir. Bilinmeyen kodda ilk iş: repo_map ile genel bak, repo_find ile yeri bul, sonra o aralığı oku.",
+        { "type": "function", "function": { "name": "repo_find", "description": "Bir konunun, davranışın ya da hata mesajının projede nerede olduğunu bulur; sembol adı gerekmez (\"kupon nerede düşülüyor\"). Dosyaları satır pencerelerine bölüp sözcüğe göre sıralar (yerel, modelsiz); `dosya:satır-aralığı` verir, sonra o aralığı oku.",
             "parameters": { "type": "object", "properties": { "path": { "type": "string", "description": "Proje klasörünün tam yolu" }, "query": { "type": "string", "description": "Aranan konu, sözcüklerle" } }, "required": ["path", "query"] } } },
         { "type": "function", "function": { "name": "repo_map", "description": "Projeyi baştan okumadan tanır: dosya ağacı, diller, giriş noktaları. query ile sembol/dosya adına göre ilgili dosyaları, file ile bir dosyanın sembol ve importlarını, onu değiştirince etkilenenleri verir. Büyük projede ilk iş bu; sonra read_file ile yalnız gereken satırlar.",
             "parameters": { "type": "object", "properties": {
@@ -226,6 +230,56 @@ fn shorten_old(messages: &mut [Value], keep: usize) {
             calls.iter_mut().for_each(lighten_call);
         }
     }
+}
+
+/// A file read again, or changed after it was read, makes the earlier reads of it dead weight: their text is replaced by a line that says where the newer one is.
+/// Only reads of the same path are touched (`read_file` calls, matched by their call id); returns how many were replaced.
+fn dedupe_reads(messages: &mut [Value]) -> usize {
+    let mut calls: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    for message in messages.iter() {
+        for call in message["tool_calls"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            let args = serde_json::from_str::<Value>(&text_of(&call["function"]["arguments"])).unwrap_or(Value::Null);
+            let path = text_of(&args["path"]);
+            if !path.is_empty() {
+                calls.insert(text_of(&call["id"]), (text_of(&call["function"]["name"]), path));
+            }
+        }
+    }
+    // For each path: the index of the newest result that read it, and of the newest that changed it.
+    let mut newest_read: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut newest_change: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (index, message) in messages.iter().enumerate() {
+        if message["role"] != "tool" {
+            continue;
+        }
+        let Some((name, path)) = calls.get(&text_of(&message["tool_call_id"])) else { continue };
+        match name.as_str() {
+            "read_file" => {
+                newest_read.insert(path.clone(), index);
+            }
+            "write_file" | "edit_file" | "undo" => {
+                newest_change.insert(path.clone(), index);
+            }
+            _ => {}
+        }
+    }
+    let mut replaced = 0;
+    for (index, message) in messages.iter_mut().enumerate() {
+        if message["role"] != "tool" || text_of(&message["content"]).len() < 400 {
+            continue;
+        }
+        let Some((name, path)) = calls.get(&text_of(&message["tool_call_id"])) else { continue };
+        if name != "read_file" {
+            continue;
+        }
+        let read_again = newest_read.get(path).is_some_and(|newest| *newest > index);
+        let changed_since = newest_change.get(path).is_some_and(|changed| *changed > index);
+        if read_again || changed_since {
+            message["content"] = json!(format!("(Bu dosya ({path}) sonradan {}: eski içerik atıldı; gerekirse yeniden oku.)", if changed_since { "değiştirildi" } else { "yeniden okundu" }));
+            replaced += 1;
+        }
+    }
+    replaced
 }
 
 /// Where the part that stays whole begins: the newest messages that fit `budget`, never starting on a result whose call is gone.
@@ -390,9 +444,18 @@ fn shown_output(data: &Value) -> String {
             }
         }
     }
-    match value.as_str() {
-        Some(text) => clip(text, OUTPUT_CHARS),
-        None => clip(&value.to_string(), OUTPUT_CHARS * 2),
+    let (shown, cut) = match value.as_str() {
+        Some(text) => (clip(text, OUTPUT_CHARS), text.chars().count() > OUTPUT_CHARS),
+        None => {
+            let whole = value.to_string();
+            (clip(&whole, OUTPUT_CHARS * 2), whole.chars().count() > OUTPUT_CHARS * 2)
+        }
+    };
+    // Said where it is cut: the rest is one narrower request away, not lost.
+    if cut || shown.contains("(arası kısaltıldı)") {
+        format!("{shown}\n(Çıktının ortası kısaltıldı: dosya ise start_line/end_line ile, komut ise | grep / | head / | tail ile daralt.)")
+    } else {
+        shown
     }
 }
 
@@ -406,6 +469,12 @@ struct Work {
     pins: Vec<String>,
     /// The errors the run's last failing build or test ended on, for the project's memory.
     last_errors: Vec<String>,
+    /// How many times old results were shortened in a batch.
+    trims: usize,
+    /// The files this run read or changed, with the last thing done to each (newest last): what a compaction keeps in place of their text.
+    files: Vec<(String, &'static str)>,
+    /// What the model said before acting (what it was doing and why), newest last: the decisions of the work.
+    decisions: Vec<String>,
     budget: usize,
     /// Every tool on offer in this run: the terminal's own and, when the server described them, this computer's others.
     tools: Value,
@@ -952,6 +1021,12 @@ impl Work {
         if !checks.is_empty() {
             lines.push(format!("Denetimler (son sonuç): {}", checks.iter().take(8).map(|(label, passed)| format!("{} {label}", if *passed { "✔" } else { "✗" })).collect::<Vec<_>>().join("; ")));
         }
+        if !self.files.is_empty() {
+            lines.push(format!("Dosyalar (son işlem; içerikleri bağlamdan çıktı, gerekirse yeniden oku): {}", self.files.iter().rev().take(20).rev().map(|(path, did)| format!("{path} ({did})")).collect::<Vec<_>>().join(", ")));
+        }
+        if !self.decisions.is_empty() {
+            lines.push(format!("Verdiğin kararlar ve ara notların (eskiden yeniye):\n{}", self.decisions.iter().map(|note| format!("  - {note}")).collect::<Vec<_>>().join("\n")));
+        }
         if !self.last_errors.is_empty() {
             lines.push(format!("Açık hatalar (son başarısız denetimden):\n{}", self.last_errors.iter().map(|error| format!("  - {error}")).collect::<Vec<_>>().join("\n")));
         }
@@ -1319,7 +1394,7 @@ impl Chat {
         }
         let notes = if names.is_empty() { String::new() } else { format!("\n\n{PC_NOTES}") };
         let mut work = Work {
-            messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), pins: super::memory::constraints_of(goal), last_errors: Vec::new(), budget: CONTEXT_BYTES,
+            messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), pins: super::memory::constraints_of(goal), last_errors: Vec::new(), trims: 0, files: Vec::new(), decisions: Vec::new(), budget: CONTEXT_BYTES,
             tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(),
             // Project folders the person said yes for in an earlier run (within TRUST_DAYS) are not asked again; a Mission's run starts with none.
             reach: Reach { untrusted: handoff["untrusted"] == true, allowed: if handoff["untrusted"] == true { Vec::new() } else { self.trusted_folders() }, ..Reach::default() },
@@ -1543,6 +1618,10 @@ impl Chat {
             let note = content.split_whitespace().collect::<Vec<_>>().join(" ");
             if !note.is_empty() {
                 note_id += 1;
+                work.decisions.push(note.chars().take(140).collect());
+                if work.decisions.len() > 12 {
+                    work.decisions.remove(0);
+                }
                 let label: String = note.chars().take(180).collect();
                 say(json!({ "type": "activity", "activity": { "id": format!("local-note-{note_id}"), "phase": "plan", "label": label, "state": "done", "persona": "developer" } }));
             }
@@ -1655,6 +1734,25 @@ impl Chat {
                 }
                 if let Some(args) = &args {
                     work.ledger.record(&name, args, outcome.ok, &outcome.output, outcome.job.as_deref());
+                }
+                if outcome.ok {
+                    let did = match name.as_str() {
+                        "read_file" => Some("okundu"),
+                        "write_file" => Some("yazıldı"),
+                        "edit_file" | "apply_patch" => Some("düzenlendi"),
+                        "undo" => Some("geri alındı"),
+                        _ => None,
+                    };
+                    if let Some(did) = did {
+                        for path in file_targets(&name, told_args) {
+                            let shown = path.display().to_string();
+                            work.files.retain(|(known, _)| *known != shown);
+                            work.files.push((shown, did));
+                        }
+                        if work.files.len() > 40 {
+                            work.files.remove(0);
+                        }
+                    }
                 }
                 // A file just written is checked for its syntax at once (see syntax.rs), and an appended piece that repeats the start of what is already there is said:
                 // both are what a person's editor shows the moment it happens, not a surprise at the end.
@@ -1813,6 +1911,16 @@ impl Chat {
     /// Keeps the context within what the model reads. Old results are shortened first; if that is not enough, the older part of the work is replaced by
     /// a summary the model writes of it (or, when the model cannot be asked, by the list of steps), with the request and the plan said again.
     async fn compact(&self, run_id: &str, work: &mut Work, token: &str, stop: &Stop, say: &impl Fn(Value)) {
+        // First the cheap, exact thing: dead reads out, old results shortened (the error summaries stay), in one batch. A model's summary is the last resort.
+        if weight(&work.messages) > MASK_AT {
+            let before = weight(&work.messages);
+            let dead = dedupe_reads(&mut work.messages);
+            shorten_old(&mut work.messages, MASK_KEEP);
+            if weight(&work.messages) < before {
+                work.trims += 1;
+                say(json!({ "type": "activity", "activity": { "id": format!("local-mask-{}", work.trims), "phase": "plan", "label": format!("Eski sonuçlar kısaltıldı ({} bin → {} bin karakter, {dead} tekrar okuma atıldı)", before / 1000, weight(&work.messages) / 1000), "state": "done" } }));
+            }
+        }
         if weight(&work.messages) <= work.budget {
             return;
         }
@@ -2309,6 +2417,29 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_read_again_or_changed_since_loses_its_old_text_and_other_results_stay() {
+        use super::dedupe_reads;
+        use serde_json::json;
+        let big = "x".repeat(900);
+        let call = |id: &str, name: &str, path: &str| json!({ "role": "assistant", "content": "", "tool_calls": [{ "id": id, "type": "function", "function": { "name": name, "arguments": json!({ "path": path }).to_string() } }] });
+        let mut messages = vec![
+            json!({ "role": "system", "content": "s" }),
+            call("a", "read_file", "/p/a.js"),
+            json!({ "role": "tool", "tool_call_id": "a", "content": big }),
+            call("b", "read_file", "/p/b.js"),
+            json!({ "role": "tool", "tool_call_id": "b", "content": big }),
+            call("c", "read_file", "/p/a.js"),
+            json!({ "role": "tool", "tool_call_id": "c", "content": big }),
+            call("d", "edit_file", "/p/b.js"),
+            json!({ "role": "tool", "tool_call_id": "d", "content": "{}" }),
+        ];
+        assert_eq!(dedupe_reads(&mut messages), 2);
+        assert!(messages[2]["content"].as_str().unwrap_or("").contains("yeniden okundu"));
+        assert!(messages[4]["content"].as_str().unwrap_or("").contains("değiştirildi"));
+        assert_eq!(messages[6]["content"].as_str().unwrap_or("").len(), 900, "the newest read stays");
+    }
+
     #[test]
     fn a_server_command_names_its_port_and_emoji_are_taken_out_of_the_answer() {
         use super::{server_port, strip_emoji};
