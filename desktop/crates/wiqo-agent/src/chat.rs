@@ -22,6 +22,7 @@ use crate::Event;
 mod digest;
 mod ledger;
 mod local;
+mod memory;
 mod page;
 mod syntax;
 mod progress;

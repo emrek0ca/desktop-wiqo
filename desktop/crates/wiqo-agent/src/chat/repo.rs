@@ -500,3 +500,205 @@ mod tests {
         assert_eq!(resolve("app.py", "os", &names), None);
     }
 }
+
+// ---- repo_find: which part of the project is about this --------------------------------------------------------------------------------------------------
+
+/// What a question about a project is answered from: the files cut into short windows of lines, and a ranking of the windows by BM25 over the words in them
+/// (identifiers split at `_` and at camelCase, so `parseDims` is found by "parse dims" and by "dims"). No model, no network: built from the files on this
+/// computer, kept in memory while the files do not change. "Where is the coupon handled" has no symbol to look up; this finds the lines.
+const WINDOW: usize = 30;
+const STEP: usize = 15;
+const MOST_FOUND: usize = 8;
+const FIND_FILE_BYTES: u64 = 200_000;
+const MOST_WINDOWS: usize = 60_000;
+
+struct Window {
+    file: usize,
+    from: usize,
+    terms: HashMap<String, u16>,
+    length: usize,
+}
+
+struct FindIndex {
+    stamp: (usize, u64, u64),
+    files: Vec<String>,
+    windows: Vec<Window>,
+    frequency: HashMap<String, usize>,
+    average: f64,
+}
+
+fn find_cache() -> &'static Mutex<HashMap<PathBuf, std::sync::Arc<FindIndex>>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, std::sync::Arc<FindIndex>>>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+const STOP: &[&str] = &["the", "and", "for", "with", "this", "that", "from", "into", "are", "was", "bir", "bu", "ve", "ile", "için", "gibi", "var", "yok", "mi", "mı", "de", "da"];
+
+/// The words of a text: lower-cased, with identifiers also split into their parts.
+fn words(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for word in text.split(|c: char| !c.is_alphanumeric()).filter(|word| word.chars().count() >= 2) {
+        let lower = word.to_lowercase();
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut previous_lower = false;
+        for c in word.chars() {
+            if c.is_uppercase() && previous_lower && !current.is_empty() {
+                parts.push(std::mem::take(&mut current).to_lowercase());
+            }
+            previous_lower = c.is_lowercase() || c.is_ascii_digit();
+            current.push(c);
+        }
+        parts.push(current.to_lowercase());
+        if !STOP.contains(&lower.as_str()) {
+            found.push(lower.clone());
+        }
+        if parts.len() > 1 {
+            found.extend(parts.into_iter().filter(|part| part.chars().count() >= 2 && !STOP.contains(&part.as_str())));
+        }
+    }
+    found
+}
+
+fn build_find_index(root: &Path, files: &[String]) -> FindIndex {
+    let mut kept: Vec<String> = Vec::new();
+    let mut windows: Vec<Window> = Vec::new();
+    let mut frequency: HashMap<String, usize> = HashMap::new();
+    let mut total_length = 0usize;
+    let (mut count, mut newest, mut size) = (0usize, 0u64, 0u64);
+    for relative in files {
+        let path = root.join(relative);
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        count += 1;
+        size += meta.len();
+        newest = newest.max(meta.modified().ok().and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0));
+        if meta.len() > FIND_FILE_BYTES || meta.len() == 0 || windows.len() >= MOST_WINDOWS {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        if bytes.contains(&0) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<&str> = text.lines().collect();
+        let file = kept.len();
+        kept.push(relative.clone());
+        let mut from = 0;
+        while from < lines.len() {
+            let to = (from + WINDOW).min(lines.len());
+            let mut terms: HashMap<String, u16> = HashMap::new();
+            let mut length = 0;
+            // The file's own name is part of what each of its windows is about.
+            for word in words(relative).into_iter().chain(words(&lines[from..to].join("\n"))) {
+                *terms.entry(word).or_insert(0) += 1;
+                length += 1;
+            }
+            for term in terms.keys() {
+                *frequency.entry(term.clone()).or_insert(0) += 1;
+            }
+            total_length += length;
+            windows.push(Window { file, from, terms, length });
+            if to == lines.len() {
+                break;
+            }
+            from += STEP;
+        }
+    }
+    let average = if windows.is_empty() { 1.0 } else { total_length as f64 / windows.len() as f64 };
+    FindIndex { stamp: (count, newest, size), files: kept, windows, frequency, average }
+}
+
+fn find_index(root: &Path) -> std::sync::Arc<FindIndex> {
+    let files = list_files(root);
+    // Whether the files are the same as when the index was built: how many, the newest change, their total size.
+    let (mut count, mut newest, mut size) = (0usize, 0u64, 0u64);
+    for relative in &files {
+        if let Ok(meta) = std::fs::metadata(root.join(relative)) {
+            count += 1;
+            size += meta.len();
+            newest = newest.max(meta.modified().ok().and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0));
+        }
+    }
+    let mut known = find_cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(index) = known.get(root).filter(|index| index.stamp == (count, newest, size)) {
+        return index.clone();
+    }
+    let built = std::sync::Arc::new(build_find_index(root, &files));
+    if known.len() > 8 {
+        known.clear();
+    }
+    known.insert(root.to_path_buf(), built.clone());
+    built
+}
+
+/// The windows most about `query`, best first: `path:from–to` and the line of the window that matches most.
+pub fn repo_find(root: &Path, query: &str) -> String {
+    let wanted: Vec<String> = {
+        let mut seen: HashSet<String> = HashSet::new();
+        words(query).into_iter().filter(|word| seen.insert(word.clone())).collect()
+    };
+    if wanted.is_empty() {
+        return "query'de aranacak sözcük yok.".into();
+    }
+    let index = find_index(root);
+    if index.windows.is_empty() {
+        return "Bu klasörde aranacak metin dosyası bulunamadı.".into();
+    }
+    let total = index.windows.len() as f64;
+    let (k1, b) = (1.2_f64, 0.75_f64);
+    let mut scored: Vec<(f64, usize)> = Vec::new();
+    for (position, window) in index.windows.iter().enumerate() {
+        let mut score = 0.0;
+        for word in &wanted {
+            let Some(&tf) = window.terms.get(word) else { continue };
+            let df = index.frequency.get(word).copied().unwrap_or(1) as f64;
+            let idf = ((total - df + 0.5) / (df + 0.5) + 1.0).ln();
+            let tf = f64::from(tf);
+            score += idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * window.length as f64 / index.average));
+        }
+        if score > 0.0 {
+            scored.push((score, position));
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    // One result per file (its best window), so ten windows of one big file do not hide the other places.
+    let mut seen_files: HashSet<usize> = HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for (score, position) in scored {
+        let window = &index.windows[position];
+        if !seen_files.insert(window.file) {
+            continue;
+        }
+        let path = &index.files[window.file];
+        let text = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+        let best = text.lines().enumerate().skip(window.from).take(WINDOW).max_by_key(|(_, line)| words(line).iter().filter(|word| wanted.contains(word)).count());
+        let (row, shown) = best.map(|(row, line)| (row + 1, line.trim().chars().take(140).collect::<String>())).unwrap_or((window.from + 1, String::new()));
+        lines.push(format!("{path}:{}-{}  ({score:.1})  {row}: {shown}", window.from + 1, window.from + WINDOW));
+        if lines.len() >= MOST_FOUND {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        return format!("\"{query}\" için eşleşen bir yer bulunamadı; başka sözcüklerle (eş anlamlı, kodda geçen ad) dene.");
+    }
+    format!("En çok ilgili yerler (sıralı; dosyayı satır aralığıyla oku):\n{}", lines.join("\n"))
+}
+
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+
+    #[test]
+    fn a_question_is_answered_with_the_place_that_is_about_it_even_when_no_symbol_has_its_name() {
+        let root = std::env::temp_dir().join(format!("wiqo-find-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).expect("folder");
+        std::fs::write(root.join("src/fiyat.py"), "def indirimOrani(adet):\n    if adet >= 100:\n        return 0.30\n\ndef kuponDus(ara, kupon):\n    # kupon bir tutardir\n    return ara - kupon\n").expect("file");
+        std::fs::write(root.join("src/liste.py"), "def sirala(items):\n    return sorted(items)\n").expect("file");
+        std::fs::write(root.join("README.md"), "Bu proje fiyat hesaplar.\n").expect("file");
+        let found = repo_find(&root, "kupon indirim tutarı nerede düşülüyor");
+        assert!(found.lines().nth(1).is_some_and(|line| line.starts_with("src/fiyat.py")), "{found}");
+        assert!(repo_find(&root, "indirim orani").contains("src/fiyat.py"), "camelCase names are found by their words");
+        assert!(repo_find(&root, "zzzzqqq").contains("bulunamadı"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

@@ -104,6 +104,8 @@ fn tools() -> Value {
                 "action": { "type": "string", "description": "O hesabın eylemi, ör. search, list, read_thread" },
                 "args": { "type": "object", "description": "Eylemin alanları, ör. {\"kind\":\"issues\",\"query\":\"is:open author:@me\"}" }
             }, "required": ["operation"] } } },
+        { "type": "function", "function": { "name": "repo_find", "description": "Projede bir konunun, davranışın ya da hatanın nerede olduğunu bulur; sembol adı bilmene gerek yok (\"kupon nerede düşülüyor\", \"giriş hatası mesajı\"). Dosyaları satır pencerelerine böler, sözcüklere göre sıralar (modelsiz, yerel); en ilgili yerleri `dosya:satır-aralığı` olarak verir. Bilinmeyen kodda ilk iş: repo_map ile genel bak, repo_find ile yeri bul, sonra o aralığı oku.",
+            "parameters": { "type": "object", "properties": { "path": { "type": "string", "description": "Proje klasörünün tam yolu" }, "query": { "type": "string", "description": "Aranan konu, sözcüklerle" } }, "required": ["path", "query"] } } },
         { "type": "function", "function": { "name": "repo_map", "description": "Projeyi baştan okumadan tanır: dosya ağacı, diller, giriş noktaları. query ile sembol/dosya adına göre ilgili dosyaları, file ile bir dosyanın sembol ve importlarını, onu değiştirince etkilenenleri verir. Büyük projede ilk iş bu; sonra read_file ile yalnız gereken satırlar.",
             "parameters": { "type": "object", "properties": {
                 "path": { "type": "string", "description": "Proje klasörünün tam yolu" },
@@ -213,7 +215,12 @@ fn shorten_old(messages: &mut [Value], keep: usize) {
         if message["role"] == "tool" {
             let content = text_of(&message["content"]);
             if content.len() > 700 {
-                message["content"] = json!(format!("{} (eski sonuç kısaltıldı)", clip(&content, 500)));
+                // What a failed build said (its error summary) is what the work is about: it stays whole while the rest of an old result goes.
+                let kept = content.strip_prefix("HATA ÖZETİ").map(|rest| rest.split("\n\n").next().unwrap_or(""));
+                message["content"] = match kept {
+                    Some(digest) => json!(format!("HATA ÖZETİ{} (eski sonuç, geri kalanı kısaltıldı)", digest.chars().take(1_400).collect::<String>())),
+                    None => json!(format!("{} (eski sonuç kısaltıldı)", clip(&content, 500))),
+                };
             }
         } else if let Some(calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut) {
             calls.iter_mut().for_each(lighten_call);
@@ -360,6 +367,7 @@ fn label(name: &str, args: &Value) -> String {
         "api" => format!("API: {} {}{}", one("method"), one("name"), one("path")),
         "accounts" if args["operation"] == "list" => "Bağlı hesaplar".into(),
         "accounts" => format!("Hesap: {} {}", one("account"), one("action")),
+        "repo_find" => format!("Projede ara: {}", one("query")),
         "repo_map" => format!("Proje haritası: {}", [one("file"), one("query"), one("path")].into_iter().find(|text| !text.is_empty()).unwrap_or_default()),
         "computer_interface" => format!("Ekran: {}", one("operation")),
         "computer_files" => format!("Dosya ({}): {}", one("operation"), [one("path"), one("query")].into_iter().find(|text| !text.is_empty()).unwrap_or_default()),
@@ -394,6 +402,10 @@ struct Work {
     plan: Vec<Value>,
     log: Vec<String>,
     goal: String,
+    /// What the request (and the person's later words) say must or must not be done: on every context's card and in the project's rules file.
+    pins: Vec<String>,
+    /// The errors the run's last failing build or test ended on, for the project's memory.
+    last_errors: Vec<String>,
     budget: usize,
     /// Every tool on offer in this run: the terminal's own and, when the server described them, this computer's others.
     tools: Value,
@@ -541,7 +553,7 @@ fn touched_folder(name: &str, args: &Value) -> Option<PathBuf> {
     let folder = match name {
         "shell" | "apply_patch" => args["workdir"].as_str().filter(|dir| !dir.trim().is_empty()).map(expand),
         "read_file" | "write_file" | "edit_file" => expand(&text_of(&args["path"])).parent().map(Path::to_path_buf),
-        "search" | "repo_map" => args["path"].as_str().filter(|dir| !dir.trim().is_empty()).map(expand),
+        "search" | "repo_map" | "repo_find" => args["path"].as_str().filter(|dir| !dir.trim().is_empty()).map(expand),
         _ => None,
     }?;
     (folder.is_absolute() && plain(&folder)).then(|| std::fs::canonicalize(&folder).unwrap_or(folder))
@@ -799,7 +811,7 @@ fn head(path: &Path, lines: usize, most: usize) -> Option<String> {
 
 /// What the model is told the first time it touches a project: what it is built with, how it is run and tested, where git stands, its own rules and
 /// what earlier work noted about it. Read from the files themselves, so it is never stale.
-fn project_brief(root: &Path, notes: Option<String>) -> String {
+fn project_brief(root: &Path, notes: Option<String>, remembered: Option<(String, Vec<String>)>) -> String {
     let mut parts = vec![format!("PROJE: {}", root.display())];
     let markers: Vec<&str> = PROJECT_MARKERS.iter().copied().filter(|marker| root.join(marker).exists()).collect();
     parts.push(format!("İşaretler: {}", markers.join(", ")));
@@ -813,7 +825,17 @@ fn project_brief(root: &Path, notes: Option<String>) -> String {
             parts.push(format!("Betikler ({} run <ad>):\n{}", manager.unwrap_or("npm"), lines.join("\n")));
         }
     }
-    let checks = verify_commands(root, manager);
+    let (memory_text, learned) = remembered.unwrap_or_default();
+    // The checks that passed here before come first; the guesses from the files in the folder follow.
+    let mut checks = learned;
+    for guess in verify_commands(root, manager) {
+        if !checks.contains(&guess) {
+            checks.push(guess);
+        }
+    }
+    if !memory_text.is_empty() {
+        parts.push(memory_text);
+    }
     if !checks.is_empty() {
         parts.push(format!("Doğrulama (her değişiklikten sonra çalıştır, hataları dosya:satır olarak oku, yeşil olana kadar döngüyü sürdür):\n{}", checks.iter().map(|command| format!("  {command}")).collect::<Vec<_>>().join("\n")));
     }
@@ -914,6 +936,28 @@ async fn run_stoppable(engine: &Engine, step: &Value, card_approved: bool, send_
 }
 
 impl Work {
+    /// What is certain about the work so far, written by this program from the run's own record (not by the model): the limits the person set, the files
+    /// changed, the checks and how they ended, the errors still open. It stays whole through every compaction, where a model's summary may drop a line.
+    fn card(&self) -> String {
+        let mut lines = vec!["ÇALIŞMA KARTI (program yazdı, kesin):".to_string()];
+        if !self.pins.is_empty() {
+            lines.push(format!("Kullanıcının koyduğu sınırlar (her zaman uy):\n{}", self.pins.iter().map(|pin| format!("  - {pin}")).collect::<Vec<_>>().join("\n")));
+        }
+        let changed = self.ledger.changed_paths();
+        if !changed.is_empty() {
+            let shown: Vec<&str> = changed.iter().rev().take(12).rev().map(String::as_str).collect();
+            lines.push(format!("Değişen dosyalar ({}): {}", changed.len(), shown.join(", ")));
+        }
+        let checks = self.ledger.checks_summary();
+        if !checks.is_empty() {
+            lines.push(format!("Denetimler (son sonuç): {}", checks.iter().take(8).map(|(label, passed)| format!("{} {label}", if *passed { "✔" } else { "✗" })).collect::<Vec<_>>().join("; ")));
+        }
+        if !self.last_errors.is_empty() {
+            lines.push(format!("Açık hatalar (son başarısız denetimden):\n{}", self.last_errors.iter().map(|error| format!("  - {error}")).collect::<Vec<_>>().join("\n")));
+        }
+        lines.join("\n")
+    }
+
     /// What the run did, in a sentence: how many steps went through, how many did not, and the last one. The log itself (commands, paths) stays out of the
     /// person's reading; the steps are on the task card.
     fn done_so_far(&self) -> String {
@@ -1022,6 +1066,18 @@ async fn browser_check_tool(args: &Value) -> ToolOutcome {
         }
         Err(message) => refused(&message),
     }
+}
+
+/// `repo_find`: read-only, like `repo_map`; the windows are read and ranked off the async threads.
+async fn repo_find_tool(args: &Value) -> ToolOutcome {
+    let root = expand(&text_of(&args["path"]));
+    if !root.is_absolute() || !plain(&root) || !root.is_dir() {
+        return refused("path var olan bir proje klasörünün tam yolu olmalı.");
+    }
+    let query = text_of(&args["query"]);
+    let root = project_root(&std::fs::canonicalize(&root).unwrap_or(root.clone())).unwrap_or(root);
+    let text = tokio::task::spawn_blocking(move || super::repo::repo_find(&root, &query)).await.unwrap_or_else(|_| "Arama yapılamadı.".into());
+    ToolOutcome { ok: true, output: json!({ "status": "completed", "output": text }).to_string(), brief: String::new(), job: None }
 }
 
 fn refused(message: &str) -> ToolOutcome {
@@ -1248,6 +1304,7 @@ impl Chat {
         if Uuid::parse_str(&run_id).is_err() {
             bail!("Yerel çalışma başlatılamadı.");
         }
+        let began = Instant::now();
         let goal = handoff["goal"].as_str().filter(|goal| !goal.trim().is_empty()).unwrap_or(text);
         let context = device_context(engine, device_id);
         let device = json!({
@@ -1262,7 +1319,7 @@ impl Chat {
         }
         let notes = if names.is_empty() { String::new() } else { format!("\n\n{PC_NOTES}") };
         let mut work = Work {
-            messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), budget: CONTEXT_BYTES,
+            messages: Vec::new(), plan: Vec::new(), log: Vec::new(), goal: goal.to_string(), pins: super::memory::constraints_of(goal), last_errors: Vec::new(), budget: CONTEXT_BYTES,
             tools: offered, pc: Pc { device, names, snapshot: None }, sent: Vec::new(), held: Vec::new(),
             // Project folders the person said yes for in an earlier run (within TRUST_DAYS) are not asked again; a Mission's run starts with none.
             reach: Reach { untrusted: handoff["untrusted"] == true, allowed: if handoff["untrusted"] == true { Vec::new() } else { self.trusted_folders() }, ..Reach::default() },
@@ -1270,6 +1327,11 @@ impl Chat {
             ledger: super::ledger::Ledger::default(),
         };
         work.ledger.expect_from(goal);
+        for pin in super::memory::constraints_of(text) {
+            if !work.pins.contains(&pin) {
+                work.pins.push(pin);
+            }
+        }
         work.messages.push(json!({ "role": "system", "content": format!("{}\n\n{}{notes}\n\n{PRIVATE_NOTE}", text_of(&handoff["instructions"]), environment()) }));
         // This conversation's earlier work on this computer, if any: the model goes on with what it wrote and ran, not only with what was said.
         match self.load_session(conversation) {
@@ -1304,6 +1366,30 @@ impl Chat {
         };
         let (reply, ()) = tokio::join!(working, self.report(token, &run_id, received));
 
+        // What the run did is written into the memory of each project it worked in (from the ledger, not from what the model says): the next run starts from it.
+        let stopped = reply.starts_with("Durduruldu");
+        let mut rules_note = String::new();
+        for root in work.reach.briefed.clone() {
+            let Some(memory) = self.memory(&root) else { continue };
+            let prefix = format!("{}/", root.display());
+            let files: Vec<String> = work.ledger.changed_paths().iter().filter_map(|path| path.strip_prefix(&prefix)).map(str::to_string).collect();
+            if files.is_empty() && work.ledger.checks_summary().is_empty() {
+                continue;
+            }
+            memory.record(&root, &super::memory::RunRecord {
+                goal: work.goal.clone(),
+                outcome: if stopped { "durduruldu" } else { work.ledger.outcome() },
+                files,
+                checks: work.ledger.checks_summary(),
+                errors: work.last_errors.clone(),
+                minutes: began.elapsed().as_secs() / 60,
+            });
+            let added = memory.add_rules(&work.pins);
+            if !added.is_empty() {
+                rules_note.push_str(&format!("\n\nSöylediğin sınırı bu projenin kuralları arasına yazdım ({}): {}", memory.rules_file().display(), added.join(" · ")));
+            }
+        }
+        let reply = if rules_note.is_empty() { reply } else { format!("{reply}{rules_note}") };
         // The model's words keep the stand-ins in this run's record; the person reads the real values (this computer puts them back).
         work.messages.push(json!({ "role": "assistant", "content": reply }));
         self.save_session(conversation, &work, false);
@@ -1509,6 +1595,7 @@ impl Chat {
                     Some(args) if name == "browser_check" => browser_check_tool(args).await,
                     Some(args) if name == "project_notes" => self.write_notes(args),
                     Some(args) if name == "repo_map" => repo_map_tool(args).await,
+                    Some(args) if name == "repo_find" => repo_find_tool(args).await,
                     Some(args) if name == "api" => self.api_tool(run_id, token, args, approve).await,
                     Some(args) if name == "accounts" => self.accounts_tool(run_id, token, args, approve).await,
                     Some(args) => {
@@ -1548,6 +1635,7 @@ impl Chat {
                             } else {
                                 String::new()
                             };
+                            work.last_errors = errors.lines().skip(1).take(3).map(|line| line.trim().trim_start_matches("- ").to_string()).collect();
                             outcome.output = format!("{errors}{note}\n\n{}", outcome.output);
                         }
                     }
@@ -1591,7 +1679,13 @@ impl Chat {
                     if !work.reach.briefed.contains(&root) {
                         work.reach.briefed.push(root.clone());
                         let notes = self.notes_file(&root).and_then(|file| std::fs::read_to_string(file).ok());
-                        let brief = tokio::task::spawn_blocking(move || project_brief(&root, notes)).await.unwrap_or_default();
+                        let data = self.file.parent().map(Path::to_path_buf);
+                        let brief = tokio::task::spawn_blocking(move || {
+                            let remembered = data.as_deref().and_then(|data| super::memory::Memory::of(data, &root)).map(|memory| (memory.brief(&root), memory.proven_commands()));
+                            project_brief(&root, notes, remembered)
+                        })
+                        .await
+                        .unwrap_or_default();
                         if !brief.is_empty() {
                             outcome.output = format!("{}\n\n{brief}", outcome.output);
                         }
@@ -1742,8 +1836,9 @@ impl Chat {
             _ => format!("(Model özet yazamadı; adımların listesi)\n{}", work.log.iter().rev().take(80).rev().cloned().collect::<Vec<_>>().join("\n")),
         };
         let note = format!(
-            "ÖNCEKİ ÇALIŞMANIN ÖZETİ (bağlam dolduğu için eski adımlar kaldırıldı; anlatılanlar senin kendi çalışman)\n\nKULLANICININ İSTEĞİ:\n{}\n\n{summary}\n\nPLAN:\n{}\n\nBuradan devam et. Bir dosyanın içeriği lazımsa yeniden oku; yapılmış işi yeniden yapma.",
+            "ÖNCEKİ ÇALIŞMANIN ÖZETİ (bağlam dolduğu için eski adımlar kaldırıldı; anlatılanlar senin kendi çalışman)\n\nKULLANICININ İSTEĞİ:\n{}\n\n{}\n\n{summary}\n\nPLAN:\n{}\n\nBuradan devam et. Bir dosyanın içeriği lazımsa yeniden oku; yapılmış işi yeniden yapma.",
             clip(&work.goal, 4_000),
+            work.card(),
             plan_text(&work.plan)
         );
         let mut next = vec![work.messages[0].clone(), json!({ "role": "user", "content": note })];
@@ -1955,14 +2050,24 @@ impl Chat {
         refused("Hesap isteği tamamlanamadı.")
     }
 
-    /// Where a project's notes live on this computer (never in the project, so nothing is added to its files or its git).
+    /// The project's memory (runs, proven commands, rules, notes), on this computer and outside the project (memory.rs).
+    fn memory(&self, root: &Path) -> Option<super::memory::Memory> {
+        super::memory::Memory::of(self.file.parent()?, root)
+    }
+
+    /// Where the note the model writes lives. A note written before the memory existed (project-notes/<hash>.md) is moved in once.
     fn notes_file(&self, root: &Path) -> Option<PathBuf> {
         use sha2::Digest;
-        let digest = sha2::Sha256::digest(root.to_string_lossy().as_bytes());
-        let name: String = digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect();
-        let folder = self.file.parent()?.join("project-notes");
-        std::fs::create_dir_all(&folder).ok()?;
-        Some(folder.join(format!("{name}.md")))
+        let file = self.memory(root)?.notes_file();
+        if !file.exists() {
+            let digest = sha2::Sha256::digest(root.to_string_lossy().as_bytes());
+            let name: String = digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect();
+            let old = self.file.parent()?.join("project-notes").join(format!("{name}.md"));
+            if old.exists() {
+                let _ = std::fs::rename(&old, &file);
+            }
+        }
+        Some(file)
     }
 
     fn trusted_file(&self) -> Option<PathBuf> {

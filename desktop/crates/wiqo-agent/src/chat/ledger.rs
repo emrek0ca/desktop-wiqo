@@ -290,6 +290,32 @@ impl Ledger {
         )
     }
 
+    /// How the run ended, for the project's memory: from the checks, not from the model's words.
+    pub(super) fn outcome(&self) -> &'static str {
+        if self.edits == 0 {
+            "değişiklik yok"
+        } else if self.unchecked_changes() {
+            "doğrulanmadı"
+        } else {
+            "doğrulandı"
+        }
+    }
+
+    pub(super) fn changed_paths(&self) -> &[String] {
+        &self.changed
+    }
+
+    /// The latest result of each check that ran.
+    pub(super) fn checks_summary(&self) -> Vec<(String, bool)> {
+        let mut latest: Vec<(String, bool)> = Vec::new();
+        for check in self.checks.iter().rev() {
+            if !latest.iter().any(|(label, _)| *label == check.label) {
+                latest.push((check.label.clone(), check.passed));
+            }
+        }
+        latest
+    }
+
     /// The files changed that no passed check after their last change speaks for.
     pub(super) fn uncovered(&self) -> Vec<&String> {
         self.changed
