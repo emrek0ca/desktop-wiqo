@@ -12,11 +12,6 @@ on:
       - "contracts/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: An existing release to receive the Windows installers (empty = desktop-v<version>)
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -48,13 +43,12 @@ jobs:
       - run: cargo test
 
 
-  # Wiqo for Windows: the NSIS installer (per-user, no admin) and its signed updater archive. Updates are verified with the key in
-  # tauri.conf.json, so the repository secret TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD) must hold ~/.tauri/wiqo-updater.key.
-  # Independent of `check`, so a Linux-only failure never holds back the Windows installer.
+  # Branch builds produce QA artifacts. Publishing requires the verified Windows publisher and the updater key.
   windows-package:
     runs-on: windows-latest
     env:
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      SIGN_RELEASE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WIQO_WINDOWS_SIGNING_ENABLED == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -75,25 +69,68 @@ jobs:
       - name: Helper that drives other apps (agent-desktop)
         shell: bash
         run: ../scripts/build-helper.sh ${{ matrix.target }} binaries
+      - name: Artifact Signing CLI
+        if: env.SIGN_RELEASE == 'true'
+        run: cargo install artifact-signing-cli --version 0.12.0 --locked
       - name: Build the installer
+        shell: pwsh
         env:
           WIQO_HELPER: ${{ github.workspace }}\desktop\app\binaries\agent-desktop.exe
           WIQO_BROWSER_WORKER_DIR: ${{ github.workspace }}\desktop\browser-worker
-          # The updater signing key is given only to builds of the main branch, so a build of any other branch cannot produce installers the updater trusts.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ github.ref == 'refs/heads/main' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.ref == 'refs/heads/main' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: cargo tauri build --target ${{ matrix.target }} --bundles nsis
-      - name: Collect
-        shell: bash
+          WINDOWS_TARGET: ${{ matrix.target }}
+          WINDOWS_SIGNING_ENDPOINT: ${{ vars.WIQO_WINDOWS_SIGNING_ENDPOINT }}
+          WINDOWS_SIGNING_ACCOUNT: ${{ vars.WIQO_WINDOWS_SIGNING_ACCOUNT }}
+          WINDOWS_SIGNING_PROFILE: ${{ vars.WIQO_WINDOWS_SIGNING_PROFILE }}
+          AZURE_CLIENT_ID: ${{ env.SIGN_RELEASE == 'true' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ env.SIGN_RELEASE == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_TENANT_ID: ${{ env.SIGN_RELEASE == 'true' && secrets.AZURE_TENANT_ID || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.SIGN_RELEASE == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.SIGN_RELEASE == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
-          mkdir -p ../../dist
-          cp ../target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe ../../dist/
-          cp ../target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe.sig ../../dist/ 2>/dev/null || echo "no updater signature (secret missing)"
-          ls -la ../../dist
+          $ErrorActionPreference = 'Stop'
+          $config = @{ bundle = @{ createUpdaterArtifacts = $false } }
+          if ($env:SIGN_RELEASE -eq 'true') {
+            foreach ($name in @('WINDOWS_SIGNING_ENDPOINT', 'WINDOWS_SIGNING_ACCOUNT', 'WINDOWS_SIGNING_PROFILE', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_TENANT_ID', 'TAURI_SIGNING_PRIVATE_KEY')) {
+              if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing signing configuration: $name" }
+            }
+            $signArgs = @('-e', $env:WINDOWS_SIGNING_ENDPOINT, '-a', $env:WINDOWS_SIGNING_ACCOUNT, '-c', $env:WINDOWS_SIGNING_PROFILE, '-d', 'Wiqo')
+            & artifact-signing-cli @signArgs $env:WIQO_HELPER
+            if ($LASTEXITCODE -ne 0) { throw 'Could not sign the desktop helper.' }
+            $config.bundle.createUpdaterArtifacts = $true
+            $config.bundle.windows = @{ signCommand = @{ cmd = 'artifact-signing-cli'; args = ($signArgs + '%1') } }
+          }
+          $overrides = Join-Path $env:RUNNER_TEMP 'wiqo-bundle.json'
+          $config | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 $overrides
+          cargo tauri build --target $env:WINDOWS_TARGET --bundles nsis --config $overrides
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the Windows installer.' }
+      - name: Collect
+        shell: pwsh
+        env:
+          WINDOWS_TARGET: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = "../target/$env:WINDOWS_TARGET/release"
+          $installers = @(Get-ChildItem "$release/bundle/nsis" -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected one Windows installer.' }
+          $installer = $installers[0]
+          New-Item -ItemType Directory -Path ../../dist -Force | Out-Null
+          if ($env:SIGN_RELEASE -eq 'true') {
+            foreach ($binary in @($installer.FullName, "$release/Wiqo.exe", 'binaries/agent-desktop.exe')) {
+              $signature = Get-AuthenticodeSignature -LiteralPath $binary
+              if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
+                throw "Missing valid timestamped Authenticode signature: $binary"
+              }
+            }
+            $updaterSignature = Get-Item "$($installer.FullName).sig"
+            if ($updaterSignature.Length -eq 0) { throw 'Missing updater signature.' }
+            Copy-Item $updaterSignature.FullName ../../dist/
+          }
+          Copy-Item $installer.FullName ../../dist/
       - uses: actions/upload-artifact@v4
         with:
           name: wiqo-windows-${{ matrix.target }}
           path: dist/*
+          if-no-files-found: error
           retention-days: 14
 
   # The everyday tools for real on a fresh Windows and Mac (wiqo-agent selftest): files must pass; the steps that need a desktop session (apps,
@@ -151,12 +188,8 @@ jobs:
           WIQO_LIVE_APP: Notepad
         run: cargo test -p wiqo-ops live_observation -- --ignored --nocapture
 
-  # A new version (desktop/app/tauri.conf.json "version") pushed to the repository is published by itself as `desktop-v<version>`; the
-  # website's download button reads the GitHub releases and picks the newest one with a Windows installer, so nothing else is needed.
-  # An existing release (or a tag given by hand) only gets its Windows files replaced.
   windows-release:
-    # Only the main branch publishes or replaces a public release; other branches still build and check.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WIQO_WINDOWS_SIGNING_ENABLED == 'true'
     needs: windows-package
     runs-on: ubuntu-latest
     permissions:
@@ -168,19 +201,23 @@ jobs:
           pattern: wiqo-windows-*
           merge-multiple: true
           path: release-assets
-      - name: Publish or update the release
+      - name: Publish the signed release
         env:
           GH_TOKEN: ${{ github.token }}
-          GIVEN_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./desktop/app/tauri.conf.json').version")
-          TAG="${GIVEN_TAG:-desktop-v$VERSION}"
+          TAG="desktop-v$VERSION"
+          for architecture in x64 arm64; do
+            asset="release-assets/Wiqo_${VERSION}_${architecture}-setup.exe"
+            test -s "$asset"
+            test -s "$asset.sig"
+          done
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            # A pre-release, so GitHub's "latest" (the Mac download) stays as it is.
-            gh release create "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-              --title "Wiqo Desktop $VERSION (Windows)" \
-              --notes "Wiqo masaüstü $VERSION — Windows kurulumu (yönetici izni gerekmez). x64: Wiqo_${VERSION}_x64-setup.exe · ARM64: Wiqo_${VERSION}_arm64-setup.exe"
+            echo "Release $TAG already exists."
+            exit 0
           fi
+          # Keep the Mac download selected by GitHub's default release link.
+          gh release create "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Wiqo Desktop $VERSION (Windows)" \
+            --notes "Wiqo $VERSION için imzalı x64 ve ARM64 Windows kurucuları."

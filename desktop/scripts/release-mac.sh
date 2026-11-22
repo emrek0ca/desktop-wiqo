@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds a Mac release of Wiqo: signed with Developer ID, notarized and stapled by Apple, plus the signed update archive and latest.json the
-# updater reads from https://api.wiqoai.com/desktop-updates. Nothing is uploaded; the last lines say what to copy where.
+# updater reads from https://api.wiqoai.com/desktop-updates. This script submits to Apple's notary service and leaves the resulting packages on disk.
 #
 # One-time setup:
 #   xcrun notarytool store-credentials wiqo-notary --apple-id <apple id> --team-id 7SRKKF75MC   (asks for an app-specific password)
@@ -26,13 +26,18 @@ scripts/build-helper.sh universal-apple-darwin app/binaries
 codesign --force --options runtime --timestamp --sign "Developer ID Application: Osman Emre Koca (7SRKKF75MC)" app/binaries/agent-desktop
 
 echo "== build $VERSION ($ARCH)"
-(cd app && cargo tauri build --target universal-apple-darwin --bundles app)
+# Sign the updater archive after the app has been stapled.
+(cd app && cargo tauri build --target universal-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}')
 
 echo "== notarize the app"
 mkdir -p "$OUT"
 ditto -c -k --keepParent "$APP" "$OUT/notarize.zip"
-xcrun notarytool submit "$OUT/notarize.zip" --keychain-profile "$PROFILE" --wait
+xcrun notarytool submit "$OUT/notarize.zip" --keychain-profile "$PROFILE" --wait --output-format json | tee "$OUT/app-notarization.json"
+jq -e '.status == "Accepted"' "$OUT/app-notarization.json" >/dev/null
 xcrun stapler staple "$APP"
+xcrun stapler validate "$APP"
+codesign --verify --deep --strict "$APP"
+spctl --assess --type execute "$APP"
 rm "$OUT/notarize.zip"
 
 echo "== update archive"
@@ -44,9 +49,13 @@ SIGNATURE=$(cat "$OUT/$ARCHIVE.sig")
 echo "== installer disk image"
 DMG="Wiqo_${VERSION}_${ARCH}.dmg"
 hdiutil create -volname Wiqo -srcfolder "$APP" -ov -format UDZO "$OUT/$DMG" >/dev/null
-codesign --sign "Developer ID Application: Osman Emre Koca (7SRKKF75MC)" "$OUT/$DMG"
-xcrun notarytool submit "$OUT/$DMG" --keychain-profile "$PROFILE" --wait
+codesign --timestamp --sign "Developer ID Application: Osman Emre Koca (7SRKKF75MC)" "$OUT/$DMG"
+xcrun notarytool submit "$OUT/$DMG" --keychain-profile "$PROFILE" --wait --output-format json | tee "$OUT/dmg-notarization.json"
+jq -e '.status == "Accepted"' "$OUT/dmg-notarization.json" >/dev/null
 xcrun stapler staple "$OUT/$DMG"
+xcrun stapler validate "$OUT/$DMG"
+codesign --verify --strict "$OUT/$DMG"
+spctl --assess --type open --context context:primary-signature "$OUT/$DMG"
 
 python3 - "$OUT" "$VERSION" "$ARCH" "$ARCHIVE" "$SIGNATURE" "$NOTES" <<'PY'
 import json, sys, datetime, os

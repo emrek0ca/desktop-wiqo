@@ -27,5 +27,13 @@ cd desktop/app && cargo tauri build --bundles nsis       # Windows installer, on
 ## Releases
 
 Raise `version` in `desktop/app/tauri.conf.json` (and `desktop/Cargo.toml`) and push. CI (`.github/workflows/desktop.yml`) builds the x64 and ARM64
-Windows installers and publishes them as the pre-release `desktop-v<version>`. wiqoai.com reads this repository's releases and offers the newest
-Windows installer by itself. The repository secret `TAURI_SIGNING_PRIVATE_KEY` signs the updater files.
+Windows installers as GitHub Actions artifacts. It publishes `desktop-v<version>` from `main` after both installers, the application and the
+bundled helper pass timestamped Authenticode verification. The website reads the published installers from GitHub Releases.
+
+For Windows release signing, configure a public-trust [Azure Artifact Signing certificate profile](https://v2.tauri.app/distribute/sign/windows/#azure-artifact-signing).
+Set repository variables `WIQO_WINDOWS_SIGNING_ENDPOINT`, `WIQO_WINDOWS_SIGNING_ACCOUNT` and `WIQO_WINDOWS_SIGNING_PROFILE`, and Actions secrets
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` for the authorized signing identity. Set
+`WIQO_WINDOWS_SIGNING_ENABLED=true` when the profile is ready. The existing `TAURI_SIGNING_PRIVATE_KEY` signs the updater files.
+
+For a macOS release, run `desktop/scripts/release-mac.sh` with the Developer ID and Apple notary profile configured. It builds and verifies a
+universal notarized DMG and a signed updater archive.
