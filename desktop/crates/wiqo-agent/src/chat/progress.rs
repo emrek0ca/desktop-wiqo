@@ -80,6 +80,16 @@ pub fn running(id: &str, summary: &str, tool: &str, args: &Value, seal: &mut dyn
     json!({ "type": "step_update", "step": step })
 }
 
+/// The step is still running and this is the end of what it has printed so far: the same step, told again with its `output`, so every client that shows a step
+/// shows a long command's output as it comes (no event of its own to learn).
+pub fn running_output(id: &str, summary: &str, tool: &str, args: &Value, printed: &str, seal: &mut dyn FnMut(&str) -> String) -> Value {
+    let mut told = running(id, summary, tool, args, seal);
+    if !printed.trim().is_empty() {
+        told["step"]["output"] = json!(seal(&tail(printed, OUTPUT_TAIL)));
+    }
+    told
+}
+
 /// What the tool printed, as one text, and the exit code when it was a command: the tool's result is JSON with `stdout`, `stderr` and `exitCode`, or a plain text.
 pub(super) fn printed(output: &str) -> (String, Option<i64>) {
     match serde_json::from_str::<Value>(output) {
@@ -199,6 +209,20 @@ pub fn done(reply: &str, run_id: &str, private_kept: usize) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_running_step_tells_the_end_of_what_it_has_printed() {
+        use super::running_output;
+        use serde_json::json;
+        let mut seal = |text: &str| text.to_string();
+        let printed = format!("{}\nlast line", "x".repeat(5_000));
+        let told = running_output("local-6f0c2b1e-0d4a-4d55-9b0e-0a1c7a5f2e10", "Testleri çalıştır", "shell", &json!({ "command": "pytest -q" }), &printed, &mut seal);
+        assert_eq!(told["step"]["status"], "running");
+        assert_eq!(told["step"]["command"], "pytest -q");
+        let shown = told["step"]["output"].as_str().unwrap_or_default();
+        assert!(shown.ends_with("last line") && shown.chars().count() <= 2_000);
+        assert!(running_output("local-1", "x", "shell", &json!({}), "  \n", &mut seal)["step"].get("output").is_none());
+    }
+
     #[test]
     fn a_planned_step_is_told_in_the_same_shape_as_the_agents() {
         use super::planned;

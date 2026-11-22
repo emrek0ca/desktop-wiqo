@@ -12,10 +12,6 @@
     "type": "StreamEvent"
   },
   {
-    "file": "agent-events/examples/tool_output.json",
-    "type": "StreamEvent"
-  },
-  {
     "file": "agent-events/examples/activity.json",
     "type": "StreamEvent"
   },

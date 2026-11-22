@@ -295,7 +295,7 @@ impl Terminal for Sessions {
                 .insert(command_id.to_string(), digest.to_string());
         }
         let answer = match serde_json::from_value::<Request>(raw.clone()) {
-            Ok(request) => self.dispatch(&session, request).await,
+            Ok(request) => self.dispatch(&session, request, command_id).await,
             Err(_) => denied("TERMINAL_ACTION_INVALID", "Terminal isteği çözülemedi."),
         };
         let mut state = self.lock();
@@ -331,7 +331,7 @@ impl Terminal for Sessions {
 }
 
 impl Sessions {
-    async fn dispatch(&self, session: &Session, request: Request) -> CommandResult {
+    async fn dispatch(&self, session: &Session, request: Request, command_id: &str) -> CommandResult {
         let action = request.action.clone().unwrap_or_else(|| "run".into());
         self.prune();
         if action == "undo_file" {
@@ -495,7 +495,7 @@ impl Sessions {
                 if action == "start_job" {
                     return self.start_job(session, &request, &grant, &root, &directory, command, None);
                 }
-                self.run_once(&request, &grant, &root, &directory, command, started)
+                self.run_once(&request, &grant, &root, &directory, command, started, command_id)
                     .await
             }
             _ => denied("TERMINAL_ACTION_INVALID", "Terminal işlemi desteklenmiyor."),
@@ -510,6 +510,7 @@ impl Sessions {
         directory: &Path,
         command: String,
         started: chrono::DateTime<Utc>,
+        command_id: &str,
     ) -> CommandResult {
         // The engine gives a terminal step 55 seconds (a long command is a background job): a longer wait here could never end with the shell's own answer.
         let seconds = request.timeout_seconds.unwrap_or(45).clamp(1, 50);
@@ -524,7 +525,18 @@ impl Sessions {
             directory.to_path_buf(),
             request.shell.clone(),
         );
-        let Some(outcome) = blocking(move || {
+        // What the command prints while it runs is kept for whoever runs it (the desktop's agent shows the end of it on the task): by the command's id, gone when it ends.
+        let live = Uuid::parse_str(command_id).ok();
+        let control = Control {
+            progress: live.map(|id| {
+                Arc::new(move |output: Value| {
+                    let text = |field: &str| output[field].as_str().unwrap_or("").to_string();
+                    wiqo_core::engine::set_live_output(id, text("stdout"), text("stderr"));
+                }) as Arc<dyn Fn(Value) + Send + Sync>
+            }),
+            ..Control::default()
+        };
+        let outcome = blocking(move || {
             shell::run_tracked(
                 &command,
                 &dir,
@@ -532,10 +544,14 @@ impl Sessions {
                 Some(&scope),
                 exports.as_deref(),
                 shell.as_deref(),
-                &Control::default(),
+                &control,
             )
         })
-        .await
+        .await;
+        if let Some(id) = live {
+            wiqo_core::engine::clear_live_output(id);
+        }
+        let Some(outcome) = outcome
         else {
             return denied(
                 "OUTCOME_UNKNOWN",

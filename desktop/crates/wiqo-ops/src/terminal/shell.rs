@@ -764,3 +764,21 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+mod live_output_tests {
+    use super::*;
+
+    #[test]
+    fn a_running_command_reports_what_it_has_printed_before_it_ends() {
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let sink = seen.clone();
+        let control = Control {
+            progress: Some(Arc::new(move |output: Value| sink.lock().expect("seen").push(output["stdout"].as_str().unwrap_or("").to_string()))),
+            ..Control::default()
+        };
+        let _ = run_tracked("echo one; sleep 2; echo two", &std::env::temp_dir(), 20, None, None, None, &control);
+        let seen = seen.lock().expect("seen");
+        assert!(seen.iter().any(|text| text.contains("one") && !text.contains("two")), "the first part was told while the command still ran: {seen:?}");
+    }
+}

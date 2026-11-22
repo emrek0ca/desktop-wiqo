@@ -1385,7 +1385,8 @@ impl Chat {
                     continue;
                 }
                 let words = label(&name, args.as_ref().unwrap_or(&Value::Null));
-                let step_id = format!("local-{}", Uuid::new_v4());
+                let step_uuid = Uuid::new_v4();
+                let step_id = format!("local-{step_uuid}");
                 // Told to the other devices with what it is (the tool, the command, the folder) and, below, how it ended; the commands carry stand-ins for private values.
                 let no_args = Value::Null;
                 let told_args = args.as_ref().unwrap_or(&no_args);
@@ -1408,7 +1409,27 @@ impl Chat {
                     Some(args) if name == "repo_map" => repo_map_tool(args).await,
                     Some(args) if name == "api" => self.api_tool(run_id, token, args, approve).await,
                     Some(args) if name == "accounts" => self.accounts_tool(run_id, token, args, approve).await,
-                    Some(args) => self.local_tool(engine, &name, args, &mut work.reach, approve, stop).await,
+                    Some(args) => {
+                        // A command that runs for a while shows what it has printed so far on the task (its operation keeps that by the step's id): the same step, told again with
+                        // the end of its output, about once a second while it changes.
+                        let call = self.local_tool(engine, &name, args, &mut work.reach, approve, stop, step_uuid);
+                        tokio::pin!(call);
+                        let mut shown = 0usize;
+                        loop {
+                            tokio::select! {
+                                outcome = &mut call => break outcome,
+                                _ = tokio::time::sleep(Duration::from_millis(900)) => {
+                                    if let Some((out, err)) = wiqo_core::engine::live_output_of(step_uuid) {
+                                        let printed = if err.trim().is_empty() { out } else { format!("{out}\n{err}") };
+                                        if printed.len() != shown {
+                                            shown = printed.len();
+                                            say(super::progress::running_output(&step_id, &words, &name, args, &printed, &mut |text: &str| work.vault.seal(text)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 };
                 // What this call printed, before the notes below are added for the model.
                 let printed = outcome.output.clone();
@@ -1478,6 +1499,9 @@ impl Chat {
                         }
                     }
                     if !jobs.contains(&job) {
+                        // A command that went on in the background is a line of the task that stays "running" until it ends: the person sees what is still going on.
+                        let what: String = told_args["command"].as_str().unwrap_or(&words).chars().take(70).collect();
+                        say(json!({ "type": "activity", "activity": { "id": format!("local-job-{job}"), "phase": "tool", "label": format!("Arka planda çalışıyor: {what}"), "state": "running", "persona": "developer" } }));
                         jobs.push(job);
                     }
                 } else if name == "job" {
@@ -1486,6 +1510,7 @@ impl Chat {
                     let gone = args.as_ref().is_some_and(|args| args["action"] == "cancel") || !outcome.output.contains("running");
                     if outcome.ok && gone {
                         work.reach.servers.retain(|(_, job)| *job != id);
+                        say(json!({ "type": "activity", "activity": { "id": format!("local-job-{id}"), "phase": "tool", "label": "Arka plan işi bitti", "state": "done", "persona": "developer" } }));
                     }
                 }
                 say(super::progress::finished(&step_id, &words, &name, told_args, outcome.ok, &outcome.brief, &printed, started.elapsed().as_millis(), &touched, &mut |text: &str| work.vault.seal(text)));
@@ -1824,7 +1849,8 @@ impl Chat {
     }
 
     /// One tool call, run by this computer's terminal session; what goes back to the model is its status, its message and its output.
-    async fn local_tool(&self, engine: &Engine, name: &str, args: &Value, reach: &mut Reach, approve: &Approve, stop: &Stop) -> ToolOutcome {
+    #[allow(clippy::too_many_arguments)]
+    async fn local_tool(&self, engine: &Engine, name: &str, args: &Value, reach: &mut Reach, approve: &Approve, stop: &Stop, step_uuid: Uuid) -> ToolOutcome {
         if let Some(problem) = reach.stale(name, args) {
             return refused(&problem);
         }
@@ -1991,7 +2017,7 @@ impl Chat {
                 }
             }
         }
-        let step = json!({ "id": Uuid::new_v4().to_string(), "type": "terminal", "summary": label(name, args), "payload": { "kind": "terminal", "value": value } });
+        let step = json!({ "id": step_uuid.to_string(), "type": "terminal", "summary": label(name, args), "payload": { "kind": "terminal", "value": value } });
         let Some((result, data)) = run_stoppable(engine, &step, false, false, stop).await else {
             return refused("Kullanıcı durdurdu; adımın sonucu beklenmedi.");
         };

@@ -220,25 +220,6 @@ pub struct StepUpdateEvent {
     pub step: AgentStep,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolOutputEventStream {
-    #[serde(rename = "stdout")]
-    Stdout,
-    #[serde(rename = "stderr")]
-    Stderr,
-    /// A value a newer server sends that this build does not know.
-    #[serde(other)]
-    Unrecognized,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolOutputEvent {
-    #[serde(rename = "stepId")]
-    pub step_id: String,
-    pub stream: ToolOutputEventStream,
-    pub text: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetUpdateEvent {
     pub widget: serde_json::Value,
@@ -324,8 +305,6 @@ pub enum StreamEvent {
     Activity(ActivityEvent),
     #[serde(rename = "step_update")]
     StepUpdate(StepUpdateEvent),
-    #[serde(rename = "tool_output")]
-    ToolOutput(ToolOutputEvent),
     #[serde(rename = "widget_update")]
     WidgetUpdate(WidgetUpdateEvent),
     #[serde(rename = "confirmation_needed")]
@@ -689,8 +668,6 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "StatusEvent" => serde_json::from_str::<StatusEvent>(text).map(|_| true),
         "ActivityEvent" => serde_json::from_str::<ActivityEvent>(text).map(|_| true),
         "StepUpdateEvent" => serde_json::from_str::<StepUpdateEvent>(text).map(|_| true),
-        "ToolOutputEventStream" => serde_json::from_str::<ToolOutputEventStream>(text).map(|_| true),
-        "ToolOutputEvent" => serde_json::from_str::<ToolOutputEvent>(text).map(|_| true),
         "WidgetUpdateEvent" => serde_json::from_str::<WidgetUpdateEvent>(text).map(|_| true),
         "ConfirmationNeededEvent" => serde_json::from_str::<ConfirmationNeededEvent>(text).map(|_| true),
         "UsageEventMessages" => serde_json::from_str::<UsageEventMessages>(text).map(|_| true),
