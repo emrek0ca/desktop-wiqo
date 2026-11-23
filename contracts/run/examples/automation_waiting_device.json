@@ -25,6 +25,7 @@
   },
   "ref": {
     "type": "automation_run",
-    "id": "12"
+    "id": "12",
+    "automationId": 22
   }
 }

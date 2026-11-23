@@ -1121,6 +1121,8 @@ pub struct RunWaiting {
 pub struct RunRef {
     pub r#type: String,
     pub id: String,
+    #[serde(rename = "automationId", default, skip_serializing_if = "Option::is_none")]
+    pub automation_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1336,6 +1338,142 @@ pub struct PcUnitClaim {
 pub struct PcUnitDone {
     #[serde(rename = "unitId")]
     pub unit_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationRunStep {
+    pub id: i64,
+    #[serde(rename = "stepIndex")]
+    pub step_index: i64,
+    pub kind: String,
+    pub status: String,
+    #[serde(rename = "inputSummary", default, skip_serializing_if = "Option::is_none")]
+    pub input_summary: Option<String>,
+    #[serde(rename = "outputSummary", default, skip_serializing_if = "Option::is_none")]
+    pub output_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(rename = "attemptCount")]
+    pub attempt_count: i64,
+    #[serde(rename = "maxAttempts")]
+    pub max_attempts: i64,
+    #[serde(rename = "isDestructive")]
+    pub is_destructive: bool,
+    #[serde(rename = "requiresUserPresence")]
+    pub requires_user_presence: bool,
+    #[serde(rename = "startedAt", default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(rename = "finishedAt", default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(rename = "commandId", default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
+    #[serde(rename = "deliveryState", default, skip_serializing_if = "Option::is_none")]
+    pub delivery_state: Option<String>,
+    #[serde(rename = "acknowledgedAt", default, skip_serializing_if = "Option::is_none")]
+    pub acknowledged_at: Option<String>,
+    #[serde(rename = "lastProgressAt", default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<String>,
+    #[serde(rename = "deadlineAt", default, skip_serializing_if = "Option::is_none")]
+    pub deadline_at: Option<String>,
+    #[serde(rename = "lastErrorCode", default, skip_serializing_if = "Option::is_none")]
+    pub last_error_code: Option<String>,
+    #[serde(rename = "lastErrorCategory", default, skip_serializing_if = "Option::is_none")]
+    pub last_error_category: Option<String>,
+    #[serde(rename = "nextAttemptAt", default, skip_serializing_if = "Option::is_none")]
+    pub next_attempt_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationRun {
+    pub id: i64,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(rename = "errorCategory", default, skip_serializing_if = "Option::is_none")]
+    pub error_category: Option<String>,
+    pub delivered: bool,
+    #[serde(rename = "completionDeliveryState", default, skip_serializing_if = "Option::is_none")]
+    pub completion_delivery_state: Option<String>,
+    #[serde(rename = "pushState", default, skip_serializing_if = "Option::is_none")]
+    pub push_state: Option<String>,
+    #[serde(rename = "pushError", default, skip_serializing_if = "Option::is_none")]
+    pub push_error: Option<String>,
+    #[serde(rename = "currentStep", default, skip_serializing_if = "Option::is_none")]
+    pub current_step: Option<i64>,
+    #[serde(rename = "checkpointAt", default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_at: Option<String>,
+    #[serde(rename = "lastProgressAt", default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<String>,
+    #[serde(rename = "deadlineAt", default, skip_serializing_if = "Option::is_none")]
+    pub deadline_at: Option<String>,
+    #[serde(rename = "startedAt")]
+    pub started_at: String,
+    #[serde(rename = "finishedAt", default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    pub steps: Vec<AutomationRunStep>,
+    #[serde(rename = "specHash", default, skip_serializing_if = "Option::is_none")]
+    pub spec_hash: Option<String>,
+    #[serde(rename = "waitingReason", default, skip_serializing_if = "Option::is_none")]
+    pub waiting_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionJournalEntry {
+    pub id: i64,
+    #[serde(rename = "stepId", default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    pub event: String,
+    #[serde(rename = "toolName", default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    pub verified: bool,
+    pub retryable: bool,
+    #[serde(rename = "sideEffectUncertain")]
+    pub side_effect_uncertain: bool,
+    #[serde(rename = "errorCode", default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    pub summary: String,
+    #[serde(rename = "durationMs", default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalReminder {
+    #[serde(rename = "automationId")]
+    pub automation_id: i64,
+    #[serde(rename = "specHash", default, skip_serializing_if = "Option::is_none")]
+    pub spec_hash: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub hour: i64,
+    pub minute: i64,
+    pub weekdays: Option<Vec<i64>>,
+    pub timezone: String,
+    #[serde(rename = "fireAt", default, skip_serializing_if = "Option::is_none")]
+    pub fire_at: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnceReminder {
+    #[serde(rename = "automationId")]
+    pub automation_id: i64,
+    #[serde(rename = "specHash", default, skip_serializing_if = "Option::is_none")]
+    pub spec_hash: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalReminderPlan {
+    pub notifications: Vec<LocalReminder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub once: Option<Vec<OnceReminder>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2507,6 +2645,12 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "PcJobRecord" => serde_json::from_str::<PcJobRecord>(text).map(|_| true),
         "PcUnitClaim" => serde_json::from_str::<PcUnitClaim>(text).map(|_| true),
         "PcUnitDone" => serde_json::from_str::<PcUnitDone>(text).map(|_| true),
+        "AutomationRunStep" => serde_json::from_str::<AutomationRunStep>(text).map(|_| true),
+        "AutomationRun" => serde_json::from_str::<AutomationRun>(text).map(|_| true),
+        "ExecutionJournalEntry" => serde_json::from_str::<ExecutionJournalEntry>(text).map(|_| true),
+        "LocalReminder" => serde_json::from_str::<LocalReminder>(text).map(|_| true),
+        "OnceReminder" => serde_json::from_str::<OnceReminder>(text).map(|_| true),
+        "LocalReminderPlan" => serde_json::from_str::<LocalReminderPlan>(text).map(|_| true),
         "DiscoverPostKind" => serde_json::from_str::<DiscoverPostKind>(text).map(|_| true),
         "DiscoverVisibility" => serde_json::from_str::<DiscoverVisibility>(text).map(|_| true),
         "DiscoverVerdict" => serde_json::from_str::<DiscoverVerdict>(text).map(|_| true),

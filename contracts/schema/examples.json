@@ -56,6 +56,18 @@
     "type": "Run"
   },
   {
+    "file": "schema/examples/local_reminders.json",
+    "type": "LocalReminderPlan"
+  },
+  {
+    "file": "schema/examples/automation_run.json",
+    "type": "AutomationRun"
+  },
+  {
+    "file": "schema/examples/execution_journal.json",
+    "type": "ExecutionJournalEntry"
+  },
+  {
     "file": "schema/examples/sync_delta.json",
     "type": "RunSyncEvent"
   },

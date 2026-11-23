@@ -1,0 +1,10 @@
+{
+  "id": 4,
+  "stepId": null,
+  "event": "completed",
+  "verified": true,
+  "retryable": false,
+  "sideEffectUncertain": false,
+  "summary": "Tamamlandı",
+  "createdAt": "2026-11-22 08:00:00"
+}

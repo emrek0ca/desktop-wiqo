@@ -2099,6 +2099,11 @@
             },
             "id": {
               "type": "string"
+            },
+            "automationId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -2524,6 +2529,442 @@
       "required": [
         "type",
         "unitId"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationRunStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "stepIndex": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "inputSummary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outputSummary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attemptCount": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "isDestructive": {
+          "type": "boolean"
+        },
+        "requiresUserPresence": {
+          "type": "boolean"
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finishedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commandId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deliveryState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acknowledgedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastProgressAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deadlineAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastErrorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastErrorCategory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nextAttemptAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "stepIndex",
+        "kind",
+        "status",
+        "attemptCount",
+        "maxAttempts",
+        "isDestructive",
+        "requiresUserPresence"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "type": "string"
+        },
+        "reply": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorCategory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delivered": {
+          "type": "boolean"
+        },
+        "completionDeliveryState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pushState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pushError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currentStep": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checkpointAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastProgressAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deadlineAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "finishedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AutomationRunStep"
+          }
+        },
+        "specHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "waitingReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "delivered",
+        "startedAt",
+        "steps"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionJournalEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "stepId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sideEffectUncertain": {
+          "type": "boolean"
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "event",
+        "verified",
+        "retryable",
+        "sideEffectUncertain",
+        "summary",
+        "createdAt"
+      ],
+      "additionalProperties": false
+    },
+    "LocalReminder": {
+      "type": "object",
+      "properties": {
+        "automationId": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "specHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "hour": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "minute": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "weekdays": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "fireAt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "automationId",
+        "title",
+        "body",
+        "hour",
+        "minute",
+        "weekdays",
+        "timezone"
+      ],
+      "additionalProperties": false
+    },
+    "OnceReminder": {
+      "type": "object",
+      "properties": {
+        "automationId": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "specHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "automationId",
+        "title",
+        "body",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "LocalReminderPlan": {
+      "type": "object",
+      "properties": {
+        "notifications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LocalReminder"
+          }
+        },
+        "once": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OnceReminder"
+          }
+        }
+      },
+      "required": [
+        "notifications"
       ],
       "additionalProperties": false
     },

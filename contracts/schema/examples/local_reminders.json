@@ -1,0 +1,17 @@
+{
+  "notifications": [
+    {
+      "automationId": 2,
+      "title": "Hatırlatma",
+      "body": "Takvimi kontrol et",
+      "hour": 8,
+      "minute": 0,
+      "weekdays": null,
+      "timezone": "Europe/Istanbul",
+      "fireAt": [
+        "2026-11-23T05:00:00.000Z"
+      ]
+    }
+  ],
+  "once": []
+}

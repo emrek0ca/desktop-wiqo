@@ -1,0 +1,21 @@
+{
+  "id": 7,
+  "status": "failed",
+  "delivered": false,
+  "errorCategory": "needs_connection",
+  "completionDeliveryState": null,
+  "startedAt": "2026-11-22 08:00:00",
+  "steps": [
+    {
+      "id": 8,
+      "stepIndex": 0,
+      "kind": "cloud_read",
+      "status": "failed",
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "isDestructive": false,
+      "requiresUserPresence": false,
+      "outputSummary": null
+    }
+  ]
+}
