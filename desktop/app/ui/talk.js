@@ -91,7 +91,7 @@
       const text = heard;
       heard = "";
       setState("waiting");
-      window.WiqoChat?.send(text);
+      window.WiqoChat?.send(text, { spoken: true });
     }, turnPauseMs(heard));
   }
 

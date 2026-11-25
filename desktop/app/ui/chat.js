@@ -275,10 +275,23 @@
   }
 
   // What a tap on a card does (the same actions the phones run): `send` and `event` are a new turn, the rest happen here.
+  // A card answered once (`once`, or a form/choice sent) takes no second answer: the same rule as iOS handleCardAction and Android cardAction.
+  const settledCards = new Set();
   function cardAction(action, docId, nodeId, values) {
+    if (settledCards.has(docId)) return undefined;
     switch (action.type) {
-      case "send": return send(action.text);
-      case "event": return send(action.label || "Kartı yanıtladım", { uiEvent: { docId, ...(nodeId ? { nodeId } : {}), name: action.name, values: [...(action.values || []), ...(values || [])] } });
+      case "send":
+        if (action.once) settledCards.add(docId);
+        return send(action.text);
+      case "event": {
+        // A silent event is for the card itself; it never goes to the chat.
+        if (action.delivery === "silent") return undefined;
+        // Fixed values first; the card's inputs fill in the names the action did not set.
+        const merged = [...(action.values || [])];
+        for (const value of values || []) if (!merged.some((item) => item.name === value.name)) merged.push(value);
+        if (action.once || nodeId) settledCards.add(docId);
+        return send(action.label || "Kartı yanıtladım", { uiEvent: { docId, ...(nodeId ? { nodeId } : {}), name: action.name, values: merged } });
+      }
       case "open_url": return /^https:\/\//i.test(action.url) && R.openLink(action.url);
       case "copy": return navigator.clipboard.writeText(action.text).then(() => toast("Kopyalandı.")).catch(() => {});
       case "share": return navigator.clipboard.writeText([action.text, action.url].filter(Boolean).join("\n")).then(() => toast("Panoya kopyalandı.")).catch(() => {});
@@ -325,6 +338,8 @@
       const node = traceNode(message.trace, live);
       if (node) parts.trace.push(node);
     }
+    // What the model said before it went to work, one line each in order (the stream's `note`, as on the phones).
+    for (const line of message.notes || []) parts.trace.push(R.el("div", "msg-said", line));
     const cards = message.cards || [];
     const drawn = new Set();
     const ctx = context(message, latest);
@@ -390,7 +405,7 @@
   /** What decides how each part looks: when it is the same as last time, the part is left alone. */
   function partSignatures(message, latest, live) {
     return {
-      trace: JSON.stringify([message.trace?.steps?.map((step) => [step.id, step.state, step.label]), message.trace?.endedAt, message.trace?.failed, live]),
+      trace: JSON.stringify([message.trace?.steps?.map((step) => [step.id, step.state, step.label]), message.trace?.endedAt, message.trace?.failed, live, message.notes]),
       text: `${live ? 1 : 0}|${message.error ? 1 : 0}|${message.text || ""}|${live ? "" : JSON.stringify([message.blocks, message.blocks?.length ? message.cards : null])}`,
       cards: JSON.stringify([message.cards, message.widgets, (message.artifacts || []).map((artifact) => artifact.artifactId || artifact.id), message.confirmations, message.tasks, message.location, message.note, latest]),
       tools: `${!live && message.text ? 1 : 0}|${latest ? 1 : 0}|${message.text || ""}`
@@ -590,7 +605,7 @@
       questionId: answer?.questionId || null,
       attachments,
       mission,
-      cards: { ui: window.WiqoCards.capabilities, ...(answer?.uiEvent ? { uiEvent: answer.uiEvent } : {}) },
+      cards: { ui: window.WiqoCards.capabilities, ...(answer?.uiEvent ? { uiEvent: answer.uiEvent } : {}), ...(answer?.spoken ? { spoken: true } : {}) },
     });
   }
 
@@ -810,6 +825,22 @@
       case "ui_patch":
         reply.cards = window.WiqoCards.applyEvent(reply.cards || [], data);
         return queueRender();
+      case "note": {
+        // The text streamed so far was what the model said before calling its tools: it becomes a line of its own.
+        const line = String(data.text || "").trim();
+        if (!line) break;
+        reply.text = "";
+        reply.notes ||= [];
+        if (reply.notes[reply.notes.length - 1] !== line) reply.notes.push(line);
+        break;
+      }
+      case "pc_approval_settled": {
+        // Answered on another device, or its time ran out: the card here takes no more answers.
+        const id = String(data.id || "").toLowerCase();
+        reply.confirmations = (reply.confirmations || []).filter((item) => String(item.id).toLowerCase() !== id);
+        window.WiqoAsk?.settled?.(data.id);
+        break;
+      }
       case "confirmation_needed":
         reply.confirmations = data.backendConfirmations || [];
         askFor(reply.confirmations);
@@ -847,9 +878,6 @@
     }
     render();
   }
-
-  // The voice conversation (talk.js) sends what was said as a message of this chat and reads the answer aloud.
-  window.WiqoChat = { send: (text) => send(text), busy: () => turn !== null };
 
   // ----- composer -----
 
@@ -965,5 +993,7 @@
     input.setSelectionRange(input.value.length, input.value.length);
     if (sendNow) $("chat-form").requestSubmit();
   }
-  window.WiqoChat = { open, compose, inGroup: () => isGroup(), userTurns: () => messages.filter((item) => item.role === "user").length };
+  // `send` and `busy`: the voice conversation (talk.js) sends what was said as a spoken message of this chat and reads the answer aloud.
+  window.WiqoChat = { open, compose, inGroup: () => isGroup(), userTurns: () => messages.filter((item) => item.role === "user").length,
+    send: (text, options) => send(text, options?.spoken ? { spoken: true } : undefined), busy: () => turn !== null };
 })();

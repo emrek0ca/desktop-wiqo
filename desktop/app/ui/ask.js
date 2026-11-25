@@ -69,7 +69,15 @@
     if (left <= 0) return;
     add({ id: `confirmation:${id}`, title: title || "Onay gerekiyor", detail: detail || "", seconds: left, confirmation: { id, details: details || {} } });
   }
-  window.WiqoAsk = { confirm };
+  // Answered elsewhere (on a phone, or its time ran out on the server): the card goes away without an answer from here.
+  function settled(id) {
+    const key = `confirmation:${String(id)}`.toLowerCase();
+    const index = questions.findIndex((open) => String(open.id).toLowerCase() === key);
+    if (index < 0) return;
+    questions.splice(index, 1);
+    render();
+  }
+  window.WiqoAsk = { confirm, settled };
 
   function add(question) {
     if (questions.some((open) => open.id === question.id)) return;

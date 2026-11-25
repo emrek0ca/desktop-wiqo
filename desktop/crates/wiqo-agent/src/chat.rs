@@ -309,6 +309,12 @@ impl Asker {
                     if let Some(ui) = cards.get("ui").filter(|ui| ui.is_object()) {
                         client["ui"] = ui.clone();
                     }
+                    // A turn said aloud in the voice conversation: the answer is written to be heard, as for the phones' spoken turns.
+                    if cards.get("spoken") == Some(&Value::Bool(true)) {
+                        if let Some(features) = client["clientFeatures"].as_array_mut() {
+                            features.push(json!("voice-reply-v1"));
+                        }
+                    }
                 }
                 client
             }
@@ -2348,6 +2354,33 @@ fn parse_event_line(line: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_turn_tells_its_cards_and_a_spoken_one_asks_for_a_spoken_answer() {
+        let ui = json!({ "version": 1, "nodes": ["text"], "actions": ["send"] });
+        let spoken = Asker::Window {
+            mission: None,
+            cards: json!({ "ui": ui, "spoken": true, "uiEvent": { "docId": "d", "name": "pick", "values": [] } }),
+        };
+        let client = spoken.client(&json!({}));
+        assert_eq!(client["ui"], ui);
+        assert!(client["clientFeatures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "voice-reply-v1"));
+        assert_eq!(spoken.own_fields()["uiEvent"]["name"], "pick");
+        let typed = Asker::Window {
+            mission: None,
+            cards: json!({ "ui": ui }),
+        };
+        assert!(!typed.client(&json!({}))["clientFeatures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "voice-reply-v1"));
+        assert!(typed.own_fields().get("uiEvent").is_none());
+    }
 
     #[test]
     fn event_lines_are_read_and_the_rest_is_ignored() {
