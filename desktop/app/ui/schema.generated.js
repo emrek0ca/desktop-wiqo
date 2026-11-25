@@ -97,6 +97,7 @@ function parsePlotExpr(source) {
         return { ok: false, error: error.message };
     }
 }
+/** @public The apps and the desktop draw with it (generated copies of this file). */
 function evalPlot(n, x) {
     switch (n.k) {
         case "num": return n.v;
