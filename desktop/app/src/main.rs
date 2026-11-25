@@ -484,6 +484,7 @@ fn chat_send(
     question_id: Option<String>,
     attachments: Option<serde_json::Value>,
     mission: Option<String>,
+    cards: Option<serde_json::Value>,
 ) {
     let desktop = app.desktop.clone();
     let answer_to = task_id.zip(question_id);
@@ -498,6 +499,7 @@ fn chat_send(
                 answer_to,
                 attachments,
                 mission,
+                cards.unwrap_or(serde_json::Value::Null),
             )
             .await
     });
@@ -761,6 +763,56 @@ fn screen_memory_action(
     app.desktop
         .screen_memory_action(&action, hours, excluded)
         .map_err(text)
+}
+
+/// An automation's last runs (the phones' history page), with what started each.
+#[tauri::command]
+async fn automation_runs(app: State<'_, App>, id: u64) -> Reply<serde_json::Value> {
+    app.desktop.chat.automation_runs(id).await.map_err(text)
+}
+
+/// The projects (Projeler): the phones' code-sync API through this account's session, the encrypted projects' key, and the projects kept on this computer.
+#[tauri::command]
+async fn code_sync(
+    app: State<'_, App>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Reply<serde_json::Value> {
+    app.desktop
+        .chat
+        .code_sync(&method, &path, body)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
+async fn code_sync_picture(app: State<'_, App>, path: String) -> Reply<String> {
+    app.desktop
+        .chat
+        .code_sync_picture(&path)
+        .await
+        .map_err(text)
+}
+
+#[tauri::command]
+fn act_key(app: State<'_, App>) -> Reply<Option<String>> {
+    app.desktop.chat.act_key().map_err(text)
+}
+
+#[tauri::command]
+fn act_key_set(app: State<'_, App>, key: String) -> Reply<()> {
+    app.desktop.chat.set_act_key(&key).map_err(text)
+}
+
+#[tauri::command]
+fn projects_read(app: State<'_, App>) -> Reply<String> {
+    app.desktop.chat.projects_read().map_err(text)
+}
+
+#[tauri::command]
+fn projects_write(app: State<'_, App>, data: String) -> Reply<()> {
+    app.desktop.chat.projects_write(&data).map_err(text)
 }
 
 /// The Ajanlar list: reminders, routines, watches, jobs, to-dos, goals and helpers.
@@ -1255,6 +1307,13 @@ fn main() {
             chat_cancel,
             chat_conversations,
             agents_overview,
+            automation_runs,
+            code_sync,
+            code_sync_picture,
+            act_key,
+            act_key_set,
+            projects_read,
+            projects_write,
             agent_action,
             threads_list,
             thread_open,

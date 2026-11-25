@@ -1146,7 +1146,10 @@
       });
       foot.append(stop);
     }
-    foot.append(button("Ajanlar'da aç", "secondary small", () => window.showSection?.("agents")));
+    // A project the chat handed over (actTask): the computer writes it in Projeler, as the phones do.
+    if (item.type === "act_task" && item.request && window.WiqoProjects) foot.append(button(item.status === "awaiting_device" ? "Projelerde yap" : "Projelerde aç", "secondary small", () => window.WiqoProjects.run(item)));
+    else foot.append(button("Ajanlar'da aç", "secondary small", () => window.showSection?.("settings")));
+
     box.append(foot);
     return box;
   }
@@ -1225,5 +1228,5 @@
     }
   }
 
-  window.WiqoRender = { markdown, widget, artifactCard, stepList, pill, el, button, toneOf, statusLabel };
+  window.WiqoRender = { markdown, widget, artifactCard, stepList, pill, el, button, toneOf, statusLabel, openLink };
 })();

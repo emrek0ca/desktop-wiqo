@@ -58,8 +58,55 @@
       button.onclick = () => perform(item, action);
       actions.append(button);
     }
+    // An automation's last runs (as the phones' history page): when, how it went, and what started it.
+    const automation = /^automation:(\d+)$/.exec(item.ref || "");
+    if (automation) {
+      const history = document.createElement("button");
+      history.className = "secondary small";
+      history.textContent = "Geçmiş";
+      history.onclick = () => runs(li, Number(automation[1]), history);
+      actions.prepend(history);
+    }
     li.append(actions);
     return li;
+  }
+
+  const RUN_STATE = { completed: "Tamamlandı", failed: "Başarısız", running: "Çalışıyor", queued: "Sırada", cancelled: "İptal edildi", waiting: "Bekliyor", awaiting_device: "PC bekleniyor", unknown: "Belirsiz" };
+  const RUN_TONE = { completed: "success", failed: "danger", running: "warning", cancelled: "neutral" };
+  async function runs(li, id, toggle) {
+    const open = li.nextElementSibling?.classList.contains("agent-runs") ? li.nextElementSibling : null;
+    if (open) { open.remove(); toggle.textContent = "Geçmiş"; return; }
+    const box = document.createElement("li");
+    box.className = "agent-runs";
+    box.textContent = "Yükleniyor…";
+    li.after(box);
+    toggle.textContent = "Gizle";
+    try {
+      const value = await invoke("automation_runs", { id });
+      box.replaceChildren();
+      const list = (value.runs || []).slice(0, 10);
+      if (!list.length) box.textContent = "Henüz çalışmadı.";
+      for (const run of list) {
+        const row = document.createElement("div");
+        row.className = "agent-run";
+        const head = document.createElement("div");
+        head.className = "agent-run-head";
+        const when = document.createElement("span");
+        when.className = "muted small";
+        when.textContent = new Date(run.startedAt).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+        const pill = document.createElement("span");
+        pill.className = `pill-status ${RUN_TONE[run.status] || "neutral"}`;
+        pill.textContent = RUN_STATE[run.status] || run.status;
+        head.append(when, pill);
+        row.append(head);
+        if (run.eventNote) { const note = document.createElement("div"); note.className = "small"; note.textContent = `Tetikleyen: ${run.eventNote}`; row.append(note); }
+        const said = run.error || run.reply;
+        if (said) { const text = document.createElement("div"); text.className = `small ${run.error ? "error" : "muted"}`; text.textContent = said.length > 280 ? `${said.slice(0, 280)}…` : said; row.append(text); }
+        box.append(row);
+      }
+    } catch (error) {
+      box.textContent = String(error);
+    }
   }
 
   async function perform(item, action) {

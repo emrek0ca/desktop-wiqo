@@ -140,6 +140,9 @@
     setTimeout(() => done.context.close(), 100);
   }
 
+  // The voice conversation (talk.js) records and recognises the same way.
+  window.WiqoVoice = { toWav, base64Of, busy: () => Boolean(take) };
+
   button.onclick = () => (take ? finish() : begin());
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && take) { take.cancelled = true; finish(); } });
 

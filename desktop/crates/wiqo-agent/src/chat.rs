@@ -276,7 +276,11 @@ fn without_server_authority(mut payload: Value, card_approved: bool, send_approv
 pub enum Asker {
     /// The person typed it in this window. `mission`: the message came from a Mission in Keşfet (someone else's words); the server reads the whole
     /// task as an outsider's instruction.
-    Window { mission: Option<String> },
+    /// `cards`: what this window can draw (`ui`, wire.ts UiCapabilities) and, when the person acted on a card, that event (`uiEvent`).
+    Window {
+        mission: Option<String>,
+        cards: Value,
+    },
     AutoResume {
         prior_run: String,
         device_token: String,
@@ -300,6 +304,12 @@ impl Asker {
                     &mut client,
                     &json!({ "clientFeatures": CLIENT_FEATURES, "locale": "tr" }),
                 );
+                // Every round of the turn says what cards the window draws, so a card in a later round is drawn too.
+                if let Asker::Window { cards, .. } = self {
+                    if let Some(ui) = cards.get("ui").filter(|ui| ui.is_object()) {
+                        client["ui"] = ui.clone();
+                    }
+                }
                 client
             }
             Asker::Phone { request, .. } => {
@@ -330,10 +340,16 @@ impl Asker {
     /// computer, and the results of PC steps, are never taken from it.
     fn own_fields(&self) -> Value {
         match self {
-            Asker::Window {
-                mission: Some(code),
-            } => json!({ "missionCode": code }),
-            Asker::Window { mission: None } => json!({}),
+            Asker::Window { mission, cards } => {
+                let mut fields = json!({});
+                if let Some(code) = mission {
+                    fields["missionCode"] = json!(code);
+                }
+                if let Some(event) = cards.get("uiEvent").filter(|event| event.is_object()) {
+                    fields["uiEvent"] = event.clone();
+                }
+                fields
+            }
             Asker::AutoResume { .. } => json!({}),
             Asker::Phone { request, .. } => {
                 let mut fields = request.clone();
@@ -1177,6 +1193,181 @@ impl Chat {
             Some(&token),
         )
         .await
+    }
+
+    /// The last runs of one automation (wire.ts AutomationRun, with `eventNote`: why a watch started it).
+    pub async fn automation_runs(&self, id: u64) -> Result<Value> {
+        let token = self.token()?;
+        self.call(
+            reqwest::Method::GET,
+            &format!("automations/{id}/runs"),
+            None,
+            Some(&token),
+        )
+        .await
+    }
+
+    /// One request of the projects (the phones' code-sync API, end-to-end encrypted on the device): only `code-sync/` paths, with this account's session.
+    /// A 409 (someone else pushed first) comes back as the server's answer, not as an error: the caller merges and tries again.
+    pub async fn code_sync(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
+        let method = match method {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            _ => bail!("Bu işlem yapılamıyor."),
+        };
+        if !path.starts_with("code-sync/")
+            || path.contains("..")
+            || path.contains('#')
+            || path.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            bail!("Bu işlem yapılamıyor.");
+        }
+        let token = self.token()?;
+        let long = path.starts_with("code-sync/wait") || path.starts_with("code-sync/run");
+        let mut request = self
+            .http
+            .request(method, format!("{}/{path}", self.server))
+            .timeout(Duration::from_secs(if long { 90 } else { 45 }))
+            .bearer_auth(&token)
+            .header("Cache-Control", "no-store");
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| anyhow!("Sunucuya ulaşılamadı; internet bağlantını kontrol et."))?;
+        let status = response.status();
+        let value: Value = response.json().await.unwrap_or(Value::Null);
+        if status.as_u16() == 401 {
+            let _ = self.store(None, Some(&token));
+            bail!("Oturumun sona erdi; yeniden giriş yap.");
+        }
+        if status.is_success() || status.as_u16() == 409 {
+            return Ok(value);
+        }
+        let message = value["error"]["message"]
+            .as_str()
+            .or(value["error"].as_str())
+            .or(value["message"].as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("İstek tamamlanamadı ({}).", status.as_u16()));
+        bail!("{message}")
+    }
+
+    /// A template's preview picture (it needs the session, so the page cannot load it itself), as a data: address.
+    pub async fn code_sync_picture(&self, path: &str) -> Result<String> {
+        use base64::Engine as _;
+        if !(path.starts_with("code-sync/templates/")
+            && path.ends_with("/preview")
+            && !path.contains(".."))
+        {
+            bail!("Bu işlem yapılamıyor.");
+        }
+        let token = self.token()?;
+        let response = self
+            .http
+            .get(format!("{}/{path}", self.server))
+            .timeout(Duration::from_secs(30))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|_| anyhow!("Sunucuya ulaşılamadı."))?;
+        if !response.status().is_success() {
+            bail!("Önizleme yok.");
+        }
+        let kind = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("image/jpeg")
+            .to_string();
+        if !kind.starts_with("image/") {
+            bail!("Önizleme yok.");
+        }
+        let bytes = response.bytes().await?;
+        Ok(format!(
+            "data:{kind};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        ))
+    }
+
+    fn act_file(&self, name: &str) -> std::path::PathBuf {
+        self.file.with_file_name(name)
+    }
+
+    /// This account's project key (base64), when this computer has one.
+    pub fn act_key(&self) -> Result<Option<String>> {
+        let email = self
+            .email()
+            .ok_or_else(|| anyhow!("Önce Wiqo hesabınla giriş yap."))?;
+        if self.vault.enabled() {
+            return Ok(self.vault.load().act_keys.get(&email).cloned());
+        }
+        let keys: std::collections::BTreeMap<String, String> =
+            std::fs::read(self.act_file("act-keys.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_default();
+        Ok(keys.get(&email).cloned())
+    }
+
+    /// Keeps this account's project key (a new one, or one brought from a phone by its recovery code).
+    pub fn set_act_key(&self, key: &str) -> Result<()> {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(key)
+            .map_err(|_| anyhow!("Anahtar okunamadı."))?;
+        if bytes.len() != 32 {
+            bail!("Anahtar okunamadı.");
+        }
+        let email = self
+            .email()
+            .ok_or_else(|| anyhow!("Önce Wiqo hesabınla giriş yap."))?;
+        if self.vault.enabled() {
+            self.vault.update(|secrets| {
+                secrets.act_keys.insert(email.clone(), key.to_string());
+            })?;
+            return Ok(());
+        }
+        let file = self.act_file("act-keys.json");
+        let mut keys: std::collections::BTreeMap<String, String> = std::fs::read(&file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        keys.insert(email, key.to_string());
+        std::fs::write(&file, serde_json::to_vec(&keys)?)?;
+        Ok(())
+    }
+
+    fn projects_file(&self) -> Result<std::path::PathBuf> {
+        let email = self
+            .email()
+            .ok_or_else(|| anyhow!("Önce Wiqo hesabınla giriş yap."))?;
+        let name: String = email
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .take(80)
+            .collect();
+        Ok(self.act_file(&format!("projects-{name}.json")))
+    }
+
+    /// This account's projects on this computer (the page's own JSON; empty when there are none).
+    pub fn projects_read(&self) -> Result<String> {
+        Ok(std::fs::read_to_string(self.projects_file()?).unwrap_or_default())
+    }
+
+    pub fn projects_write(&self, text: &str) -> Result<()> {
+        if text.len() > 64 * 1024 * 1024 {
+            bail!("Projeler çok büyük.");
+        }
+        let file = self.projects_file()?;
+        let temp = file.with_extension("json.tmp");
+        std::fs::write(&temp, text)?;
+        std::fs::rename(&temp, &file)?;
+        Ok(())
     }
 
     pub async fn messages(&self, conversation: &str) -> Result<Value> {
@@ -2401,7 +2592,10 @@ mod tests {
                 None,
                 None,
                 json!([]),
-                &Asker::Window { mission: None },
+                &Asker::Window {
+                    mission: None,
+                    cards: Value::Null,
+                },
                 &|_, _| Box::pin(async { Decision::Yes }),
             )
             .await;

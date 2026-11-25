@@ -147,6 +147,8 @@
           text: previous?.syncActive ? previous.text : text,
           widgets: previous?.syncActive ? previous.widgets : item.widgets || [],
           artifacts: previous?.syncActive ? previous.artifacts : item.artifacts || [],
+          cards: previous?.syncActive ? previous.cards || [] : item.cards || [],
+          blocks: previous?.syncActive ? previous.blocks || [] : item.blocks || [],
         };
       });
       for (const message of transient) {
@@ -235,26 +237,18 @@
     return `${trace.steps.length} adımda tamamlandı · ${time}`;
   }
 
-  const PERSONAS = new Set(["general", "research", "developer", "execution"]);
-  function mascot(trace, working) {
-    const image = R.el("img", `mascot${working ? " working" : ""}`);
-    image.src = `img/agent-${PERSONAS.has(trace.persona) ? trace.persona : "general"}.png`;
-    image.alt = "";
-    return image;
-  }
-
   function traceNode(trace, live) {
     if (live && !trace.endedAt) {
       const row = R.el("div", "trace live");
       const current = [...trace.steps].reverse().find((step) => step.state === "running");
-      row.append(mascot(trace, true), R.el("span", "shimmer", current ? current.label : trace.didThink ? "Düşünüyor…" : "Hazırlanıyor…"));
+      row.append(R.el("span", "pulse"), R.el("span", "shimmer", current ? current.label : trace.didThink ? "Düşünüyor…" : "Hazırlanıyor…"));
       return row;
     }
     if (!trace.steps.length && !trace.didThink) return null;
     if (!showsTimeline(trace) && !trace.didThink) return null;
     const details = R.el("details", "trace");
     const summary = R.el("summary");
-    summary.append(window.WiqoIcons.icon("chevron.right", 11, 0.3, "trace-chevron"), mascot(trace, false), R.el("span", "", summaryOf(trace)));
+    summary.append(window.WiqoIcons.icon("chevron.right", 11, 0.3, "trace-chevron"), R.el("span", "", summaryOf(trace)));
     details.append(summary);
     const list = R.el("div", "trace-steps");
     for (const step of trace.steps) {
@@ -278,6 +272,22 @@
         if (lastUser) send(lastUser.text);
       },
     };
+  }
+
+  // What a tap on a card does (the same actions the phones run): `send` and `event` are a new turn, the rest happen here.
+  function cardAction(action, docId, nodeId, values) {
+    switch (action.type) {
+      case "send": return send(action.text);
+      case "event": return send(action.label || "Kartı yanıtladım", { uiEvent: { docId, ...(nodeId ? { nodeId } : {}), name: action.name, values: [...(action.values || []), ...(values || [])] } });
+      case "open_url": return /^https:\/\//i.test(action.url) && R.openLink(action.url);
+      case "copy": return navigator.clipboard.writeText(action.text).then(() => toast("Kopyalandı.")).catch(() => {});
+      case "share": return navigator.clipboard.writeText([action.text, action.url].filter(Boolean).join("\n")).then(() => toast("Panoya kopyalandı.")).catch(() => {});
+      case "dial": return R.openLink(`tel:${String(action.number).replace(/[^+\d]/g, "")}`);
+      case "open_map": return R.openLink(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(action.query ?? `${action.lat},${action.lng}`)}`);
+      case "stop_task": return invoke("chat_cancel", { task: action.taskId || task, conversation }).catch(() => {});
+      case "retry": return context(null, true).retry();
+      default: return undefined;
+    }
   }
 
   const userRows = new WeakMap();
@@ -315,8 +325,19 @@
       const node = traceNode(message.trace, live);
       if (node) parts.trace.push(node);
     }
-    if (message.text) parts.text.push(R.markdown(message.text, live));
+    const cards = message.cards || [];
+    const drawn = new Set();
     const ctx = context(message, latest);
+    if (!live && (message.blocks || []).length) {
+      // The reply in the order the server set: text, cards and files where the model put them.
+      const files = new Map((message.artifacts || []).map((artifact) => [artifact.artifactId || artifact.id, artifact]));
+      for (const block of [...message.blocks].sort((a, b) => a.order - b.order)) {
+        if (block.type === "markdown" && block.text) parts.text.push(R.markdown(block.text, false));
+        else if (block.type === "ui") { const doc = cards.find((item) => item.id === block.docId); if (doc) { parts.text.push(window.WiqoCards.card(doc, cardAction)); drawn.add(doc.id); } }
+        else if (block.type === "artifact" && files.has(block.artifactId)) { parts.text.push(R.artifactCard(files.get(block.artifactId), ctx)); drawn.add(`file:${block.artifactId}`); }
+      }
+    } else if (message.text) parts.text.push(R.markdown(message.text, live));
+    for (const doc of cards) if (!drawn.has(doc.id)) parts.cards.push(window.WiqoCards.card(doc, cardAction));
     const replaced = new Set((message.widgets || []).map((widget) => widget.replaces).filter(Boolean));
     // A file is drawn once: the server sends it as a file of the reply and also as a card of the same file.
     const filed = new Set((message.artifacts || []).map((artifact) => artifact.artifactId || artifact.id).filter(Boolean));
@@ -326,7 +347,7 @@
       const node = R.widget(widget, ctx);
       if (node) parts.cards.push(node);
     }
-    for (const artifact of message.artifacts || []) parts.cards.push(R.artifactCard(artifact, ctx));
+    for (const artifact of message.artifacts || []) if (!drawn.has(`file:${artifact.artifactId || artifact.id}`)) parts.cards.push(R.artifactCard(artifact, ctx));
     for (const confirmation of message.confirmations || []) {
       parts.cards.push(R.widget({ type: "approval", title: confirmation.title || confirmation.summary, detail: confirmation.message || confirmation.detail, confirmationId: confirmation.id, details: confirmation.details, expiresAt: confirmation.expiresAt }, ctx));
     }
@@ -369,9 +390,9 @@
   /** What decides how each part looks: when it is the same as last time, the part is left alone. */
   function partSignatures(message, latest, live) {
     return {
-      trace: JSON.stringify([message.trace?.steps?.map((step) => [step.id, step.state, step.label]), message.trace?.endedAt, message.trace?.persona, message.trace?.failed, live]),
-      text: `${live ? 1 : 0}|${message.error ? 1 : 0}|${message.text || ""}`,
-      cards: JSON.stringify([message.widgets, (message.artifacts || []).map((artifact) => artifact.artifactId || artifact.id), message.confirmations, message.tasks, message.location, message.note, latest]),
+      trace: JSON.stringify([message.trace?.steps?.map((step) => [step.id, step.state, step.label]), message.trace?.endedAt, message.trace?.failed, live]),
+      text: `${live ? 1 : 0}|${message.error ? 1 : 0}|${message.text || ""}|${live ? "" : JSON.stringify([message.blocks, message.blocks?.length ? message.cards : null])}`,
+      cards: JSON.stringify([message.cards, message.widgets, (message.artifacts || []).map((artifact) => artifact.artifactId || artifact.id), message.confirmations, message.tasks, message.location, message.note, latest]),
       tools: `${!live && message.text ? 1 : 0}|${latest ? 1 : 0}|${message.text || ""}`
     };
   }
@@ -553,7 +574,7 @@
     const history = messages.slice(-16).map((item) => ({ role: item.role, content: String(item.text).slice(0, 4000) }));
     const attachments = pending.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }));
     messages.push({ role: "user", text: message || "Bu görselleri incele.", images: pending.map((item) => `data:${item.mimeType};base64,${item.dataBase64}`) });
-    messages.push({ role: "assistant", text: "", steps: [], widgets: [], artifacts: [], confirmations: [], tasks: [], trace: newTrace() });
+    messages.push({ role: "assistant", text: "", steps: [], widgets: [], artifacts: [], cards: [], blocks: [], confirmations: [], tasks: [], trace: newTrace() });
     pending = [];
     renderAttachments();
     turn = uuid();
@@ -569,6 +590,7 @@
       questionId: answer?.questionId || null,
       attachments,
       mission,
+      cards: { ui: window.WiqoCards.capabilities, ...(answer?.uiEvent ? { uiEvent: answer.uiEvent } : {}) },
     });
   }
 
@@ -659,6 +681,8 @@
       if (typeof response.reply === "string" && (!response.truncated || !reply.text)) reply.text = response.reply;
       if (response.widgets) reply.widgets = response.widgets;
       if (response.artifacts) reply.artifacts = response.artifacts;
+      if (response.cards) reply.cards = response.cards;
+      if (response.blocks) reply.blocks = response.blocks;
       if (response.steps || (Number.isInteger(seq) && !response.truncated)) reply.steps = response.steps || [];
       reply.confirmations = active ? response.backendConfirmations || [] : [];
       if (response.agentTask) {
@@ -782,6 +806,10 @@
           else reply.widgets.push(data.widget);
         }
         break;
+      case "ui":
+      case "ui_patch":
+        reply.cards = window.WiqoCards.applyEvent(reply.cards || [], data);
+        return queueRender();
       case "confirmation_needed":
         reply.confirmations = data.backendConfirmations || [];
         askFor(reply.confirmations);
@@ -791,6 +819,8 @@
         if (data.reply) reply.text = data.reply;
         if (data.widgets) reply.widgets = data.widgets;
         if (data.artifacts) reply.artifacts = data.artifacts;
+        if (Array.isArray(data.cards)) reply.cards = data.cards;
+        if (Array.isArray(data.blocks)) reply.blocks = data.blocks;
         if (data.backendConfirmations) { reply.confirmations = data.backendConfirmations; askFor(reply.confirmations); }
         reply.tasks = ["agentTask", "projectTask", "deferredTask", "actTask"]
           .filter((key) => data[key] && typeof data[key] === "object")
@@ -798,7 +828,7 @@
         if (data.outcome?.state === "failed" || data.outcome?.state === "unknown") reply.error = true;
         if (data.outcome?.state === "cancelled") { reply.cancelled = true; reply.note = "Görev durduruldu."; }
         if (data.outcome?.state === "paused") reply.note = "Görev duraklatıldı.";
-        if (!data.outcome && !reply.text && !reply.widgets.length && !reply.artifacts.length && !(data.steps || []).length) reply.text = "Tamam.";
+        if (!data.outcome && !reply.text && !reply.widgets.length && !reply.artifacts.length && !(reply.cards || []).length && !(data.steps || []).length) reply.text = "Tamam.";
         break;
       case "error":
         reply.error = true;
@@ -810,13 +840,16 @@
           reply.note = data.error;
         }
         finishTrace(reply.trace, Boolean(reply.error));
-        if (local) { turn = null; task = null; }
+        if (local) { turn = null; task = null; window.dispatchEvent(new CustomEvent("wiqo-reply", { detail: { text: reply.text || "", error: Boolean(reply.error) } })); }
         loadConversations();
         if (latestSync) applyRunSync(latestSync);
         break;
     }
     render();
   }
+
+  // The voice conversation (talk.js) sends what was said as a message of this chat and reads the answer aloud.
+  window.WiqoChat = { send: (text) => send(text), busy: () => turn !== null };
 
   // ----- composer -----
 

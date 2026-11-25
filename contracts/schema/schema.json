@@ -276,6 +276,23 @@
       ],
       "additionalProperties": false
     },
+    "NoteEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "note"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
     "ThinkingEvent": {
       "type": "object",
       "properties": {
@@ -699,7 +716,8 @@
             "image",
             "chart",
             "table",
-            "data"
+            "data",
+            "video"
           ]
         },
         "filename": {
@@ -750,7 +768,8 @@
             "image",
             "chart",
             "table",
-            "data"
+            "data",
+            "video"
           ]
         },
         "filename": {
@@ -1803,6 +1822,9 @@
           "$ref": "#/$defs/ResetEvent"
         },
         {
+          "$ref": "#/$defs/NoteEvent"
+        },
+        {
           "$ref": "#/$defs/ThinkingEvent"
         },
         {
@@ -1834,6 +1856,12 @@
         },
         {
           "$ref": "#/$defs/DoneEvent"
+        },
+        {
+          "$ref": "#/$defs/UiDocEvent"
+        },
+        {
+          "$ref": "#/$defs/UiPatchEvent"
         }
       ]
     },
@@ -2764,6 +2792,13 @@
             "string",
             "null"
           ]
+        },
+        "eventNote": {
+          "description": "Why a watch started this run, in words: 'Yeni haber: …', 'Fiyat 5.800 → 5.733'.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2967,6 +3002,947 @@
         "notifications"
       ],
       "additionalProperties": false
+    },
+    "AutomationTriggerType": {
+      "type": "string",
+      "enum": [
+        "weather_temperature",
+        "gmail_new_message",
+        "notion_page_changed",
+        "google_calendar_changed",
+        "web_page_changed",
+        "web_price_changed",
+        "market_price",
+        "news_topic",
+        "automation_finished",
+        "pc_online"
+      ],
+      "description": "market_price: a market instrument (gold, a currency, an index, a share, crypto) crosses a threshold; news_topic: new reports about a topic appear."
+    },
+    "AutomationTriggerState": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/AutomationTriggerType"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "lastState": {
+          "type": "boolean"
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nextCheckAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "intervalSeconds",
+        "lastState"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationLastRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "type": "string"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpointAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastProgressAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationKind": {
+      "type": "string",
+      "enum": [
+        "reminder",
+        "routine",
+        "watch"
+      ]
+    },
+    "Automation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string",
+          "description": "What the person sees ('Toplantı'): the thing itself, not the sentence Wiqo runs."
+        },
+        "kind": {
+          "$ref": "#/$defs/AutomationKind"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "cron": {
+          "type": "string"
+        },
+        "isActive": {
+          "type": "boolean"
+        },
+        "lifecycleStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "specHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delivery": {
+          "type": "string",
+          "enum": [
+            "phone",
+            "server"
+          ],
+          "description": "phone: this phone delivers it itself (a local notification); server: the backend runs it and pushes."
+        },
+        "scheduleLabel": {
+          "description": "'Her gün 14:35', 'Altın 6.000 ₺ altına inince': the plain reading of when it happens.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastRunAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nextRunAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "targetDeviceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationLastRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trigger": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationTriggerState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "prompt",
+        "cron",
+        "isActive",
+        "delivery"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationList": {
+      "type": "object",
+      "properties": {
+        "automations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Automation"
+          }
+        }
+      },
+      "required": [
+        "automations"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationReviewItem": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "automationId": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "reply": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delivered": {
+          "type": "boolean"
+        },
+        "currentStep": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "waitingReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorCategory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpointAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastProgressAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finishedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "runId",
+        "automationId",
+        "title",
+        "status",
+        "delivered",
+        "currentStep"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationReview": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AutomationReviewItem"
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "AutomationActionResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coalesced": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "nextRunAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "AgentItemKind": {
+      "type": "string",
+      "enum": [
+        "reminder",
+        "routine",
+        "watch",
+        "job",
+        "todo",
+        "goal",
+        "helper"
+      ]
+    },
+    "AgentItemState": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "running",
+        "waiting",
+        "done",
+        "failed",
+        "attention"
+      ]
+    },
+    "AgentItemAction": {
+      "type": "string",
+      "enum": [
+        "pause",
+        "resume",
+        "run",
+        "stop",
+        "delete",
+        "complete",
+        "open"
+      ]
+    },
+    "AgentItemProgress": {
+      "type": "object",
+      "properties": {
+        "done": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "total": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "done",
+        "total"
+      ],
+      "additionalProperties": false
+    },
+    "AgentItem": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "'automation:12', 'job:34', 'todo:5', 'goal:2', 'helper:3': the handle the actions take."
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentItemKind"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "when": {
+          "description": "When it happens, in words: 'Yarın 11:00', 'Her gün 08:00', 'Yeni mail gelince'.",
+          "type": "string"
+        },
+        "at": {
+          "description": "The next occurrence or the due time, ISO.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentItemState"
+        },
+        "progress": {
+          "$ref": "#/$defs/AgentItemProgress"
+        },
+        "role": {
+          "description": "The mascot role of a job or helper.",
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItemAction"
+          }
+        },
+        "conversationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind",
+        "title",
+        "state",
+        "actions"
+      ],
+      "additionalProperties": false,
+      "description": "One thing Wiqo does for the person: a reminder, a routine, a watch, a running job, a to-do, a goal or a named helper."
+    },
+    "AgentOverview": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "now": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItem"
+          },
+          "description": "Running or waiting for the person right now, and what needs a look."
+        },
+        "scheduled": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItem"
+          },
+          "description": "Reminders, routines and watches."
+        },
+        "todos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItem"
+          }
+        },
+        "helpers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItem"
+          }
+        },
+        "recent": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentItem"
+          }
+        }
+      },
+      "required": [
+        "v",
+        "now",
+        "scheduled",
+        "todos",
+        "helpers",
+        "recent"
+      ],
+      "additionalProperties": false
+    },
+    "SubagentReport": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "done",
+            "failed",
+            "timed_out"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "id",
+        "task",
+        "state",
+        "summary",
+        "sources",
+        "ms",
+        "tokens"
+      ],
+      "additionalProperties": false
+    },
+    "ProjectTemplateField": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "ProjectTemplate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string",
+          "description": "An SF Symbols name (iOS); Android picks its own icon by category."
+        },
+        "description": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "accent": {
+          "type": "string"
+        },
+        "dark": {
+          "type": "boolean"
+        },
+        "live": {
+          "type": "boolean"
+        },
+        "pages": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "files": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "preview": {
+          "description": "The template's first screen as a picture: a path under the API ('code-sync/templates/<id>/preview'), asked with the person's token.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The sample values the person may replace with their own (name, phone, address).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectTemplateField"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "category",
+        "icon",
+        "description",
+        "kind",
+        "accent",
+        "dark",
+        "live",
+        "files"
+      ],
+      "additionalProperties": false,
+      "description": "One ready template the projects page lists."
+    },
+    "ProjectTemplateList": {
+      "type": "object",
+      "properties": {
+        "templates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectTemplate"
+          }
+        }
+      },
+      "required": [
+        "templates"
+      ],
+      "additionalProperties": false
+    },
+    "ProjectTemplateBundle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "files": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "files"
+      ],
+      "additionalProperties": false,
+      "description": "A template's files, saved as a new project as they are."
+    },
+    "PublishedSite": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "url": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "url",
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "ProjectKind": {
+      "type": "string",
+      "enum": [
+        "web",
+        "python",
+        "node",
+        "rust",
+        "csharp",
+        "go",
+        "swift",
+        "cpp"
+      ]
+    },
+    "WriterChange": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "after": {
+          "description": "The file's full new content; null = deleted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "after"
+      ],
+      "additionalProperties": false
+    },
+    "WriterResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/ProjectKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WriterChange"
+          }
+        },
+        "needsDeviceCheck": {
+          "type": "boolean"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "checks": {
+          "description": "What was checked and how it went ('Testler: 4/4 geçti'); 'Öneri: …' lines are advice.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "description": "An explain/review answer; no file changes come with it.",
+          "type": "string"
+        },
+        "assumptions": {
+          "description": "What a new project's plan decided for the person (at most three).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "kind",
+        "name",
+        "summary",
+        "changes",
+        "needsDeviceCheck",
+        "problems"
+      ],
+      "additionalProperties": false
+    },
+    "WriterAgreement": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "targetFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "baseVersion": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "goal",
+        "targetFiles",
+        "acceptance",
+        "baseVersion"
+      ],
+      "additionalProperties": false
+    },
+    "WriterJobStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "done",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "WriterJobPhase": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "writing",
+        "checking",
+        "awaiting_device_check",
+        "device_verified",
+        "device_failed",
+        "done",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "WriterJob": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/WriterJobStatus"
+        },
+        "phase": {
+          "$ref": "#/$defs/WriterJobPhase"
+        },
+        "agreement": {
+          "$ref": "#/$defs/WriterAgreement"
+        },
+        "progress": {
+          "type": "string"
+        },
+        "contract": {
+          "description": "A new project's PROJE.md, as soon as its plan exists (before the code): the contract the project is written to.",
+          "type": "string"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorCode": {
+          "description": "VALIDATION_FAILED, RUN_CAPACITY, UNSUPPORTED_PACKAGE, PACKAGE_UNAVAILABLE, RETRYABLE_RESTART",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WriterResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "taskId",
+        "status",
+        "phase",
+        "agreement",
+        "progress",
+        "error",
+        "errorCode",
+        "result"
+      ],
+      "additionalProperties": false,
+      "description": "A code-writing job as the phone polls it: where it stands, the contract once planned, and the files when done."
     },
     "DiscoverPostKind": {
       "type": "string",
@@ -5806,6 +6782,4655 @@
         }
       },
       "additionalProperties": false
+    },
+    "UiTone": {
+      "type": "string",
+      "enum": [
+        "default",
+        "muted",
+        "accent",
+        "success",
+        "warning",
+        "danger",
+        "info"
+      ],
+      "description": "The colour a thing speaks in. success = done/good, warning = needs a look, danger = failed/destructive, info = neutral news, muted = secondary, accent = the one thing to look at."
+    },
+    "UiSize": {
+      "type": "string",
+      "enum": [
+        "none",
+        "xs",
+        "sm",
+        "md",
+        "lg",
+        "xl"
+      ],
+      "description": "A step on the spacing scale; the apps map it to their own points."
+    },
+    "UiAlign": {
+      "type": "string",
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "stretch"
+      ]
+    },
+    "UiIcon": {
+      "type": "string",
+      "enum": [
+        "file",
+        "document",
+        "spreadsheet",
+        "presentation",
+        "pdf",
+        "image",
+        "video",
+        "audio",
+        "code",
+        "folder",
+        "link",
+        "download",
+        "share",
+        "copy",
+        "check",
+        "close",
+        "warning",
+        "error",
+        "info",
+        "question",
+        "lock",
+        "key",
+        "shield",
+        "trash",
+        "edit",
+        "search",
+        "add",
+        "refresh",
+        "clock",
+        "calendar",
+        "alarm",
+        "mail",
+        "message",
+        "phone",
+        "person",
+        "people",
+        "location",
+        "map",
+        "home",
+        "computer",
+        "mobile",
+        "cloud",
+        "sun",
+        "moon",
+        "rain",
+        "snow",
+        "wind",
+        "storm",
+        "temperature",
+        "star",
+        "heart",
+        "bookmark",
+        "flag",
+        "tag",
+        "bolt",
+        "sparkles",
+        "money",
+        "cart",
+        "chart",
+        "list",
+        "terminal",
+        "globe",
+        "bell",
+        "settings",
+        "play",
+        "pause",
+        "stop",
+        "arrow_up",
+        "arrow_down",
+        "arrow_right"
+      ],
+      "description": "A named icon from the fixed set; each platform maps the names to its own icons. Pick the nearest one, never invent a name."
+    },
+    "UiTextStyle": {
+      "type": "string",
+      "enum": [
+        "display",
+        "title",
+        "heading",
+        "body",
+        "caption",
+        "label",
+        "mono"
+      ],
+      "description": "display = one big number or word, title = card title, heading = section heading, body = normal, caption = small print, label = small caps-like field label, mono = fixed-width."
+    },
+    "UiSurface": {
+      "type": "string",
+      "enum": [
+        "none",
+        "card",
+        "inset",
+        "outline",
+        "tinted"
+      ],
+      "description": "The container's own background: none = invisible, card = raised card, inset = sunken block, outline = border only, tinted = soft tone background."
+    },
+    "UiAspect": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "square",
+        "standard",
+        "wide",
+        "portrait",
+        "tall"
+      ],
+      "description": "auto = the media's own shape; square 1:1; standard 4:3; wide 16:9; portrait 3:4; tall 9:16."
+    },
+    "UiPresentation": {
+      "type": "string",
+      "enum": [
+        "inline",
+        "sheet",
+        "fullscreen"
+      ],
+      "description": "inline = in the message flow (the default), sheet = a bottom sheet that opens over the chat, fullscreen = a page of its own."
+    },
+    "UiRole": {
+      "type": "string",
+      "enum": [
+        "answer",
+        "result",
+        "question",
+        "approval",
+        "progress",
+        "form",
+        "plan",
+        "notice"
+      ],
+      "description": "What the card is for. Lets the app pick chrome and behaviour (an approval gets the device-unlock treatment, a question can take focus). It never changes how the nodes render."
+    },
+    "UiTextMode": {
+      "type": "string",
+      "enum": [
+        "with_text",
+        "only"
+      ],
+      "description": "with_text = the model's written answer stays above the card; only = the card says everything and the written answer is hidden."
+    },
+    "UiStepStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "done",
+        "failed",
+        "skipped"
+      ]
+    },
+    "UiRisk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "description": "How much harm the approved action could do; high shows the stronger warning and always asks for the device unlock."
+    },
+    "UiScreen": {
+      "type": "string",
+      "enum": [
+        "settings",
+        "pair_pc",
+        "subscription",
+        "files",
+        "discover",
+        "inbox",
+        "memory",
+        "automations"
+      ],
+      "description": "A screen of the app a card may send the person to."
+    },
+    "UiValue": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "One named value: what an input held when the person acted."
+    },
+    "UiBlockMarkdown": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "markdown"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32000
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "order",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "UiBlockUi": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ui"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "docId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$",
+          "description": "The id of a card in the same message's `cards`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "order",
+        "docId"
+      ],
+      "additionalProperties": false
+    },
+    "UiBlockArtifact": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "artifact"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "artifactId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "order",
+        "artifactId"
+      ],
+      "additionalProperties": false
+    },
+    "UiStack": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "stack"
+        },
+        "direction": {
+          "description": "vertical (default) stacks children top to bottom; horizontal puts them in a row.",
+          "type": "string",
+          "enum": [
+            "vertical",
+            "horizontal"
+          ]
+        },
+        "children": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+          },
+          "description": "Ids of the child nodes, in order. Each node may be the child of one container only."
+        },
+        "gap": {
+          "$ref": "#/$defs/UiSize"
+        },
+        "padding": {
+          "$ref": "#/$defs/UiSize"
+        },
+        "align": {
+          "$ref": "#/$defs/UiAlign"
+        },
+        "surface": {
+          "$ref": "#/$defs/UiSurface"
+        },
+        "tone": {
+          "description": "Tint of the surface when surface = tinted or outline.",
+          "$ref": "#/$defs/UiTone"
+        },
+        "wrap": {
+          "description": "Horizontal only: wrap to the next line instead of squeezing.",
+          "type": "boolean"
+        },
+        "scroll": {
+          "description": "Horizontal only: scroll sideways when the children are wider than the screen (a strip of cards or chips).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "children"
+      ],
+      "additionalProperties": false,
+      "description": "Lays children out in a column or a row. The workhorse: every card is a stack."
+    },
+    "UiGrid": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "grid"
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Columns; the apps drop to fewer on a narrow screen."
+        },
+        "children": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+          },
+          "description": "Ids of the child nodes, in order. Each node may be the child of one container only."
+        },
+        "gap": {
+          "$ref": "#/$defs/UiSize"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "columns",
+        "children"
+      ],
+      "additionalProperties": false,
+      "description": "Children in equal columns (stats, thumbnails)."
+    },
+    "UiSection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "section"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        },
+        "children": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+          },
+          "description": "Ids of the child nodes, in order. Each node may be the child of one container only."
+        },
+        "collapsible": {
+          "type": "boolean"
+        },
+        "collapsed": {
+          "description": "Start folded; only with collapsible.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "children"
+      ],
+      "additionalProperties": false,
+      "description": "A titled block, optionally foldable (details, sources, logs)."
+    },
+    "UiTabItem": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        },
+        "child": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$",
+          "description": "The node shown when this tab is selected."
+        }
+      },
+      "required": [
+        "label",
+        "child"
+      ],
+      "additionalProperties": false
+    },
+    "UiTabs": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "tabs"
+        },
+        "items": {
+          "minItems": 2,
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiTabItem"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "A tab strip over alternative views of the same thing (table / chart)."
+    },
+    "UiDivider": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "divider"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": "A thin rule, optionally with a word on it."
+    },
+    "UiText": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "text"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "style": {
+          "$ref": "#/$defs/UiTextStyle"
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "format": {
+          "description": "markdown allows **bold**, *italic*, `code`, [links](https://…) and lists. Default plain.",
+          "type": "string",
+          "enum": [
+            "plain",
+            "markdown"
+          ]
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end"
+          ]
+        },
+        "maxLines": {
+          "description": "Cut with an ellipsis after this many lines.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "text"
+      ],
+      "additionalProperties": false,
+      "description": "A piece of text."
+    },
+    "UiBadge": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "badge"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "text"
+      ],
+      "additionalProperties": false,
+      "description": "A small pill: a status, a count, a tag."
+    },
+    "UiIconNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "icon"
+        },
+        "name": {
+          "$ref": "#/$defs/UiIcon"
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg",
+            "xl"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "additionalProperties": false,
+      "description": "One icon on its own."
+    },
+    "UiCallout": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "callout"
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 1500
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "tone",
+        "text"
+      ],
+      "additionalProperties": false,
+      "description": "A banner that says one important thing (a warning, a tip, an error)."
+    },
+    "UiImage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "image"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "https:// URL, a '/media/…' path from a tool result, a png/jpeg/webp 'data:image/…;base64,' picture (up to about 150 KB), or 'artifact:<id>' for a file of the person's."
+        },
+        "alt": {
+          "description": "What the picture shows, for a screen reader.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "aspect": {
+          "$ref": "#/$defs/UiAspect"
+        },
+        "fit": {
+          "type": "string",
+          "enum": [
+            "cover",
+            "contain"
+          ]
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "width": {
+          "description": "Pixel size if known: the app reserves the space before the picture loads, so nothing jumps.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "thumbUrl": {
+          "description": "A small version shown first.",
+          "type": "string",
+          "maxLength": 2000
+        },
+        "action": {
+          "description": "What a tap does; default is opening it full screen.",
+          "$ref": "#/$defs/UiAction"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "url"
+      ],
+      "additionalProperties": false,
+      "description": "A picture."
+    },
+    "UiMedia": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "media"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "poster": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "durationSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "kind",
+        "url"
+      ],
+      "additionalProperties": false,
+      "description": "A video or an audio clip with the system player. Never autoplays."
+    },
+    "UiLink": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "link"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "label",
+        "url"
+      ],
+      "additionalProperties": false,
+      "description": "A tappable link row (a source, a page)."
+    },
+    "UiCode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "code"
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "language": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "filename": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "copyable": {
+          "description": "Default true.",
+          "type": "boolean"
+        },
+        "wrap": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "code"
+      ],
+      "additionalProperties": false,
+      "description": "A code block with highlighting and a copy button."
+    },
+    "UiMath": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "math"
+        },
+        "latex": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "display": {
+          "description": "true = a centred formula on its own line; false = inline size.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "latex"
+      ],
+      "additionalProperties": false,
+      "description": "A formula written in LaTeX."
+    },
+    "UiStat": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "stat"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Already formatted, with unit: '24°C', '₺1.240', '98%'."
+        },
+        "delta": {
+          "description": "The change, formatted: '+3,2%'.",
+          "type": "string",
+          "maxLength": 40
+        },
+        "trend": {
+          "description": "Direction of delta; the tone is yours: down can be good.",
+          "type": "string",
+          "enum": [
+            "up",
+            "down",
+            "flat"
+          ]
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "One big number with a label (a total, a temperature, a score)."
+    },
+    "UiKeyValueRow": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "copyable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "UiKeyValue": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "keyValue"
+        },
+        "rows": {
+          "minItems": 1,
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiKeyValueRow"
+          }
+        },
+        "layout": {
+          "type": "string",
+          "enum": [
+            "inline",
+            "stacked"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "rows"
+      ],
+      "additionalProperties": false,
+      "description": "Label: value pairs (details of a booking, a file's properties)."
+    },
+    "UiListItem": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "detail": {
+          "description": "A third, smaller line.",
+          "type": "string",
+          "maxLength": 1200
+        },
+        "leading": {
+          "$ref": "#/$defs/UiIcon"
+        },
+        "trailing": {
+          "description": "Text on the right: a time, a price.",
+          "type": "string",
+          "maxLength": 60
+        },
+        "badge": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "badgeTone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "checked": {
+          "description": "Only for style = checklist.",
+          "type": "boolean"
+        },
+        "image": {
+          "description": "A small picture at the start of the row (a thumbnail, a logo).",
+          "type": "string",
+          "maxLength": 2000
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "action": {
+          "$ref": "#/$defs/UiAction"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "UiList": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "list"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "bullets",
+            "numbers",
+            "checklist",
+            "cards"
+          ]
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 60,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiListItem"
+          }
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "Rows. plain = separated rows, bullets/numbers = a written list, checklist = ticked rows, cards = one small card per row."
+    },
+    "UiTableColumn": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end"
+          ]
+        },
+        "kind": {
+          "description": "How cells of this column are drawn and aligned; numbers and money right-align.",
+          "type": "string",
+          "enum": [
+            "text",
+            "number",
+            "money",
+            "percent",
+            "date",
+            "badge",
+            "link"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "UiTableRow": {
+      "type": "object",
+      "properties": {
+        "cells": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "tone": {
+          "description": "Tints the whole row (a total, a problem).",
+          "$ref": "#/$defs/UiTone"
+        },
+        "action": {
+          "description": "What tapping the row does (open the item).",
+          "$ref": "#/$defs/UiAction"
+        }
+      },
+      "required": [
+        "cells"
+      ],
+      "additionalProperties": false
+    },
+    "UiTable": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "table"
+        },
+        "columns": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiTableColumn"
+          }
+        },
+        "rows": {
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiTableRow"
+          }
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "totalRows": {
+          "description": "When `rows` is only the first part of a longer table.",
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "striped": {
+          "type": "boolean"
+        },
+        "stickyFirstColumn": {
+          "type": "boolean"
+        },
+        "footer": {
+          "description": "A totals row that stays under the rows.",
+          "$ref": "#/$defs/UiTableRow"
+        },
+        "sortable": {
+          "description": "The person may tap a column header to sort.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "columns",
+        "rows"
+      ],
+      "additionalProperties": false,
+      "description": "A table. Each row has one cell per column, in column order, already formatted as text."
+    },
+    "UiChartPoint": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "A category ('Mon') or an ISO time when xKind = time."
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    },
+    "UiChartSeries": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        },
+        "points": {
+          "minItems": 1,
+          "maxItems": 240,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiChartPoint"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "points"
+      ],
+      "additionalProperties": false
+    },
+    "UiChart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "chart"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "line",
+            "bar",
+            "area",
+            "pie",
+            "donut"
+          ]
+        },
+        "series": {
+          "minItems": 1,
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiChartSeries"
+          }
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "xKind": {
+          "type": "string",
+          "enum": [
+            "category",
+            "time"
+          ]
+        },
+        "xLabel": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "yLabel": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "unit": {
+          "description": "Appended to values: '°C', '₺', '%'.",
+          "type": "string",
+          "maxLength": 20
+        },
+        "stacked": {
+          "type": "boolean"
+        },
+        "yMin": {
+          "type": "number"
+        },
+        "yMax": {
+          "type": "number"
+        },
+        "showValues": {
+          "description": "Print the value on each bar or point.",
+          "type": "boolean"
+        },
+        "goal": {
+          "$ref": "#/$defs/UiGoal"
+        },
+        "heightHint": {
+          "description": "pie/donut use the first series only.",
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "kind",
+        "series"
+      ],
+      "additionalProperties": false,
+      "description": "A chart drawn natively from the numbers. Prefer it to a picture of a chart."
+    },
+    "UiProgress": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "progress"
+        },
+        "value": {
+          "description": "0 to 1. Leave out for 'working, no idea how long'.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "bar",
+            "ring"
+          ]
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": "A progress bar or ring."
+    },
+    "UiStepItem": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "status": {
+          "$ref": "#/$defs/UiStepStatus"
+        },
+        "meta": {
+          "description": "A duration or a time: '4 sn'.",
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "title",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "UiSteps": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "steps"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiStepItem"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "A plan or a timeline: what is done, what is running, what comes next."
+    },
+    "UiMapPin": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        }
+      },
+      "required": [
+        "lat",
+        "lng",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "UiMap": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "map"
+        },
+        "pins": {
+          "minItems": 1,
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiMapPin"
+          }
+        },
+        "zoom": {
+          "description": "Left out = fit every pin.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "heightHint": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "pins"
+      ],
+      "additionalProperties": false,
+      "description": "A map with pins."
+    },
+    "UiFile": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "file"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "filename": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "mime": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "artifactId": {
+          "description": "The id of the file from the tool that made it. A tap opens it.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "previewUrl": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "actions": {
+          "description": "Extra buttons (share, save). Without them: open and share.",
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiAction"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "title",
+        "filename"
+      ],
+      "additionalProperties": false,
+      "description": "A file row with its type, size and a preview if there is one."
+    },
+    "UiButton": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "button"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary",
+            "plain",
+            "danger"
+          ]
+        },
+        "action": {
+          "$ref": "#/$defs/UiAction"
+        },
+        "confirm": {
+          "$ref": "#/$defs/UiConfirm"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "fullWidth": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "label",
+        "action"
+      ],
+      "additionalProperties": false,
+      "description": "A button. It does exactly one UiAction, after an optional 'are you sure?'."
+    },
+    "UiOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "UiChoice": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "choice"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$",
+          "description": "The input's name in the event values."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "options": {
+          "minItems": 2,
+          "maxItems": 24,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiOption"
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "single",
+            "multi"
+          ]
+        },
+        "display": {
+          "type": "string",
+          "enum": [
+            "chips",
+            "list",
+            "segmented"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "value": {
+          "description": "Ids selected at the start.",
+          "maxItems": 24,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 60
+          }
+        },
+        "onSelect": {
+          "description": "Outside a form: runs the moment one option is tapped (quick replies). Without it, and outside a form, the tapped option's label is sent as a message.",
+          "$ref": "#/$defs/UiAction"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name",
+        "options"
+      ],
+      "additionalProperties": false,
+      "description": "Pick one or more of a few options. As quick replies under an answer, or as a field of a form."
+    },
+    "UiTextField": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "textField"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "placeholder": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text",
+            "multiline",
+            "number",
+            "email",
+            "url",
+            "phone",
+            "date",
+            "time",
+            "datetime"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4000
+        },
+        "pattern": {
+          "description": "A regular expression the whole value must match (ECMAScript syntax, kept simple).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "min": {
+          "description": "Smallest number (kind number) or earliest date.",
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "errorText": {
+          "description": "What to say when the value is not accepted.",
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "additionalProperties": false,
+      "description": "A field the person types or picks into. Only meaningful inside a form."
+    },
+    "UiToggle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "toggle"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name",
+        "label"
+      ],
+      "additionalProperties": false,
+      "description": "An on/off switch. Value is 'true' or 'false' in the event."
+    },
+    "UiSlider": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "slider"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name",
+        "label",
+        "min",
+        "max"
+      ],
+      "additionalProperties": false,
+      "description": "Pick a number in a range."
+    },
+    "UiForm": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "form"
+        },
+        "children": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+          },
+          "description": "Ids of the child nodes, in order. Each node may be the child of one container only."
+        },
+        "submit": {
+          "description": "What happens on submit: always an event; the values of every input below are added to it by name.",
+          "$ref": "#/$defs/UiEventAction"
+        },
+        "submitLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "cancelLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "afterSubmit": {
+          "description": "A node of this document (its own subtree) that replaces the form once it is sent: 'Teşekkürler, plan hazırlanıyor'. It is not drawn before.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "cancel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "dismiss"
+            },
+            {
+              "type": "string",
+              "const": "none"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "children",
+        "submit"
+      ],
+      "additionalProperties": false,
+      "description": "Groups inputs with one submit button; the app draws the button and validates `required` before sending."
+    },
+    "UiApprovalItem": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 400
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "UiApproval": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "approval"
+        },
+        "confirmationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "The id the backend gave the pending action: the card resolves exactly that confirmation, nothing else."
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1200
+        },
+        "risk": {
+          "$ref": "#/$defs/UiRisk"
+        },
+        "items": {
+          "description": "The facts the person is agreeing to: which file, which recipient, which amount.",
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiApprovalItem"
+          }
+        },
+        "approveLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "denyLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "allowAlways": {
+          "description": "Offer 'always allow this kind of action'. Never for high risk.",
+          "type": "boolean"
+        },
+        "expiresAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "confirmationId",
+        "title",
+        "risk"
+      ],
+      "additionalProperties": false,
+      "description": "Asks the person to approve one pending action (PC command, send, delete). The app draws it with the device-unlock treatment; the model cannot restyle it."
+    },
+    "UiHtml": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "html"
+        },
+        "html": {
+          "type": "string",
+          "maxLength": 60000,
+          "description": "A full HTML fragment with inline CSS (and inline JS only if interactive). No external requests: images must be data: URIs."
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "heightHint": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg",
+            "tall"
+          ]
+        },
+        "interactive": {
+          "description": "Allow the page's own script. Without it scripts are removed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "html"
+      ],
+      "additionalProperties": false,
+      "description": "LAST RESORT for what no other node can draw (a custom diagram, a small game). Runs in a sandbox: no network, no cookies, no bridge to the app. At most one per document."
+    },
+    "UiDiffLine": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "context",
+            "add",
+            "remove"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "UiDiff": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "diff"
+        },
+        "filename": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "created",
+            "modified",
+            "deleted"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "added": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "lines": {
+          "maxItems": 300,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiDiffLine"
+          }
+        },
+        "collapsed": {
+          "description": "Start folded to the title row; the counts stay visible.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "filename",
+        "status",
+        "lines"
+      ],
+      "additionalProperties": false,
+      "description": "What changed in one file (a code edit, a document edit): added and removed lines, with a few lines of context."
+    },
+    "UiQuote": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "quote"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "text"
+      ],
+      "additionalProperties": false,
+      "description": "A quotation or a passage from a source, set apart."
+    },
+    "UiCountdown": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "countdown"
+        },
+        "until": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO 8601 with offset."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "doneText": {
+          "description": "Shown when the time has come.",
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "until"
+      ],
+      "additionalProperties": false,
+      "description": "A live countdown to a moment (a timer, an event, an offer)."
+    },
+    "UiGalleryImage": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "alt": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "thumbUrl": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "url",
+        "alt"
+      ],
+      "additionalProperties": false
+    },
+    "UiGallery": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "gallery"
+        },
+        "images": {
+          "minItems": 2,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiGalleryImage"
+          }
+        },
+        "aspect": {
+          "$ref": "#/$defs/UiAspect"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "images"
+      ],
+      "additionalProperties": false,
+      "description": "Several pictures to swipe through (search results, generated images)."
+    },
+    "UiSkeleton": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "skeleton"
+        },
+        "shape": {
+          "type": "string",
+          "enum": [
+            "text",
+            "card",
+            "image",
+            "list"
+          ]
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "shape"
+      ],
+      "additionalProperties": false,
+      "description": "A grey placeholder for what is still being worked on. Replace it with the real node by patching the same id."
+    },
+    "UiSpacer": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "spacer"
+        },
+        "size": {
+          "$ref": "#/$defs/UiSize"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "size"
+      ],
+      "additionalProperties": false,
+      "description": "Empty space."
+    },
+    "UiAvatar": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "avatar"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "persona": {
+          "description": "One of Wiqo's teammates by persona; draws their face.",
+          "type": "string",
+          "maxLength": 30
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "additionalProperties": false,
+      "description": "A person or a teammate: picture, or initials when there is none."
+    },
+    "UiSourceItem": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "published": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "UiSources": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "sources"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiSourceItem"
+          }
+        },
+        "label": {
+          "description": "Default 'Kaynaklar'.",
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "Where an answer's facts came from: the sites as small round pictures that overlap, and a tap opens the list. Never write source lines by hand; use this."
+    },
+    "UiPlotFunction": {
+      "type": "object",
+      "properties": {
+        "expr": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "The right-hand side in x: '2x^2-5x+3', 'sin(x)', 'sqrt(x)'. + - * / ^, parentheses, 2x, pi, e, sin cos tan sqrt abs ln log exp."
+        },
+        "label": {
+          "description": "Shown in the legend; default 'y = <expr>'.",
+          "type": "string",
+          "maxLength": 60
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        }
+      },
+      "required": [
+        "expr"
+      ],
+      "additionalProperties": false
+    },
+    "UiPlotPoint": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    },
+    "UiPlot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "plot"
+        },
+        "functions": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiPlotFunction"
+          }
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "xMin": {
+          "type": "number"
+        },
+        "xMax": {
+          "type": "number"
+        },
+        "yMin": {
+          "type": "number"
+        },
+        "yMax": {
+          "type": "number"
+        },
+        "points": {
+          "description": "Extra marked points. Roots, the vertex and the y-intercept are found and marked by the app; do not list them.",
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiPlotPoint"
+          }
+        },
+        "heightHint": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "functions"
+      ],
+      "additionalProperties": false,
+      "description": "A function graph the app draws from the expression itself (exact, zoomable, full screen, more functions can be added). Use it for every 'grafiğini çiz' of a function; never a chart with sampled points."
+    },
+    "UiProductItem": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "price": {
+          "description": "Formatted as the store shows it: '₺79,95'.",
+          "type": "string",
+          "maxLength": 40
+        },
+        "store": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "url": {
+          "description": "The product page, https; from a search result, never made up.",
+          "type": "string",
+          "maxLength": 2000
+        },
+        "imageUrl": {
+          "description": "https picture from the search result.",
+          "type": "string",
+          "maxLength": 2000
+        },
+        "note": {
+          "description": "A short fact: 'kg fiyatı', 'stokta'.",
+          "type": "string",
+          "maxLength": 120
+        },
+        "rating": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "UiProduct": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "product"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiProductItem"
+          }
+        },
+        "caption": {
+          "description": "A line under the list: 'Fiyatlar bölgeye göre değişebilir.'",
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "Products with picture, price, store and a 'Satın al' link, from a web search. Only with real prices and links that came from a tool; never invent one."
+    },
+    "UiNewsSource": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "name": {
+          "description": "The outlet: 'TechCrunch'.",
+          "type": "string",
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "UiNewsItem": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "The headline, in the person's language."
+        },
+        "summary": {
+          "description": "Two sentences at most: what happened and why it matters, from the source.",
+          "type": "string",
+          "maxLength": 600
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "The story's page, https, from a tool result."
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "The outlet that published it: 'TechCrunch', 'BBC Türkçe'."
+        },
+        "published": {
+          "description": "As the person reads it: '23 Kasım', 'bugün 14:20'.",
+          "type": "string",
+          "maxLength": 40
+        },
+        "category": {
+          "description": "One or two words: 'Robotik', 'AI modelleri'.",
+          "type": "string",
+          "maxLength": 40
+        },
+        "image": {
+          "description": "The story's picture: the 'görsel:' address of that source in the tool result, exactly; leave out when there is none. Never another address.",
+          "type": "string",
+          "maxLength": 2000
+        },
+        "more": {
+          "description": "Other outlets that reported the same story (shown as '+N').",
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiNewsSource"
+          }
+        },
+        "linkLabel": {
+          "description": "Default 'Haberi oku'; 'Resmî açıklama' for an official statement.",
+          "type": "string",
+          "maxLength": 30
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "UiNews": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "news"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiNewsItem"
+          }
+        },
+        "title": {
+          "description": "A heading over the stories: 'Yapay zekâ gündemi'.",
+          "type": "string",
+          "maxLength": 120
+        },
+        "checkedAt": {
+          "description": "When the web was checked, as the person reads it ('25 Kasım 2026'): shows the 'Web üzerinden doğrulandı' mark.",
+          "type": "string",
+          "maxLength": 40
+        },
+        "layout": {
+          "description": "lead (default) = the first story large with its picture, the rest as rows with a thumbnail; list = all rows; carousel = cards to swipe.",
+          "type": "string",
+          "enum": [
+            "lead",
+            "list",
+            "carousel"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "News stories from a web search: picture, outlet, date, headline, summary and a link to read the story. Only stories that came from a tool."
+    },
+    "UiBarItem": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "value": {
+          "type": "number",
+          "description": "The number the bar's length is drawn from."
+        },
+        "display": {
+          "description": "The value as written: '560B', '₺1.240', '%42'. Default: the number.",
+          "type": "string",
+          "maxLength": 40
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "UiBars": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "bars"
+        },
+        "items": {
+          "minItems": 2,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiBarItem"
+          }
+        },
+        "title": {
+          "description": "What is measured: 'Toplam parametre sayısı'.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "max": {
+          "description": "The value of a full bar; default the largest item.",
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "A ranked comparison of one number across a few things, as labelled horizontal bars with the value at the end. Better than a chart for 2-12 named items."
+    },
+    "UiSuggestionItem": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "What the button says: 'Yeni AI modelleri'."
+        },
+        "prompt": {
+          "description": "The message sent when tapped; default the label.",
+          "type": "string",
+          "maxLength": 400
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "UiSuggestions": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "suggestions"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiSuggestionItem"
+          }
+        },
+        "title": {
+          "description": "Default 'Daha fazla araştır'.",
+          "type": "string",
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "items"
+      ],
+      "additionalProperties": false,
+      "description": "Next questions the person can ask with one tap, under an answer; each sends its prompt as the person's next message."
+    },
+    "UiFlowGroupItem": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "UiFlowStep": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "icon": {
+          "$ref": "#/$defs/UiIcon"
+        },
+        "group": {
+          "description": "Several things side by side at this step (the branches); title is then the group's name.",
+          "minItems": 2,
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiFlowGroupItem"
+          }
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "UiFlow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "a11y": {
+          "description": "What a screen reader says for this node, when the visible text is not enough (an icon-only button, a chart).",
+          "type": "string",
+          "maxLength": 200
+        },
+        "when": {
+          "description": "Only shown while this condition on an input holds.",
+          "$ref": "#/$defs/UiCondition"
+        },
+        "grow": {
+          "description": "In a horizontal stack: how much of the leftover width this node takes (0 = just its own size).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "fallback": {
+          "description": "What an app that does not know this node type shows instead, as plain text. Always give one for html, map, chart and anything unusual.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "type": {
+          "type": "string",
+          "const": "flow"
+        },
+        "steps": {
+          "minItems": 2,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiFlowStep"
+          }
+        },
+        "highlightLast": {
+          "description": "The last box is the result: drawn filled.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "steps"
+      ],
+      "additionalProperties": false,
+      "description": "A diagram of boxes joined by arrows, top to bottom (how a system works, a process); a step can hold several boxes side by side."
+    },
+    "UiSendAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "send"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Sent as the person's own next message, exactly like typing it. Use it for quick replies and 'ask me again' buttons."
+        },
+        "once": {
+          "description": "The control that did this is disabled afterwards (a choice that must be answered once).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "UiEventAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$",
+          "description": "Machine name of what happened, e.g. 'pick_slot'. The model reads it back next turn together with the values."
+        },
+        "values": {
+          "description": "Fixed values to send. Inputs of an enclosing form are added automatically, by their `name`.",
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiValue"
+          }
+        },
+        "label": {
+          "description": "What the chat shows as the person's message, e.g. 'Salı 14:00'. Without it nothing is shown.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "delivery": {
+          "description": "model (default) = a new turn runs with this event; silent = the backend records it and no turn starts.",
+          "type": "string",
+          "enum": [
+            "model",
+            "silent"
+          ]
+        },
+        "once": {
+          "description": "The control is disabled after the first use, and the card shows what was chosen.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "UiOpenUrlAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "open_url"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "https:// only. The app opens it in the browser, after showing the host."
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "UiOpenFileAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "open_file"
+        },
+        "artifactId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$",
+          "description": "A file Wiqo made or the person has (an artifact id from a tool result)."
+        }
+      },
+      "required": [
+        "type",
+        "artifactId"
+      ],
+      "additionalProperties": false
+    },
+    "UiCopyAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "copy"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "UiShareAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "share"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "artifactId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "UiOpenScreenAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "open_screen"
+        },
+        "screen": {
+          "$ref": "#/$defs/UiScreen"
+        }
+      },
+      "required": [
+        "type",
+        "screen"
+      ],
+      "additionalProperties": false
+    },
+    "UiStopTaskAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "stop_task"
+        },
+        "taskId": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "type",
+        "taskId"
+      ],
+      "additionalProperties": false
+    },
+    "UiRetryAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "retry"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": "Runs the last turn again."
+    },
+    "UiDismissAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dismiss"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": "Closes the sheet or full-screen card it was opened in; in the message flow it folds the card."
+    },
+    "UiCalendarAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "add_to_calendar"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "start": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO 8601 with offset, or a date for an all-day entry."
+        },
+        "end": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "start"
+      ],
+      "additionalProperties": false,
+      "description": "Opens the system 'add event' sheet with these values filled in. The person still saves it."
+    },
+    "UiDialAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dial"
+        },
+        "number": {
+          "type": "string",
+          "pattern": "^[+0-9 ()-]{3,24}$"
+        }
+      },
+      "required": [
+        "type",
+        "number"
+      ],
+      "additionalProperties": false,
+      "description": "Opens the dialler with the number. It never calls by itself."
+    },
+    "UiOpenMapAction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "open_map"
+        },
+        "query": {
+          "description": "An address or a place name.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "lng": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": "Opens the system maps at a place: either `query`, or `lat` and `lng`."
+    },
+    "UiCondition": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$",
+          "description": "The name of an input of this document (choice, textField, toggle, slider)."
+        },
+        "is": {
+          "type": "string",
+          "enum": [
+            "equals",
+            "not_equals",
+            "filled",
+            "empty",
+            "checked"
+          ],
+          "description": "equals/not_equals compare with `value`; filled/empty = has/has no value; checked = a toggle that is on."
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "name",
+        "is"
+      ],
+      "additionalProperties": false,
+      "description": "Shows a node only while the input it names has that state: a field that appears when a switch is on."
+    },
+    "UiConfirm": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "confirmLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "danger": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false,
+      "description": "Asks 'are you sure?' before the action runs. Use it on anything that deletes, sends or spends."
+    },
+    "UiGoal": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "A reference line on a chart: a target, a limit, an average."
+    },
+    "UiBlock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiBlockMarkdown"
+        },
+        {
+          "$ref": "#/$defs/UiBlockUi"
+        },
+        {
+          "$ref": "#/$defs/UiBlockArtifact"
+        }
+      ],
+      "description": "One piece of a reply, in reading order: markdown text, a card of the message, or a file."
+    },
+    "UiCapabilities": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "nodes": {
+          "maxItems": 80,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "description": "Node types this app can draw."
+        },
+        "actions": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "description": "Action types this app can run."
+        },
+        "presentations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiPresentation"
+          }
+        },
+        "html": {
+          "description": "Can this app run the sandboxed html node.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "version",
+        "nodes",
+        "actions"
+      ],
+      "additionalProperties": false,
+      "description": "What an app can draw, sent with its requests. The backend downgrades a card for an app that is behind, so a new node never breaks an old app."
+    },
+    "UiAction": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiSendAction"
+        },
+        {
+          "$ref": "#/$defs/UiEventAction"
+        },
+        {
+          "$ref": "#/$defs/UiOpenUrlAction"
+        },
+        {
+          "$ref": "#/$defs/UiOpenFileAction"
+        },
+        {
+          "$ref": "#/$defs/UiCopyAction"
+        },
+        {
+          "$ref": "#/$defs/UiShareAction"
+        },
+        {
+          "$ref": "#/$defs/UiOpenScreenAction"
+        },
+        {
+          "$ref": "#/$defs/UiStopTaskAction"
+        },
+        {
+          "$ref": "#/$defs/UiRetryAction"
+        },
+        {
+          "$ref": "#/$defs/UiDismissAction"
+        },
+        {
+          "$ref": "#/$defs/UiCalendarAction"
+        },
+        {
+          "$ref": "#/$defs/UiDialAction"
+        },
+        {
+          "$ref": "#/$defs/UiOpenMapAction"
+        }
+      ],
+      "description": "Everything a button, a row or an image can do. Closed on purpose: a card can ask for one of these and nothing else."
+    },
+    "UiNode": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiStack"
+        },
+        {
+          "$ref": "#/$defs/UiGrid"
+        },
+        {
+          "$ref": "#/$defs/UiSection"
+        },
+        {
+          "$ref": "#/$defs/UiTabs"
+        },
+        {
+          "$ref": "#/$defs/UiDivider"
+        },
+        {
+          "$ref": "#/$defs/UiText"
+        },
+        {
+          "$ref": "#/$defs/UiBadge"
+        },
+        {
+          "$ref": "#/$defs/UiIconNode"
+        },
+        {
+          "$ref": "#/$defs/UiCallout"
+        },
+        {
+          "$ref": "#/$defs/UiImage"
+        },
+        {
+          "$ref": "#/$defs/UiMedia"
+        },
+        {
+          "$ref": "#/$defs/UiLink"
+        },
+        {
+          "$ref": "#/$defs/UiCode"
+        },
+        {
+          "$ref": "#/$defs/UiMath"
+        },
+        {
+          "$ref": "#/$defs/UiStat"
+        },
+        {
+          "$ref": "#/$defs/UiKeyValue"
+        },
+        {
+          "$ref": "#/$defs/UiList"
+        },
+        {
+          "$ref": "#/$defs/UiTable"
+        },
+        {
+          "$ref": "#/$defs/UiChart"
+        },
+        {
+          "$ref": "#/$defs/UiProgress"
+        },
+        {
+          "$ref": "#/$defs/UiSteps"
+        },
+        {
+          "$ref": "#/$defs/UiMap"
+        },
+        {
+          "$ref": "#/$defs/UiFile"
+        },
+        {
+          "$ref": "#/$defs/UiButton"
+        },
+        {
+          "$ref": "#/$defs/UiChoice"
+        },
+        {
+          "$ref": "#/$defs/UiTextField"
+        },
+        {
+          "$ref": "#/$defs/UiToggle"
+        },
+        {
+          "$ref": "#/$defs/UiSlider"
+        },
+        {
+          "$ref": "#/$defs/UiForm"
+        },
+        {
+          "$ref": "#/$defs/UiApproval"
+        },
+        {
+          "$ref": "#/$defs/UiHtml"
+        },
+        {
+          "$ref": "#/$defs/UiDiff"
+        },
+        {
+          "$ref": "#/$defs/UiQuote"
+        },
+        {
+          "$ref": "#/$defs/UiCountdown"
+        },
+        {
+          "$ref": "#/$defs/UiGallery"
+        },
+        {
+          "$ref": "#/$defs/UiSkeleton"
+        },
+        {
+          "$ref": "#/$defs/UiSpacer"
+        },
+        {
+          "$ref": "#/$defs/UiAvatar"
+        },
+        {
+          "$ref": "#/$defs/UiSources"
+        },
+        {
+          "$ref": "#/$defs/UiPlot"
+        },
+        {
+          "$ref": "#/$defs/UiProduct"
+        },
+        {
+          "$ref": "#/$defs/UiFlow"
+        },
+        {
+          "$ref": "#/$defs/UiNews"
+        },
+        {
+          "$ref": "#/$defs/UiBars"
+        },
+        {
+          "$ref": "#/$defs/UiSuggestions"
+        }
+      ],
+      "description": "One piece of a card. `type` says which; see the catalog."
+    },
+    "UiDoc": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$",
+          "description": "Stable name of this card. Sending a document with the id of an earlier one REPLACES it (a progress card updating itself)."
+        },
+        "title": {
+          "description": "Used by the sheet header and by history lists; the first node usually repeats it visibly.",
+          "type": "string",
+          "maxLength": 160
+        },
+        "role": {
+          "$ref": "#/$defs/UiRole"
+        },
+        "presentation": {
+          "$ref": "#/$defs/UiPresentation"
+        },
+        "textMode": {
+          "$ref": "#/$defs/UiTextMode"
+        },
+        "lang": {
+          "description": "BCP 47 language of the card's text ('tr', 'en'); lets the app format dates and read it aloud correctly.",
+          "type": "string",
+          "maxLength": 12
+        },
+        "status": {
+          "description": "active = can still be acted on (default), completed = done, controls are disabled, stale = out of date, drawn muted.",
+          "type": "string",
+          "enum": [
+            "active",
+            "completed",
+            "stale"
+          ]
+        },
+        "expiresAt": {
+          "description": "After this time the app treats the card as stale (an approval that timed out, an offer).",
+          "type": "string",
+          "maxLength": 40
+        },
+        "root": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$",
+          "description": "Id of the first node."
+        },
+        "nodes": {
+          "minItems": 1,
+          "maxItems": 120,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiNode"
+          }
+        },
+        "fallbackText": {
+          "type": "string",
+          "maxLength": 1500,
+          "description": "The card as plain text, in the person's language. Shown where nothing can draw it (a notification, Telegram, an old app, a screen reader on failure) and kept in history."
+        }
+      },
+      "required": [
+        "version",
+        "id",
+        "root",
+        "nodes",
+        "fallbackText"
+      ],
+      "additionalProperties": false,
+      "description": "A card: a flat list of nodes starting at `root`."
+    },
+    "UiDocEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ui"
+        },
+        "doc": {
+          "$ref": "#/$defs/UiDoc"
+        },
+        "complete": {
+          "description": "false while the document is still being written; the app may draw what it has.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "doc"
+      ],
+      "additionalProperties": false,
+      "description": "Stream event: a whole document, which replaces any earlier one with the same doc.id."
+    },
+    "UiPatchEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ui_patch"
+        },
+        "docId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "upsert": {
+          "description": "Nodes to add, or to replace by id.",
+          "maxItems": 120,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiNode"
+          }
+        },
+        "remove": {
+          "maxItems": 120,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+          }
+        },
+        "root": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "appendText": {
+          "description": "Text added to the end of existing `text` or `code` nodes: a long answer streaming into its card.",
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 8000
+              }
+            },
+            "required": [
+              "id",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "type",
+        "docId"
+      ],
+      "additionalProperties": false,
+      "description": "Stream event: changes to a document already sent (nodes arriving while the model writes, a progress bar moving)."
+    },
+    "UiEventRequest": {
+      "type": "object",
+      "properties": {
+        "docId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "nodeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,40}$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,48}$"
+        },
+        "values": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiValue"
+          }
+        },
+        "conversationId": {
+          "description": "Only when posted on its own; inside a chat request the request's own conversation is meant.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "messageId": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "docId",
+        "name",
+        "values"
+      ],
+      "additionalProperties": false,
+      "description": "What an app posts when the person acts on an `event` action or submits a form: the name, and the values of the inputs by name."
     }
   }
 }

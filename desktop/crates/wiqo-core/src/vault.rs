@@ -21,6 +21,9 @@ pub struct Secrets {
     /// The person's own Wiqo account session for the chat in the window.
     #[serde(default)]
     pub account: Option<Account>,
+    /// Account email → the master key of its end-to-end encrypted projects (base64; the phones show it as the recovery code).
+    #[serde(default)]
+    pub act_keys: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

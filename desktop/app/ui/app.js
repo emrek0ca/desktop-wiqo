@@ -99,7 +99,7 @@ async function refresh() {
   render();
 }
 
-const SECTION_TITLES = { apps: "Uygulamalar", threads: "Ajanlar", settings: "Ayarlar", discover: "Keşfet" };
+const SECTION_TITLES = { projects: "Projeler", apps: "Uygulamalar", threads: "Ajanlar", settings: "Ayarlar", discover: "Keşfet" };
 
 function showSection(name) {
   for (const button of document.querySelectorAll(".nav")) button.classList.toggle("active", button.dataset.section === name);

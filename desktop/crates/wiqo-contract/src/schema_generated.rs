@@ -201,6 +201,11 @@ pub struct ResetEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteEvent {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingEvent {
     pub text: String,
 }
@@ -384,6 +389,8 @@ pub enum AgentTaskArtifactInfoKind {
     Table,
     #[serde(rename = "data")]
     Data,
+    #[serde(rename = "video")]
+    Video,
     /// A value a newer server sends that this build does not know.
     #[serde(other)]
     Unrecognized,
@@ -421,6 +428,8 @@ pub enum AgentTaskArtifactKind {
     Table,
     #[serde(rename = "data")]
     Data,
+    #[serde(rename = "video")]
+    Video,
     /// A value a newer server sends that this build does not know.
     #[serde(other)]
     Unrecognized,
@@ -919,6 +928,8 @@ pub enum StreamEvent {
     Delta(DeltaEvent),
     #[serde(rename = "reset")]
     Reset(ResetEvent),
+    #[serde(rename = "note")]
+    Note(NoteEvent),
     #[serde(rename = "thinking")]
     Thinking(ThinkingEvent),
     #[serde(rename = "status")]
@@ -941,6 +952,10 @@ pub enum StreamEvent {
     PcApprovalSettled(PcApprovalSettledEvent),
     #[serde(rename = "done")]
     Done(DoneEvent),
+    #[serde(rename = "ui")]
+    Ui(UiDocEvent),
+    #[serde(rename = "ui_patch")]
+    UiPatch(UiPatchEvent),
     /// An event of a kind a newer server sends: ignored.
     #[serde(other)]
     Unknown,
@@ -1417,6 +1432,8 @@ pub struct AutomationRun {
     pub spec_hash: Option<String>,
     #[serde(rename = "waitingReason", default, skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<String>,
+    #[serde(rename = "eventNote", default, skip_serializing_if = "Option::is_none")]
+    pub event_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1474,6 +1491,458 @@ pub struct LocalReminderPlan {
     pub notifications: Vec<LocalReminder>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub once: Option<Vec<OnceReminder>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AutomationTriggerType {
+    #[serde(rename = "weather_temperature")]
+    WeatherTemperature,
+    #[serde(rename = "gmail_new_message")]
+    GmailNewMessage,
+    #[serde(rename = "notion_page_changed")]
+    NotionPageChanged,
+    #[serde(rename = "google_calendar_changed")]
+    GoogleCalendarChanged,
+    #[serde(rename = "web_page_changed")]
+    WebPageChanged,
+    #[serde(rename = "web_price_changed")]
+    WebPriceChanged,
+    #[serde(rename = "market_price")]
+    MarketPrice,
+    #[serde(rename = "news_topic")]
+    NewsTopic,
+    #[serde(rename = "automation_finished")]
+    AutomationFinished,
+    #[serde(rename = "pc_online")]
+    PcOnline,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationTriggerState {
+    pub r#type: AutomationTriggerType,
+    #[serde(rename = "intervalSeconds")]
+    pub interval_seconds: i64,
+    #[serde(rename = "lastState")]
+    pub last_state: bool,
+    #[serde(rename = "lastError", default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(rename = "nextCheckAt", default, skip_serializing_if = "Option::is_none")]
+    pub next_check_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationLastRun {
+    pub id: i64,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(rename = "checkpointAt", default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_at: Option<String>,
+    #[serde(rename = "lastProgressAt", default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AutomationKind {
+    #[serde(rename = "reminder")]
+    Reminder,
+    #[serde(rename = "routine")]
+    Routine,
+    #[serde(rename = "watch")]
+    Watch,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AutomationDelivery {
+    #[serde(rename = "phone")]
+    Phone,
+    #[serde(rename = "server")]
+    Server,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Automation {
+    pub id: i64,
+    pub title: String,
+    pub kind: AutomationKind,
+    pub prompt: String,
+    pub cron: String,
+    #[serde(rename = "isActive")]
+    pub is_active: bool,
+    #[serde(rename = "lifecycleStatus", default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_status: Option<String>,
+    #[serde(rename = "specHash", default, skip_serializing_if = "Option::is_none")]
+    pub spec_hash: Option<String>,
+    pub delivery: AutomationDelivery,
+    #[serde(rename = "scheduleLabel", default, skip_serializing_if = "Option::is_none")]
+    pub schedule_label: Option<String>,
+    #[serde(rename = "lastRunAt", default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(rename = "nextRunAt", default, skip_serializing_if = "Option::is_none")]
+    pub next_run_at: Option<String>,
+    #[serde(rename = "targetDeviceId", default, skip_serializing_if = "Option::is_none")]
+    pub target_device_id: Option<String>,
+    #[serde(rename = "lastRun", default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<AutomationLastRun>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<AutomationTriggerState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationList {
+    pub automations: Vec<Automation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationReviewItem {
+    #[serde(rename = "runId")]
+    pub run_id: i64,
+    #[serde(rename = "automationId")]
+    pub automation_id: i64,
+    pub title: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub delivered: bool,
+    #[serde(rename = "currentStep")]
+    pub current_step: i64,
+    #[serde(rename = "waitingReason", default, skip_serializing_if = "Option::is_none")]
+    pub waiting_reason: Option<String>,
+    #[serde(rename = "errorCategory", default, skip_serializing_if = "Option::is_none")]
+    pub error_category: Option<String>,
+    #[serde(rename = "checkpointAt", default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_at: Option<String>,
+    #[serde(rename = "lastProgressAt", default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<String>,
+    #[serde(rename = "finishedAt", default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationReview {
+    pub items: Vec<AutomationReviewItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationActionResult {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(rename = "runId", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coalesced: Option<bool>,
+    #[serde(rename = "nextRunAt", default, skip_serializing_if = "Option::is_none")]
+    pub next_run_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentItemKind {
+    #[serde(rename = "reminder")]
+    Reminder,
+    #[serde(rename = "routine")]
+    Routine,
+    #[serde(rename = "watch")]
+    Watch,
+    #[serde(rename = "job")]
+    Job,
+    #[serde(rename = "todo")]
+    Todo,
+    #[serde(rename = "goal")]
+    Goal,
+    #[serde(rename = "helper")]
+    Helper,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentItemState {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "attention")]
+    Attention,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentItemAction {
+    #[serde(rename = "pause")]
+    Pause,
+    #[serde(rename = "resume")]
+    Resume,
+    #[serde(rename = "run")]
+    Run,
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "delete")]
+    Delete,
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "open")]
+    Open,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentItemProgress {
+    pub done: i64,
+    pub total: i64,
+}
+
+/// One thing Wiqo does for the person: a reminder, a routine, a watch, a running job, a to-do, a goal or a named helper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentItem {
+    pub r#ref: String,
+    pub kind: AgentItemKind,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    pub state: AgentItemState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AgentItemProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub actions: Vec<AgentItemAction>,
+    #[serde(rename = "conversationId", default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentOverview {
+    pub v: i64,
+    pub now: Vec<AgentItem>,
+    pub scheduled: Vec<AgentItem>,
+    pub todos: Vec<AgentItem>,
+    pub helpers: Vec<AgentItem>,
+    pub recent: Vec<AgentItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubagentReportState {
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "timed_out")]
+    TimedOut,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReportSourcesItem {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReport {
+    pub id: String,
+    pub task: String,
+    pub state: SubagentReportState,
+    pub summary: String,
+    pub sources: Vec<SubagentReportSourcesItem>,
+    pub ms: i64,
+    pub tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectTemplateField {
+    pub key: String,
+    pub label: String,
+    pub value: String,
+}
+
+/// One ready template the projects page lists.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectTemplate {
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub icon: String,
+    pub description: String,
+    pub kind: String,
+    pub accent: String,
+    pub dark: bool,
+    pub live: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<i64>,
+    pub files: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<ProjectTemplateField>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectTemplateList {
+    pub templates: Vec<ProjectTemplate>,
+}
+
+/// A template's files, saved as a new project as they are.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectTemplateBundle {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub files: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishedSite {
+    pub ok: bool,
+    pub url: String,
+    pub slug: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectKind {
+    #[serde(rename = "web")]
+    Web,
+    #[serde(rename = "python")]
+    Python,
+    #[serde(rename = "node")]
+    Node,
+    #[serde(rename = "rust")]
+    Rust,
+    #[serde(rename = "csharp")]
+    Csharp,
+    #[serde(rename = "go")]
+    Go,
+    #[serde(rename = "swift")]
+    Swift,
+    #[serde(rename = "cpp")]
+    Cpp,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriterChange {
+    pub path: String,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriterResult {
+    pub ok: bool,
+    pub kind: ProjectKind,
+    pub name: String,
+    pub summary: String,
+    pub changes: Vec<WriterChange>,
+    #[serde(rename = "needsDeviceCheck")]
+    pub needs_device_check: bool,
+    pub problems: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assumptions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriterAgreement {
+    pub goal: String,
+    #[serde(rename = "targetFiles")]
+    pub target_files: Vec<String>,
+    pub acceptance: Vec<String>,
+    #[serde(rename = "baseVersion")]
+    pub base_version: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WriterJobStatus {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WriterJobPhase {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "writing")]
+    Writing,
+    #[serde(rename = "checking")]
+    Checking,
+    #[serde(rename = "awaiting_device_check")]
+    AwaitingDeviceCheck,
+    #[serde(rename = "device_verified")]
+    DeviceVerified,
+    #[serde(rename = "device_failed")]
+    DeviceFailed,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A code-writing job as the phone polls it: where it stands, the contract once planned, and the files when done.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriterJob {
+    pub id: String,
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+    pub status: WriterJobStatus,
+    pub phase: WriterJobPhase,
+    pub agreement: WriterAgreement,
+    pub progress: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<String>,
+    pub error: Option<String>,
+    #[serde(rename = "errorCode")]
+    pub error_code: Option<String>,
+    pub result: Option<WriterResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2543,6 +3012,2392 @@ pub struct DiscoverCoverQuery {
     pub page: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTone {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "muted")]
+    Muted,
+    #[serde(rename = "accent")]
+    Accent,
+    #[serde(rename = "success")]
+    Success,
+    #[serde(rename = "warning")]
+    Warning,
+    #[serde(rename = "danger")]
+    Danger,
+    #[serde(rename = "info")]
+    Info,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiSize {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "xs")]
+    Xs,
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    #[serde(rename = "xl")]
+    Xl,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiAlign {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "center")]
+    Center,
+    #[serde(rename = "end")]
+    End,
+    #[serde(rename = "stretch")]
+    Stretch,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiIcon {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "document")]
+    Document,
+    #[serde(rename = "spreadsheet")]
+    Spreadsheet,
+    #[serde(rename = "presentation")]
+    Presentation,
+    #[serde(rename = "pdf")]
+    Pdf,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "video")]
+    Video,
+    #[serde(rename = "audio")]
+    Audio,
+    #[serde(rename = "code")]
+    Code,
+    #[serde(rename = "folder")]
+    Folder,
+    #[serde(rename = "link")]
+    Link,
+    #[serde(rename = "download")]
+    Download,
+    #[serde(rename = "share")]
+    Share,
+    #[serde(rename = "copy")]
+    Copy,
+    #[serde(rename = "check")]
+    Check,
+    #[serde(rename = "close")]
+    Close,
+    #[serde(rename = "warning")]
+    Warning,
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "question")]
+    Question,
+    #[serde(rename = "lock")]
+    Lock,
+    #[serde(rename = "key")]
+    Key,
+    #[serde(rename = "shield")]
+    Shield,
+    #[serde(rename = "trash")]
+    Trash,
+    #[serde(rename = "edit")]
+    Edit,
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "add")]
+    Add,
+    #[serde(rename = "refresh")]
+    Refresh,
+    #[serde(rename = "clock")]
+    Clock,
+    #[serde(rename = "calendar")]
+    Calendar,
+    #[serde(rename = "alarm")]
+    Alarm,
+    #[serde(rename = "mail")]
+    Mail,
+    #[serde(rename = "message")]
+    Message,
+    #[serde(rename = "phone")]
+    Phone,
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "people")]
+    People,
+    #[serde(rename = "location")]
+    Location,
+    #[serde(rename = "map")]
+    Map,
+    #[serde(rename = "home")]
+    Home,
+    #[serde(rename = "computer")]
+    Computer,
+    #[serde(rename = "mobile")]
+    Mobile,
+    #[serde(rename = "cloud")]
+    Cloud,
+    #[serde(rename = "sun")]
+    Sun,
+    #[serde(rename = "moon")]
+    Moon,
+    #[serde(rename = "rain")]
+    Rain,
+    #[serde(rename = "snow")]
+    Snow,
+    #[serde(rename = "wind")]
+    Wind,
+    #[serde(rename = "storm")]
+    Storm,
+    #[serde(rename = "temperature")]
+    Temperature,
+    #[serde(rename = "star")]
+    Star,
+    #[serde(rename = "heart")]
+    Heart,
+    #[serde(rename = "bookmark")]
+    Bookmark,
+    #[serde(rename = "flag")]
+    Flag,
+    #[serde(rename = "tag")]
+    Tag,
+    #[serde(rename = "bolt")]
+    Bolt,
+    #[serde(rename = "sparkles")]
+    Sparkles,
+    #[serde(rename = "money")]
+    Money,
+    #[serde(rename = "cart")]
+    Cart,
+    #[serde(rename = "chart")]
+    Chart,
+    #[serde(rename = "list")]
+    List,
+    #[serde(rename = "terminal")]
+    Terminal,
+    #[serde(rename = "globe")]
+    Globe,
+    #[serde(rename = "bell")]
+    Bell,
+    #[serde(rename = "settings")]
+    Settings,
+    #[serde(rename = "play")]
+    Play,
+    #[serde(rename = "pause")]
+    Pause,
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "arrow_up")]
+    ArrowUp,
+    #[serde(rename = "arrow_down")]
+    ArrowDown,
+    #[serde(rename = "arrow_right")]
+    ArrowRight,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTextStyle {
+    #[serde(rename = "display")]
+    Display,
+    #[serde(rename = "title")]
+    Title,
+    #[serde(rename = "heading")]
+    Heading,
+    #[serde(rename = "body")]
+    Body,
+    #[serde(rename = "caption")]
+    Caption,
+    #[serde(rename = "label")]
+    Label,
+    #[serde(rename = "mono")]
+    Mono,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiSurface {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "card")]
+    Card,
+    #[serde(rename = "inset")]
+    Inset,
+    #[serde(rename = "outline")]
+    Outline,
+    #[serde(rename = "tinted")]
+    Tinted,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiAspect {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "square")]
+    Square,
+    #[serde(rename = "standard")]
+    Standard,
+    #[serde(rename = "wide")]
+    Wide,
+    #[serde(rename = "portrait")]
+    Portrait,
+    #[serde(rename = "tall")]
+    Tall,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiPresentation {
+    #[serde(rename = "inline")]
+    Inline,
+    #[serde(rename = "sheet")]
+    Sheet,
+    #[serde(rename = "fullscreen")]
+    Fullscreen,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiRole {
+    #[serde(rename = "answer")]
+    Answer,
+    #[serde(rename = "result")]
+    Result,
+    #[serde(rename = "question")]
+    Question,
+    #[serde(rename = "approval")]
+    Approval,
+    #[serde(rename = "progress")]
+    Progress,
+    #[serde(rename = "form")]
+    Form,
+    #[serde(rename = "plan")]
+    Plan,
+    #[serde(rename = "notice")]
+    Notice,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTextMode {
+    #[serde(rename = "with_text")]
+    WithText,
+    #[serde(rename = "only")]
+    Only,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiStepStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "skipped")]
+    Skipped,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiRisk {
+    #[serde(rename = "low")]
+    Low,
+    #[serde(rename = "medium")]
+    Medium,
+    #[serde(rename = "high")]
+    High,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiScreen {
+    #[serde(rename = "settings")]
+    Settings,
+    #[serde(rename = "pair_pc")]
+    PairPc,
+    #[serde(rename = "subscription")]
+    Subscription,
+    #[serde(rename = "files")]
+    Files,
+    #[serde(rename = "discover")]
+    Discover,
+    #[serde(rename = "inbox")]
+    Inbox,
+    #[serde(rename = "memory")]
+    Memory,
+    #[serde(rename = "automations")]
+    Automations,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// One named value: what an input held when the person acted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiValue {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBlockMarkdown {
+    pub id: String,
+    pub order: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBlockUi {
+    pub id: String,
+    pub order: i64,
+    #[serde(rename = "docId")]
+    pub doc_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBlockArtifact {
+    pub id: String,
+    pub order: i64,
+    #[serde(rename = "artifactId")]
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiStackDirection {
+    #[serde(rename = "vertical")]
+    Vertical,
+    #[serde(rename = "horizontal")]
+    Horizontal,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// Lays children out in a column or a row. The workhorse: every card is a stack.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiStack {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<UiStackDirection>,
+    pub children: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<UiSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padding: Option<UiSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<UiAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<UiSurface>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll: Option<bool>,
+}
+
+/// Children in equal columns (stats, thumbnails).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiGrid {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub columns: i64,
+    pub children: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<UiSize>,
+}
+
+/// A titled block, optionally foldable (details, sources, logs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSection {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+    pub children: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiTabItem {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+    pub child: String,
+}
+
+/// A tab strip over alternative views of the same thing (table / chart).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiTabs {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiTabItem>,
+}
+
+/// A thin rule, optionally with a word on it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDivider {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTextFormat {
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "markdown")]
+    Markdown,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTextAlign {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "center")]
+    Center,
+    #[serde(rename = "end")]
+    End,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A piece of text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiText {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<UiTextStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<UiTextFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<UiTextAlign>,
+    #[serde(rename = "maxLines", default, skip_serializing_if = "Option::is_none")]
+    pub max_lines: Option<i64>,
+}
+
+/// A small pill: a status, a count, a tag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBadge {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiIconNodeSize {
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    #[serde(rename = "xl")]
+    Xl,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// One icon on its own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiIconNode {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub name: UiIcon,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<UiIconNodeSize>,
+}
+
+/// A banner that says one important thing (a warning, a tip, an error).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCallout {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub tone: UiTone,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiImageFit {
+    #[serde(rename = "cover")]
+    Cover,
+    #[serde(rename = "contain")]
+    Contain,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A picture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiImage {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<UiAspect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<UiImageFit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+    #[serde(rename = "thumbUrl", default, skip_serializing_if = "Option::is_none")]
+    pub thumb_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<UiAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiMediaKind {
+    #[serde(rename = "video")]
+    Video,
+    #[serde(rename = "audio")]
+    Audio,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A video or an audio clip with the system player. Never autoplays.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiMedia {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub kind: UiMediaKind,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "durationSec", default, skip_serializing_if = "Option::is_none")]
+    pub duration_sec: Option<f64>,
+}
+
+/// A tappable link row (a source, a page).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiLink {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub label: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// A code block with highlighting and a copy button.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCode {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copyable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+}
+
+/// A formula written in LaTeX.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiMath {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub latex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiStatTrend {
+    #[serde(rename = "up")]
+    Up,
+    #[serde(rename = "down")]
+    Down,
+    #[serde(rename = "flat")]
+    Flat,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// One big number with a label (a total, a temperature, a score).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiStat {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub label: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trend: Option<UiStatTrend>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiKeyValueRow {
+    pub label: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copyable: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiKeyValueLayout {
+    #[serde(rename = "inline")]
+    Inline,
+    #[serde(rename = "stacked")]
+    Stacked,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// Label: value pairs (details of a booking, a file's properties).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiKeyValue {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub rows: Vec<UiKeyValueRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<UiKeyValueLayout>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiListItem {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leading: Option<UiIcon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<String>,
+    #[serde(rename = "badgeTone", default, skip_serializing_if = "Option::is_none")]
+    pub badge_tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<UiAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiListStyle {
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "bullets")]
+    Bullets,
+    #[serde(rename = "numbers")]
+    Numbers,
+    #[serde(rename = "checklist")]
+    Checklist,
+    #[serde(rename = "cards")]
+    Cards,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// Rows. plain = separated rows, bullets/numbers = a written list, checklist = ticked rows, cards = one small card per row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiList {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<UiListStyle>,
+    pub items: Vec<UiListItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTableColumnAlign {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "center")]
+    Center,
+    #[serde(rename = "end")]
+    End,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTableColumnKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "money")]
+    Money,
+    #[serde(rename = "percent")]
+    Percent,
+    #[serde(rename = "date")]
+    Date,
+    #[serde(rename = "badge")]
+    Badge,
+    #[serde(rename = "link")]
+    Link,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiTableColumn {
+    pub key: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<UiTableColumnAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<UiTableColumnKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiTableRow {
+    pub cells: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<UiAction>,
+}
+
+/// A table. Each row has one cell per column, in column order, already formatted as text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiTable {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub columns: Vec<UiTableColumn>,
+    pub rows: Vec<UiTableRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    #[serde(rename = "totalRows", default, skip_serializing_if = "Option::is_none")]
+    pub total_rows: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub striped: Option<bool>,
+    #[serde(rename = "stickyFirstColumn", default, skip_serializing_if = "Option::is_none")]
+    pub sticky_first_column: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer: Option<UiTableRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sortable: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiChartPoint {
+    pub x: String,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiChartSeries {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+    pub points: Vec<UiChartPoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiChartKind {
+    #[serde(rename = "line")]
+    Line,
+    #[serde(rename = "bar")]
+    Bar,
+    #[serde(rename = "area")]
+    Area,
+    #[serde(rename = "pie")]
+    Pie,
+    #[serde(rename = "donut")]
+    Donut,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiChartXKind {
+    #[serde(rename = "category")]
+    Category,
+    #[serde(rename = "time")]
+    Time,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiChartHeightHint {
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A chart drawn natively from the numbers. Prefer it to a picture of a chart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiChart {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub kind: UiChartKind,
+    pub series: Vec<UiChartSeries>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "xKind", default, skip_serializing_if = "Option::is_none")]
+    pub x_kind: Option<UiChartXKind>,
+    #[serde(rename = "xLabel", default, skip_serializing_if = "Option::is_none")]
+    pub x_label: Option<String>,
+    #[serde(rename = "yLabel", default, skip_serializing_if = "Option::is_none")]
+    pub y_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stacked: Option<bool>,
+    #[serde(rename = "yMin", default, skip_serializing_if = "Option::is_none")]
+    pub y_min: Option<f64>,
+    #[serde(rename = "yMax", default, skip_serializing_if = "Option::is_none")]
+    pub y_max: Option<f64>,
+    #[serde(rename = "showValues", default, skip_serializing_if = "Option::is_none")]
+    pub show_values: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<UiGoal>,
+    #[serde(rename = "heightHint", default, skip_serializing_if = "Option::is_none")]
+    pub height_hint: Option<UiChartHeightHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiProgressStyle {
+    #[serde(rename = "bar")]
+    Bar,
+    #[serde(rename = "ring")]
+    Ring,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A progress bar or ring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiProgress {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<UiProgressStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiStepItem {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub status: UiStepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<String>,
+}
+
+/// A plan or a timeline: what is done, what is running, what comes next.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSteps {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiStepItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiMapPin {
+    pub lat: f64,
+    pub lng: f64,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiMapHeightHint {
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A map with pins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiMap {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub pins: Vec<UiMapPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<i64>,
+    #[serde(rename = "heightHint", default, skip_serializing_if = "Option::is_none")]
+    pub height_hint: Option<UiMapHeightHint>,
+}
+
+/// A file row with its type, size and a preview if there is one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiFile {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub title: String,
+    pub filename: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<i64>,
+    #[serde(rename = "artifactId", default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    #[serde(rename = "previewUrl", default, skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<UiAction>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiButtonStyle {
+    #[serde(rename = "primary")]
+    Primary,
+    #[serde(rename = "secondary")]
+    Secondary,
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "danger")]
+    Danger,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A button. It does exactly one UiAction, after an optional 'are you sure?'.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiButton {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<UiButtonStyle>,
+    pub action: UiAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<UiConfirm>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+    #[serde(rename = "fullWidth", default, skip_serializing_if = "Option::is_none")]
+    pub full_width: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiChoiceMode {
+    #[serde(rename = "single")]
+    Single,
+    #[serde(rename = "multi")]
+    Multi,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiChoiceDisplay {
+    #[serde(rename = "chips")]
+    Chips,
+    #[serde(rename = "list")]
+    List,
+    #[serde(rename = "segmented")]
+    Segmented,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// Pick one or more of a few options. As quick replies under an answer, or as a field of a form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiChoice {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub options: Vec<UiOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<UiChoiceMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<UiChoiceDisplay>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Vec<String>>,
+    #[serde(rename = "onSelect", default, skip_serializing_if = "Option::is_none")]
+    pub on_select: Option<UiAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiTextFieldKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "multiline")]
+    Multiline,
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "email")]
+    Email,
+    #[serde(rename = "url")]
+    Url,
+    #[serde(rename = "phone")]
+    Phone,
+    #[serde(rename = "date")]
+    Date,
+    #[serde(rename = "time")]
+    Time,
+    #[serde(rename = "datetime")]
+    Datetime,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A field the person types or picks into. Only meaningful inside a form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiTextField {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<UiTextFieldKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(rename = "maxLength", default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(rename = "errorText", default, skip_serializing_if = "Option::is_none")]
+    pub error_text: Option<String>,
+}
+
+/// An on/off switch. Value is 'true' or 'false' in the event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiToggle {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub name: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<bool>,
+}
+
+/// Pick a number in a range.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSlider {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub name: String,
+    pub label: String,
+    pub min: f64,
+    pub max: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+/// Groups inputs with one submit button; the app draws the button and validates `required` before sending.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiForm {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub children: Vec<String>,
+    pub submit: UiEventAction,
+    #[serde(rename = "submitLabel", default, skip_serializing_if = "Option::is_none")]
+    pub submit_label: Option<String>,
+    #[serde(rename = "cancelLabel", default, skip_serializing_if = "Option::is_none")]
+    pub cancel_label: Option<String>,
+    #[serde(rename = "afterSubmit", default, skip_serializing_if = "Option::is_none")]
+    pub after_submit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiApprovalItem {
+    pub label: String,
+    pub value: String,
+}
+
+/// Asks the person to approve one pending action (PC command, send, delete). The app draws it with the device-unlock treatment; the model cannot restyle it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiApproval {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(rename = "confirmationId")]
+    pub confirmation_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub risk: UiRisk,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<UiApprovalItem>>,
+    #[serde(rename = "approveLabel", default, skip_serializing_if = "Option::is_none")]
+    pub approve_label: Option<String>,
+    #[serde(rename = "denyLabel", default, skip_serializing_if = "Option::is_none")]
+    pub deny_label: Option<String>,
+    #[serde(rename = "allowAlways", default, skip_serializing_if = "Option::is_none")]
+    pub allow_always: Option<bool>,
+    #[serde(rename = "expiresAt", default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiHtmlHeightHint {
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    #[serde(rename = "tall")]
+    Tall,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// LAST RESORT for what no other node can draw (a custom diagram, a small game). Runs in a sandbox: no network, no cookies, no bridge to the app. At most one per document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiHtml {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub html: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "heightHint", default, skip_serializing_if = "Option::is_none")]
+    pub height_hint: Option<UiHtmlHeightHint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactive: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiDiffLineKind {
+    #[serde(rename = "context")]
+    Context,
+    #[serde(rename = "add")]
+    Add,
+    #[serde(rename = "remove")]
+    Remove,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDiffLine {
+    pub kind: UiDiffLineKind,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiDiffStatus {
+    #[serde(rename = "created")]
+    Created,
+    #[serde(rename = "modified")]
+    Modified,
+    #[serde(rename = "deleted")]
+    Deleted,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// What changed in one file (a code edit, a document edit): added and removed lines, with a few lines of context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDiff {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub filename: String,
+    pub status: UiDiffStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<i64>,
+    pub lines: Vec<UiDiffLine>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
+}
+
+/// A quotation or a passage from a source, set apart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiQuote {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// A live countdown to a moment (a timer, an event, an offer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCountdown {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub until: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(rename = "doneText", default, skip_serializing_if = "Option::is_none")]
+    pub done_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiGalleryImage {
+    pub url: String,
+    pub alt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    #[serde(rename = "thumbUrl", default, skip_serializing_if = "Option::is_none")]
+    pub thumb_url: Option<String>,
+}
+
+/// Several pictures to swipe through (search results, generated images).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiGallery {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub images: Vec<UiGalleryImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<UiAspect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiSkeletonShape {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "card")]
+    Card,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "list")]
+    List,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A grey placeholder for what is still being worked on. Replace it with the real node by patching the same id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSkeleton {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub shape: UiSkeletonShape,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<i64>,
+}
+
+/// Empty space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSpacer {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub size: UiSize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiAvatarSize {
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A person or a teammate: picture, or initials when there is none.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiAvatar {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub name: String,
+    #[serde(rename = "imageUrl", default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<UiAvatarSize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSourceItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<String>,
+}
+
+/// Where an answer's facts came from: the sites as small round pictures that overlap, and a tap opens the list. Never write source lines by hand; use this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSources {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiSourceItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPlotFunction {
+    pub expr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPlotPoint {
+    pub x: f64,
+    pub y: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiPlotHeightHint {
+    #[serde(rename = "sm")]
+    Sm,
+    #[serde(rename = "md")]
+    Md,
+    #[serde(rename = "lg")]
+    Lg,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A function graph the app draws from the expression itself (exact, zoomable, full screen, more functions can be added). Use it for every 'grafiğini çiz' of a function; never a chart with sampled points.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPlot {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub functions: Vec<UiPlotFunction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "xMin", default, skip_serializing_if = "Option::is_none")]
+    pub x_min: Option<f64>,
+    #[serde(rename = "xMax", default, skip_serializing_if = "Option::is_none")]
+    pub x_max: Option<f64>,
+    #[serde(rename = "yMin", default, skip_serializing_if = "Option::is_none")]
+    pub y_min: Option<f64>,
+    #[serde(rename = "yMax", default, skip_serializing_if = "Option::is_none")]
+    pub y_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<UiPlotPoint>>,
+    #[serde(rename = "heightHint", default, skip_serializing_if = "Option::is_none")]
+    pub height_hint: Option<UiPlotHeightHint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiProductItem {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(rename = "imageUrl", default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<f64>,
+}
+
+/// Products with picture, price, store and a 'Satın al' link, from a web search. Only with real prices and links that came from a tool; never invent one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiProduct {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiProductItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiNewsSource {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiNewsItem {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub url: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<Vec<UiNewsSource>>,
+    #[serde(rename = "linkLabel", default, skip_serializing_if = "Option::is_none")]
+    pub link_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiNewsLayout {
+    #[serde(rename = "lead")]
+    Lead,
+    #[serde(rename = "list")]
+    List,
+    #[serde(rename = "carousel")]
+    Carousel,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// News stories from a web search: picture, outlet, date, headline, summary and a link to read the story. Only stories that came from a tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiNews {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiNewsItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "checkedAt", default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<UiNewsLayout>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBarItem {
+    pub label: String,
+    pub value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<UiTone>,
+}
+
+/// A ranked comparison of one number across a few things, as labelled horizontal bars with the value at the end. Better than a chart for 2-12 named items.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBars {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiBarItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSuggestionItem {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+}
+
+/// Next questions the person can ask with one tap, under an answer; each sends its prompt as the person's next message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSuggestions {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub items: Vec<UiSuggestionItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiFlowGroupItem {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiFlowStep {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UiIcon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Vec<UiFlowGroupItem>>,
+}
+
+/// A diagram of boxes joined by arrows, top to bottom (how a system works, a process); a step can hold several boxes side by side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiFlow {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a11y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<UiCondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    pub steps: Vec<UiFlowStep>,
+    #[serde(rename = "highlightLast", default, skip_serializing_if = "Option::is_none")]
+    pub highlight_last: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSendAction {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub once: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiEventActionDelivery {
+    #[serde(rename = "model")]
+    Model,
+    #[serde(rename = "silent")]
+    Silent,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiEventAction {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<UiValue>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<UiEventActionDelivery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub once: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiOpenUrlAction {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiOpenFileAction {
+    #[serde(rename = "artifactId")]
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCopyAction {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiShareAction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(rename = "artifactId", default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiOpenScreenAction {
+    pub screen: UiScreen,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiStopTaskAction {
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+}
+
+/// Runs the last turn again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiRetryAction {
+}
+
+/// Closes the sheet or full-screen card it was opened in; in the message flow it folds the card.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDismissAction {
+}
+
+/// Opens the system 'add event' sheet with these values filled in. The person still saves it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCalendarAction {
+    pub title: String,
+    pub start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+/// Opens the dialler with the number. It never calls by itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDialAction {
+    pub number: String,
+}
+
+/// Opens the system maps at a place: either `query`, or `lat` and `lng`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiOpenMapAction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lat: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lng: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiConditionIs {
+    #[serde(rename = "equals")]
+    Equals,
+    #[serde(rename = "not_equals")]
+    NotEquals,
+    #[serde(rename = "filled")]
+    Filled,
+    #[serde(rename = "empty")]
+    Empty,
+    #[serde(rename = "checked")]
+    Checked,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// Shows a node only while the input it names has that state: a field that appears when a switch is on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCondition {
+    pub name: String,
+    pub is: UiConditionIs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// Asks 'are you sure?' before the action runs. Use it on anything that deletes, sends or spends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfirm {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "confirmLabel", default, skip_serializing_if = "Option::is_none")]
+    pub confirm_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub danger: Option<bool>,
+}
+
+/// A reference line on a chart: a target, a limit, an average.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiGoal {
+    pub value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum UiBlock {
+    #[serde(rename = "markdown")]
+    Markdown(UiBlockMarkdown),
+    #[serde(rename = "ui")]
+    Ui(UiBlockUi),
+    #[serde(rename = "artifact")]
+    Artifact(UiBlockArtifact),
+    /// An event of a kind a newer server sends: ignored.
+    #[serde(other)]
+    Unknown,
+}
+
+/// What an app can draw, sent with its requests. The backend downgrades a card for an app that is behind, so a new node never breaks an old app.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiCapabilities {
+    pub version: i64,
+    pub nodes: Vec<String>,
+    pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentations: Option<Vec<UiPresentation>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum UiAction {
+    #[serde(rename = "send")]
+    Send(UiSendAction),
+    #[serde(rename = "event")]
+    Event(UiEventAction),
+    #[serde(rename = "open_url")]
+    OpenUrl(UiOpenUrlAction),
+    #[serde(rename = "open_file")]
+    OpenFile(UiOpenFileAction),
+    #[serde(rename = "copy")]
+    Copy(UiCopyAction),
+    #[serde(rename = "share")]
+    Share(UiShareAction),
+    #[serde(rename = "open_screen")]
+    OpenScreen(UiOpenScreenAction),
+    #[serde(rename = "stop_task")]
+    StopTask(UiStopTaskAction),
+    #[serde(rename = "retry")]
+    Retry(UiRetryAction),
+    #[serde(rename = "dismiss")]
+    Dismiss(UiDismissAction),
+    #[serde(rename = "add_to_calendar")]
+    AddToCalendar(UiCalendarAction),
+    #[serde(rename = "dial")]
+    Dial(UiDialAction),
+    #[serde(rename = "open_map")]
+    OpenMap(UiOpenMapAction),
+    /// An event of a kind a newer server sends: ignored.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum UiNode {
+    #[serde(rename = "stack")]
+    Stack(UiStack),
+    #[serde(rename = "grid")]
+    Grid(UiGrid),
+    #[serde(rename = "section")]
+    Section(UiSection),
+    #[serde(rename = "tabs")]
+    Tabs(UiTabs),
+    #[serde(rename = "divider")]
+    Divider(UiDivider),
+    #[serde(rename = "text")]
+    Text(UiText),
+    #[serde(rename = "badge")]
+    Badge(UiBadge),
+    #[serde(rename = "icon")]
+    Icon(UiIconNode),
+    #[serde(rename = "callout")]
+    Callout(UiCallout),
+    #[serde(rename = "image")]
+    Image(UiImage),
+    #[serde(rename = "media")]
+    Media(UiMedia),
+    #[serde(rename = "link")]
+    Link(UiLink),
+    #[serde(rename = "code")]
+    Code(UiCode),
+    #[serde(rename = "math")]
+    Math(UiMath),
+    #[serde(rename = "stat")]
+    Stat(UiStat),
+    #[serde(rename = "keyValue")]
+    KeyValue(UiKeyValue),
+    #[serde(rename = "list")]
+    List(UiList),
+    #[serde(rename = "table")]
+    Table(UiTable),
+    #[serde(rename = "chart")]
+    Chart(UiChart),
+    #[serde(rename = "progress")]
+    Progress(UiProgress),
+    #[serde(rename = "steps")]
+    Steps(UiSteps),
+    #[serde(rename = "map")]
+    Map(UiMap),
+    #[serde(rename = "file")]
+    File(UiFile),
+    #[serde(rename = "button")]
+    Button(UiButton),
+    #[serde(rename = "choice")]
+    Choice(UiChoice),
+    #[serde(rename = "textField")]
+    TextField(UiTextField),
+    #[serde(rename = "toggle")]
+    Toggle(UiToggle),
+    #[serde(rename = "slider")]
+    Slider(UiSlider),
+    #[serde(rename = "form")]
+    Form(UiForm),
+    #[serde(rename = "approval")]
+    Approval(UiApproval),
+    #[serde(rename = "html")]
+    Html(UiHtml),
+    #[serde(rename = "diff")]
+    Diff(UiDiff),
+    #[serde(rename = "quote")]
+    Quote(UiQuote),
+    #[serde(rename = "countdown")]
+    Countdown(UiCountdown),
+    #[serde(rename = "gallery")]
+    Gallery(UiGallery),
+    #[serde(rename = "skeleton")]
+    Skeleton(UiSkeleton),
+    #[serde(rename = "spacer")]
+    Spacer(UiSpacer),
+    #[serde(rename = "avatar")]
+    Avatar(UiAvatar),
+    #[serde(rename = "sources")]
+    Sources(UiSources),
+    #[serde(rename = "plot")]
+    Plot(UiPlot),
+    #[serde(rename = "product")]
+    Product(UiProduct),
+    #[serde(rename = "flow")]
+    Flow(UiFlow),
+    #[serde(rename = "news")]
+    News(UiNews),
+    #[serde(rename = "bars")]
+    Bars(UiBars),
+    #[serde(rename = "suggestions")]
+    Suggestions(UiSuggestions),
+    /// An event of a kind a newer server sends: ignored.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiDocStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "stale")]
+    Stale,
+    /// A value a newer server sends that this build does not know.
+    #[serde(other)]
+    Unrecognized,
+}
+
+/// A card: a flat list of nodes starting at `root`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDoc {
+    pub version: i64,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<UiRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<UiPresentation>,
+    #[serde(rename = "textMode", default, skip_serializing_if = "Option::is_none")]
+    pub text_mode: Option<UiTextMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<UiDocStatus>,
+    #[serde(rename = "expiresAt", default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    pub root: String,
+    pub nodes: Vec<UiNode>,
+    #[serde(rename = "fallbackText")]
+    pub fallback_text: String,
+}
+
+/// Stream event: a whole document, which replaces any earlier one with the same doc.id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiDocEvent {
+    pub doc: UiDoc,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complete: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPatchEventAppendTextItem {
+    pub id: String,
+    pub text: String,
+}
+
+/// Stream event: changes to a document already sent (nodes arriving while the model writes, a progress bar moving).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPatchEvent {
+    #[serde(rename = "docId")]
+    pub doc_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upsert: Option<Vec<UiNode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complete: Option<bool>,
+    #[serde(rename = "appendText", default, skip_serializing_if = "Option::is_none")]
+    pub append_text: Option<Vec<UiPatchEventAppendTextItem>>,
+}
+
+/// What an app posts when the person acts on an `event` action or submits a form: the name, and the values of the inputs by name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiEventRequest {
+    #[serde(rename = "docId")]
+    pub doc_id: String,
+    #[serde(rename = "nodeId", default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub name: String,
+    pub values: Vec<UiValue>,
+    #[serde(rename = "conversationId", default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(rename = "messageId", default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+}
+
 /// Decodes `text` as the named type of the schema (the contract check decodes every example with it); Ok(false) for a name it does not know.
 pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
     match name {
@@ -2559,6 +5414,7 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "ActivityUpdate" => serde_json::from_str::<ActivityUpdate>(text).map(|_| true),
         "DeltaEvent" => serde_json::from_str::<DeltaEvent>(text).map(|_| true),
         "ResetEvent" => serde_json::from_str::<ResetEvent>(text).map(|_| true),
+        "NoteEvent" => serde_json::from_str::<NoteEvent>(text).map(|_| true),
         "ThinkingEvent" => serde_json::from_str::<ThinkingEvent>(text).map(|_| true),
         "StatusEvent" => serde_json::from_str::<StatusEvent>(text).map(|_| true),
         "ActivityEvent" => serde_json::from_str::<ActivityEvent>(text).map(|_| true),
@@ -2651,6 +5507,37 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "LocalReminder" => serde_json::from_str::<LocalReminder>(text).map(|_| true),
         "OnceReminder" => serde_json::from_str::<OnceReminder>(text).map(|_| true),
         "LocalReminderPlan" => serde_json::from_str::<LocalReminderPlan>(text).map(|_| true),
+        "AutomationTriggerType" => serde_json::from_str::<AutomationTriggerType>(text).map(|_| true),
+        "AutomationTriggerState" => serde_json::from_str::<AutomationTriggerState>(text).map(|_| true),
+        "AutomationLastRun" => serde_json::from_str::<AutomationLastRun>(text).map(|_| true),
+        "AutomationKind" => serde_json::from_str::<AutomationKind>(text).map(|_| true),
+        "AutomationDelivery" => serde_json::from_str::<AutomationDelivery>(text).map(|_| true),
+        "Automation" => serde_json::from_str::<Automation>(text).map(|_| true),
+        "AutomationList" => serde_json::from_str::<AutomationList>(text).map(|_| true),
+        "AutomationReviewItem" => serde_json::from_str::<AutomationReviewItem>(text).map(|_| true),
+        "AutomationReview" => serde_json::from_str::<AutomationReview>(text).map(|_| true),
+        "AutomationActionResult" => serde_json::from_str::<AutomationActionResult>(text).map(|_| true),
+        "AgentItemKind" => serde_json::from_str::<AgentItemKind>(text).map(|_| true),
+        "AgentItemState" => serde_json::from_str::<AgentItemState>(text).map(|_| true),
+        "AgentItemAction" => serde_json::from_str::<AgentItemAction>(text).map(|_| true),
+        "AgentItemProgress" => serde_json::from_str::<AgentItemProgress>(text).map(|_| true),
+        "AgentItem" => serde_json::from_str::<AgentItem>(text).map(|_| true),
+        "AgentOverview" => serde_json::from_str::<AgentOverview>(text).map(|_| true),
+        "SubagentReportState" => serde_json::from_str::<SubagentReportState>(text).map(|_| true),
+        "SubagentReportSourcesItem" => serde_json::from_str::<SubagentReportSourcesItem>(text).map(|_| true),
+        "SubagentReport" => serde_json::from_str::<SubagentReport>(text).map(|_| true),
+        "ProjectTemplateField" => serde_json::from_str::<ProjectTemplateField>(text).map(|_| true),
+        "ProjectTemplate" => serde_json::from_str::<ProjectTemplate>(text).map(|_| true),
+        "ProjectTemplateList" => serde_json::from_str::<ProjectTemplateList>(text).map(|_| true),
+        "ProjectTemplateBundle" => serde_json::from_str::<ProjectTemplateBundle>(text).map(|_| true),
+        "PublishedSite" => serde_json::from_str::<PublishedSite>(text).map(|_| true),
+        "ProjectKind" => serde_json::from_str::<ProjectKind>(text).map(|_| true),
+        "WriterChange" => serde_json::from_str::<WriterChange>(text).map(|_| true),
+        "WriterResult" => serde_json::from_str::<WriterResult>(text).map(|_| true),
+        "WriterAgreement" => serde_json::from_str::<WriterAgreement>(text).map(|_| true),
+        "WriterJobStatus" => serde_json::from_str::<WriterJobStatus>(text).map(|_| true),
+        "WriterJobPhase" => serde_json::from_str::<WriterJobPhase>(text).map(|_| true),
+        "WriterJob" => serde_json::from_str::<WriterJob>(text).map(|_| true),
         "DiscoverPostKind" => serde_json::from_str::<DiscoverPostKind>(text).map(|_| true),
         "DiscoverVisibility" => serde_json::from_str::<DiscoverVisibility>(text).map(|_| true),
         "DiscoverVerdict" => serde_json::from_str::<DiscoverVerdict>(text).map(|_| true),
@@ -2749,6 +5636,146 @@ pub fn decodes(name: &str, text: &str) -> Result<bool, serde_json::Error> {
         "DiscoverNoticesQuery" => serde_json::from_str::<DiscoverNoticesQuery>(text).map(|_| true),
         "DiscoverPeopleQuery" => serde_json::from_str::<DiscoverPeopleQuery>(text).map(|_| true),
         "DiscoverCoverQuery" => serde_json::from_str::<DiscoverCoverQuery>(text).map(|_| true),
+        "UiTone" => serde_json::from_str::<UiTone>(text).map(|_| true),
+        "UiSize" => serde_json::from_str::<UiSize>(text).map(|_| true),
+        "UiAlign" => serde_json::from_str::<UiAlign>(text).map(|_| true),
+        "UiIcon" => serde_json::from_str::<UiIcon>(text).map(|_| true),
+        "UiTextStyle" => serde_json::from_str::<UiTextStyle>(text).map(|_| true),
+        "UiSurface" => serde_json::from_str::<UiSurface>(text).map(|_| true),
+        "UiAspect" => serde_json::from_str::<UiAspect>(text).map(|_| true),
+        "UiPresentation" => serde_json::from_str::<UiPresentation>(text).map(|_| true),
+        "UiRole" => serde_json::from_str::<UiRole>(text).map(|_| true),
+        "UiTextMode" => serde_json::from_str::<UiTextMode>(text).map(|_| true),
+        "UiStepStatus" => serde_json::from_str::<UiStepStatus>(text).map(|_| true),
+        "UiRisk" => serde_json::from_str::<UiRisk>(text).map(|_| true),
+        "UiScreen" => serde_json::from_str::<UiScreen>(text).map(|_| true),
+        "UiValue" => serde_json::from_str::<UiValue>(text).map(|_| true),
+        "UiBlockMarkdown" => serde_json::from_str::<UiBlockMarkdown>(text).map(|_| true),
+        "UiBlockUi" => serde_json::from_str::<UiBlockUi>(text).map(|_| true),
+        "UiBlockArtifact" => serde_json::from_str::<UiBlockArtifact>(text).map(|_| true),
+        "UiStackDirection" => serde_json::from_str::<UiStackDirection>(text).map(|_| true),
+        "UiStack" => serde_json::from_str::<UiStack>(text).map(|_| true),
+        "UiGrid" => serde_json::from_str::<UiGrid>(text).map(|_| true),
+        "UiSection" => serde_json::from_str::<UiSection>(text).map(|_| true),
+        "UiTabItem" => serde_json::from_str::<UiTabItem>(text).map(|_| true),
+        "UiTabs" => serde_json::from_str::<UiTabs>(text).map(|_| true),
+        "UiDivider" => serde_json::from_str::<UiDivider>(text).map(|_| true),
+        "UiTextFormat" => serde_json::from_str::<UiTextFormat>(text).map(|_| true),
+        "UiTextAlign" => serde_json::from_str::<UiTextAlign>(text).map(|_| true),
+        "UiText" => serde_json::from_str::<UiText>(text).map(|_| true),
+        "UiBadge" => serde_json::from_str::<UiBadge>(text).map(|_| true),
+        "UiIconNodeSize" => serde_json::from_str::<UiIconNodeSize>(text).map(|_| true),
+        "UiIconNode" => serde_json::from_str::<UiIconNode>(text).map(|_| true),
+        "UiCallout" => serde_json::from_str::<UiCallout>(text).map(|_| true),
+        "UiImageFit" => serde_json::from_str::<UiImageFit>(text).map(|_| true),
+        "UiImage" => serde_json::from_str::<UiImage>(text).map(|_| true),
+        "UiMediaKind" => serde_json::from_str::<UiMediaKind>(text).map(|_| true),
+        "UiMedia" => serde_json::from_str::<UiMedia>(text).map(|_| true),
+        "UiLink" => serde_json::from_str::<UiLink>(text).map(|_| true),
+        "UiCode" => serde_json::from_str::<UiCode>(text).map(|_| true),
+        "UiMath" => serde_json::from_str::<UiMath>(text).map(|_| true),
+        "UiStatTrend" => serde_json::from_str::<UiStatTrend>(text).map(|_| true),
+        "UiStat" => serde_json::from_str::<UiStat>(text).map(|_| true),
+        "UiKeyValueRow" => serde_json::from_str::<UiKeyValueRow>(text).map(|_| true),
+        "UiKeyValueLayout" => serde_json::from_str::<UiKeyValueLayout>(text).map(|_| true),
+        "UiKeyValue" => serde_json::from_str::<UiKeyValue>(text).map(|_| true),
+        "UiListItem" => serde_json::from_str::<UiListItem>(text).map(|_| true),
+        "UiListStyle" => serde_json::from_str::<UiListStyle>(text).map(|_| true),
+        "UiList" => serde_json::from_str::<UiList>(text).map(|_| true),
+        "UiTableColumnAlign" => serde_json::from_str::<UiTableColumnAlign>(text).map(|_| true),
+        "UiTableColumnKind" => serde_json::from_str::<UiTableColumnKind>(text).map(|_| true),
+        "UiTableColumn" => serde_json::from_str::<UiTableColumn>(text).map(|_| true),
+        "UiTableRow" => serde_json::from_str::<UiTableRow>(text).map(|_| true),
+        "UiTable" => serde_json::from_str::<UiTable>(text).map(|_| true),
+        "UiChartPoint" => serde_json::from_str::<UiChartPoint>(text).map(|_| true),
+        "UiChartSeries" => serde_json::from_str::<UiChartSeries>(text).map(|_| true),
+        "UiChartKind" => serde_json::from_str::<UiChartKind>(text).map(|_| true),
+        "UiChartXKind" => serde_json::from_str::<UiChartXKind>(text).map(|_| true),
+        "UiChartHeightHint" => serde_json::from_str::<UiChartHeightHint>(text).map(|_| true),
+        "UiChart" => serde_json::from_str::<UiChart>(text).map(|_| true),
+        "UiProgressStyle" => serde_json::from_str::<UiProgressStyle>(text).map(|_| true),
+        "UiProgress" => serde_json::from_str::<UiProgress>(text).map(|_| true),
+        "UiStepItem" => serde_json::from_str::<UiStepItem>(text).map(|_| true),
+        "UiSteps" => serde_json::from_str::<UiSteps>(text).map(|_| true),
+        "UiMapPin" => serde_json::from_str::<UiMapPin>(text).map(|_| true),
+        "UiMapHeightHint" => serde_json::from_str::<UiMapHeightHint>(text).map(|_| true),
+        "UiMap" => serde_json::from_str::<UiMap>(text).map(|_| true),
+        "UiFile" => serde_json::from_str::<UiFile>(text).map(|_| true),
+        "UiButtonStyle" => serde_json::from_str::<UiButtonStyle>(text).map(|_| true),
+        "UiButton" => serde_json::from_str::<UiButton>(text).map(|_| true),
+        "UiOption" => serde_json::from_str::<UiOption>(text).map(|_| true),
+        "UiChoiceMode" => serde_json::from_str::<UiChoiceMode>(text).map(|_| true),
+        "UiChoiceDisplay" => serde_json::from_str::<UiChoiceDisplay>(text).map(|_| true),
+        "UiChoice" => serde_json::from_str::<UiChoice>(text).map(|_| true),
+        "UiTextFieldKind" => serde_json::from_str::<UiTextFieldKind>(text).map(|_| true),
+        "UiTextField" => serde_json::from_str::<UiTextField>(text).map(|_| true),
+        "UiToggle" => serde_json::from_str::<UiToggle>(text).map(|_| true),
+        "UiSlider" => serde_json::from_str::<UiSlider>(text).map(|_| true),
+        "UiForm" => serde_json::from_str::<UiForm>(text).map(|_| true),
+        "UiApprovalItem" => serde_json::from_str::<UiApprovalItem>(text).map(|_| true),
+        "UiApproval" => serde_json::from_str::<UiApproval>(text).map(|_| true),
+        "UiHtmlHeightHint" => serde_json::from_str::<UiHtmlHeightHint>(text).map(|_| true),
+        "UiHtml" => serde_json::from_str::<UiHtml>(text).map(|_| true),
+        "UiDiffLineKind" => serde_json::from_str::<UiDiffLineKind>(text).map(|_| true),
+        "UiDiffLine" => serde_json::from_str::<UiDiffLine>(text).map(|_| true),
+        "UiDiffStatus" => serde_json::from_str::<UiDiffStatus>(text).map(|_| true),
+        "UiDiff" => serde_json::from_str::<UiDiff>(text).map(|_| true),
+        "UiQuote" => serde_json::from_str::<UiQuote>(text).map(|_| true),
+        "UiCountdown" => serde_json::from_str::<UiCountdown>(text).map(|_| true),
+        "UiGalleryImage" => serde_json::from_str::<UiGalleryImage>(text).map(|_| true),
+        "UiGallery" => serde_json::from_str::<UiGallery>(text).map(|_| true),
+        "UiSkeletonShape" => serde_json::from_str::<UiSkeletonShape>(text).map(|_| true),
+        "UiSkeleton" => serde_json::from_str::<UiSkeleton>(text).map(|_| true),
+        "UiSpacer" => serde_json::from_str::<UiSpacer>(text).map(|_| true),
+        "UiAvatarSize" => serde_json::from_str::<UiAvatarSize>(text).map(|_| true),
+        "UiAvatar" => serde_json::from_str::<UiAvatar>(text).map(|_| true),
+        "UiSourceItem" => serde_json::from_str::<UiSourceItem>(text).map(|_| true),
+        "UiSources" => serde_json::from_str::<UiSources>(text).map(|_| true),
+        "UiPlotFunction" => serde_json::from_str::<UiPlotFunction>(text).map(|_| true),
+        "UiPlotPoint" => serde_json::from_str::<UiPlotPoint>(text).map(|_| true),
+        "UiPlotHeightHint" => serde_json::from_str::<UiPlotHeightHint>(text).map(|_| true),
+        "UiPlot" => serde_json::from_str::<UiPlot>(text).map(|_| true),
+        "UiProductItem" => serde_json::from_str::<UiProductItem>(text).map(|_| true),
+        "UiProduct" => serde_json::from_str::<UiProduct>(text).map(|_| true),
+        "UiNewsSource" => serde_json::from_str::<UiNewsSource>(text).map(|_| true),
+        "UiNewsItem" => serde_json::from_str::<UiNewsItem>(text).map(|_| true),
+        "UiNewsLayout" => serde_json::from_str::<UiNewsLayout>(text).map(|_| true),
+        "UiNews" => serde_json::from_str::<UiNews>(text).map(|_| true),
+        "UiBarItem" => serde_json::from_str::<UiBarItem>(text).map(|_| true),
+        "UiBars" => serde_json::from_str::<UiBars>(text).map(|_| true),
+        "UiSuggestionItem" => serde_json::from_str::<UiSuggestionItem>(text).map(|_| true),
+        "UiSuggestions" => serde_json::from_str::<UiSuggestions>(text).map(|_| true),
+        "UiFlowGroupItem" => serde_json::from_str::<UiFlowGroupItem>(text).map(|_| true),
+        "UiFlowStep" => serde_json::from_str::<UiFlowStep>(text).map(|_| true),
+        "UiFlow" => serde_json::from_str::<UiFlow>(text).map(|_| true),
+        "UiSendAction" => serde_json::from_str::<UiSendAction>(text).map(|_| true),
+        "UiEventActionDelivery" => serde_json::from_str::<UiEventActionDelivery>(text).map(|_| true),
+        "UiEventAction" => serde_json::from_str::<UiEventAction>(text).map(|_| true),
+        "UiOpenUrlAction" => serde_json::from_str::<UiOpenUrlAction>(text).map(|_| true),
+        "UiOpenFileAction" => serde_json::from_str::<UiOpenFileAction>(text).map(|_| true),
+        "UiCopyAction" => serde_json::from_str::<UiCopyAction>(text).map(|_| true),
+        "UiShareAction" => serde_json::from_str::<UiShareAction>(text).map(|_| true),
+        "UiOpenScreenAction" => serde_json::from_str::<UiOpenScreenAction>(text).map(|_| true),
+        "UiStopTaskAction" => serde_json::from_str::<UiStopTaskAction>(text).map(|_| true),
+        "UiRetryAction" => serde_json::from_str::<UiRetryAction>(text).map(|_| true),
+        "UiDismissAction" => serde_json::from_str::<UiDismissAction>(text).map(|_| true),
+        "UiCalendarAction" => serde_json::from_str::<UiCalendarAction>(text).map(|_| true),
+        "UiDialAction" => serde_json::from_str::<UiDialAction>(text).map(|_| true),
+        "UiOpenMapAction" => serde_json::from_str::<UiOpenMapAction>(text).map(|_| true),
+        "UiConditionIs" => serde_json::from_str::<UiConditionIs>(text).map(|_| true),
+        "UiCondition" => serde_json::from_str::<UiCondition>(text).map(|_| true),
+        "UiConfirm" => serde_json::from_str::<UiConfirm>(text).map(|_| true),
+        "UiGoal" => serde_json::from_str::<UiGoal>(text).map(|_| true),
+        "UiBlock" => serde_json::from_str::<UiBlock>(text).map(|_| true),
+        "UiCapabilities" => serde_json::from_str::<UiCapabilities>(text).map(|_| true),
+        "UiAction" => serde_json::from_str::<UiAction>(text).map(|_| true),
+        "UiNode" => serde_json::from_str::<UiNode>(text).map(|_| true),
+        "UiDocStatus" => serde_json::from_str::<UiDocStatus>(text).map(|_| true),
+        "UiDoc" => serde_json::from_str::<UiDoc>(text).map(|_| true),
+        "UiDocEvent" => serde_json::from_str::<UiDocEvent>(text).map(|_| true),
+        "UiPatchEventAppendTextItem" => serde_json::from_str::<UiPatchEventAppendTextItem>(text).map(|_| true),
+        "UiPatchEvent" => serde_json::from_str::<UiPatchEvent>(text).map(|_| true),
+        "UiEventRequest" => serde_json::from_str::<UiEventRequest>(text).map(|_| true),
         _ => Ok(false),
     }
 }
