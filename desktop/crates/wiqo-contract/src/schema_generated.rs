@@ -1517,6 +1517,8 @@ pub enum AutomationTriggerType {
     PcOnline,
     #[serde(rename = "connector_changed")]
     ConnectorChanged,
+    #[serde(rename = "webhook")]
+    Webhook,
     /// A value a newer server sends that this build does not know.
     #[serde(other)]
     Unrecognized,
