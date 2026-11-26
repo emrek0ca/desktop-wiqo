@@ -1303,3 +1303,4 @@ button.ui-list-row:hover { background: var(--fill); border-radius: 10px; }
 .agent-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .mini.talking { animation: dotpulse 1.4s ease-in-out infinite; }
 .msg-said { color: var(--text2); font-size: 14px; line-height: 1.5; margin: 2px 0 6px; }
+.settings-row .bad { color: var(--danger-text); }

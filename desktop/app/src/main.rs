@@ -328,6 +328,17 @@ async fn connectors(app: State<'_, App>) -> Reply<serde_json::Value> {
     app.desktop.chat.connectors().await.map_err(text)
 }
 
+/// Opens Studid's university sign-in in the browser; the result comes back as a `connector-result` event with provider "academic".
+#[tauri::command]
+async fn academic_verify(app: State<'_, App>) -> Reply<()> {
+    let url = app.desktop.chat.academic_start().await.map_err(text)?;
+    if !url.starts_with("https://") {
+        return Err("Doğrulama adresi güvenli değil; açılmadı.".into());
+    }
+    open_browser(&url);
+    Ok(())
+}
+
 /// Opens the provider's consent page in the browser; the result comes back as a `connector-result` event.
 #[tauri::command]
 async fn connector_connect(app: State<'_, App>, provider: String) -> Reply<()> {
@@ -1297,6 +1308,7 @@ fn main() {
             voice_model_status,
             voice_model_retry,
             connector_connect,
+            academic_verify,
             connector_disconnect,
             connector_access,
             mcp_accept_changes,

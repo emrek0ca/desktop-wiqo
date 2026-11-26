@@ -838,6 +838,19 @@ impl Chat {
             .ok_or_else(|| anyhow::anyhow!("Bağlantı adresi alınamadı."))
     }
 
+    /// The Studid page where a student or academic signs in with their university (backend routes/academic.ts); the answer returns as a
+    /// `wiqo://oauth-callback?provider=academic` link.
+    pub async fn academic_start(&self) -> Result<String> {
+        let token = self.token()?;
+        let value = self
+            .call(reqwest::Method::POST, "academic/start", Some(json!({})), Some(&token))
+            .await?;
+        value["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("Doğrulama başlatılamadı."))
+    }
+
     pub async fn connector_disconnect(&self, provider: &str) -> Result<()> {
         let token = self.token()?;
         self.call(

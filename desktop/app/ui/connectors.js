@@ -224,8 +224,30 @@
 
   window.addEventListener("wiqo-section", (event) => { if (event.detail === "apps") load(); });
   window.addEventListener("focus", () => { if (document.body.dataset.section === "apps") load(); });
+  // Ayarlar › Öğrenci ve akademisyenler: Studid's university sign-in opens in the browser and comes back through the same link as a connection.
+  const academicDetail = (text, failed) => {
+    $("academic-detail").textContent = text;
+    $("academic-detail").classList.toggle("bad", !!failed);
+  };
+  $("academic-verify").onclick = async () => {
+    $("academic-verify").disabled = true;
+    academicDetail("Tarayıcıda üniversite girişini tamamla.");
+    try {
+      await invoke("academic_verify");
+    } catch (error) {
+      academicDetail(String(error) || "Doğrulama şu an başlatılamadı.", true);
+    } finally {
+      $("academic-verify").disabled = false;
+    }
+  };
+
   listen("connector-result", (message) => {
-    const { status, message: reason } = message.payload;
+    const { provider, status, message: reason } = message.payload;
+    if (provider === "academic") {
+      if (status === "success") academicDetail("Doğrulandı: 12 ay boyunca Wiqo Pro senin.");
+      else academicDetail(reason || "Doğrulama tamamlanamadı.", true);
+      return;
+    }
     problem(status === "error" ? reason || "Bağlantı tamamlanamadı." : "");
     load();
   });
