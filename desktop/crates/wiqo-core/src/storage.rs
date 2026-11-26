@@ -280,6 +280,10 @@ pub struct SettingsData {
     /// asking for each step. Only the person turns it on, here.
     #[serde(default)]
     pub full_access: bool,
+    /// Whether the desktop's agent may send what commands and files print to Wiqo's model service: asked once on this computer (None until then),
+    /// changed in Settings. A failed command's error is sent either way, without its successful output.
+    #[serde(default)]
+    pub model_sharing: Option<bool>,
 }
 
 pub struct Settings {

@@ -39,6 +39,7 @@ tracing.workspace = true
 chrono.workspace = true
 async-trait.workspace = true
 sysinfo.workspace = true
+vt100 = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Power", "Win32_System_SystemInformation", "Win32_UI_Input_KeyboardAndMouse"] }

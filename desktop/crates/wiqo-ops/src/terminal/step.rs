@@ -26,6 +26,21 @@ const GRANT_SECONDS: i64 = 30 * 60;
 const MAX_WAIT_SECONDS: u64 = 45;
 /// What a `run`/`run_plan` may take: under the contract's long budget (55 s) with room for the answer.
 const MAX_RUN_SECONDS: u64 = 50;
+/// How long a command is waited for before it answers with what it printed so far and keeps running as a job.
+const DEFAULT_YIELD_SECONDS: u64 = 20;
+/// A server never ends: its first lines (the address it listens on) are what is waited for.
+const SERVER_YIELD_SECONDS: u64 = 8;
+/// An interactive program answers with its first prompt.
+const INTERACTIVE_YIELD_SECONDS: u64 = 2;
+/// A command that is not a long job may run this long (under its half-hour grant) once it stopped being waited for.
+const JOB_SECONDS: u64 = 1_800;
+
+fn is_running(result: &CommandResult) -> bool {
+    result
+        .data
+        .as_ref()
+        .is_some_and(|data| data["kind"] == "terminalJob" && data["value"]["status"] == "running")
+}
 
 #[derive(Default)]
 struct Local {
@@ -217,24 +232,40 @@ impl TerminalStep {
                     .unwrap_or(MAX_WAIT_SECONDS)
                     .clamp(1, MAX_WAIT_SECONDS);
                 let deadline = std::time::Instant::now() + Duration::from_secs(seconds);
+                // `until`: the wait also ends when the job prints this (a server's "Listening on", a prompt), not only when it ends. A pattern
+                // that is not a valid regular expression is looked for as plain text.
+                let until = value["until"].as_str().filter(|text| !text.trim().is_empty()).map(|text| {
+                    regex::RegexBuilder::new(text)
+                        .case_insensitive(true)
+                        .size_limit(1 << 16)
+                        .build()
+                        .unwrap_or_else(|_| regex::Regex::new(&regex::escape(text)).expect("escaped text"))
+                });
                 let mut round = 0;
                 loop {
-                    let result = self
+                    let mut result = self
                         .ask(
                             ctx,
                             &format!("{id}:{round}"),
                             &json!({ "action": "get_job", "jobId": job, "grant": grant }),
                         )
                         .await;
-                    let running = result
-                        .data
-                        .as_ref()
-                        .is_some_and(|data| data["value"]["status"] == "running");
-                    if !running || std::time::Instant::now() >= deadline {
+                    let running = is_running(&result);
+                    let seen = until.as_ref().is_some_and(|pattern| {
+                        result.data.as_ref().is_some_and(|data| {
+                            let printed = &data["value"]["output"];
+                            pattern.is_match(printed["stdout"].as_str().unwrap_or(""))
+                                || pattern.is_match(printed["stderr"].as_str().unwrap_or(""))
+                        })
+                    });
+                    if seen && running {
+                        result.message = "Beklenen çıktı göründü; iş sürüyor.".into();
+                    }
+                    if !running || seen || std::time::Instant::now() >= deadline {
                         return outcome(result);
                     }
                     round += 1;
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             }
             _ => {
@@ -290,24 +321,42 @@ impl TerminalStep {
                     return refused("TERMINAL_COMMAND_INVALID", "Sunucu komutunu ön planda çalıştır. Wiqo onu durdurulabilir bir arka plan işi olarak izleyecek.");
                 }
                 let promoted = action == "run" && mode == "full" && (server || takes_long(command));
-                let action = if promoted {
-                    "start_job".to_string()
-                } else {
-                    action
-                };
-                if promoted {
+                // Every command under full access runs as a job that answers within a short window (Codex's unified exec): one that ends in time
+                // answers like a plain command; one that does not keeps running and answers with what it printed so far and its job id. A command
+                // that ran past its limit used to be killed and reported as "unknown". `background` answers at once; `interactive` gets a PTY.
+                if value["interactive"] == true && !cfg!(unix) {
+                    return refused("TERMINAL_INTERACTIVE_UNSUPPORTED", "Bu bilgisayarda (Windows) etkileşimli terminal henüz yok. Komutu soru sormadan çalışacak şekilde ver (ör. -y, --yes, --non-interactive) ya da girdiyi bir dosyadan/borudan besle.");
+                }
+                let interactive = value["interactive"] == true && cfg!(unix);
+                let background = value["background"] == true;
+                let yields = action == "run" && mode == "full";
+                let action = if yields { "start_job".to_string() } else { action };
+                if yields {
                     request["action"] = json!("start_job");
-                    request["long"] = json!(true);
-                    request["label"] = json!(value["command"]
-                        .as_str()
-                        .unwrap_or("")
-                        .chars()
-                        .take(80)
-                        .collect::<String>());
-                    if let Some(object) = request.as_object_mut() {
-                        object.remove("timeoutSeconds");
+                    request["label"] = json!(command.chars().take(80).collect::<String>());
+                    if interactive {
+                        request["interactive"] = json!(true);
+                    }
+                    if promoted {
+                        request["long"] = json!(true);
+                        if let Some(object) = request.as_object_mut() {
+                            object.remove("timeoutSeconds");
+                        }
+                    } else {
+                        request["timeoutSeconds"] = json!(JOB_SECONDS);
                     }
                 }
+                let window = if background {
+                    0
+                } else if interactive {
+                    INTERACTIVE_YIELD_SECONDS
+                } else {
+                    value["yieldSeconds"]
+                        .as_u64()
+                        .or_else(|| value["timeoutSeconds"].as_u64())
+                        .unwrap_or(if server { SERVER_YIELD_SECONDS } else { DEFAULT_YIELD_SECONDS })
+                        .clamp(1, MAX_RUN_SECONDS)
+                };
                 if action == "start_job" || action == "watch" {
                     request["jobId"] = json!(id);
                 } else {
@@ -317,15 +366,35 @@ impl TerminalStep {
                         .unwrap_or(MAX_RUN_SECONDS)
                         .clamp(1, MAX_RUN_SECONDS));
                 }
-                let result = self.ask(ctx, &id, &request).await;
-                let mut local = self.local.lock().expect("terminal grants");
-                if folder != policy::SCRATCH_FOLDER {
-                    local.last_folder = Some(folder);
+                let mut result = self.ask(ctx, &id, &request).await;
+                let job_grant = grant.clone();
+                {
+                    let mut local = self.local.lock().expect("terminal grants");
+                    if folder != policy::SCRATCH_FOLDER {
+                        local.last_folder = Some(folder);
+                    }
+                    if let (true, Some(grant)) = (action == "start_job" || action == "watch", grant) {
+                        local.by_job.insert(id.clone(), grant);
+                    }
                 }
-                if let (true, Some(grant)) = (action == "start_job" || action == "watch", grant) {
-                    local.by_job.insert(id, grant);
+                if yields && window > 0 {
+                    if let Some(grant) = job_grant {
+                        let deadline = std::time::Instant::now() + Duration::from_secs(window);
+                        let mut round = 0;
+                        while is_running(&result) && std::time::Instant::now() < deadline {
+                            tokio::time::sleep(Duration::from_millis(250)).await;
+                            round += 1;
+                            result = self
+                                .ask(ctx, &format!("{id}:y{round}"), &json!({ "action": "get_job", "jobId": id, "grant": grant }))
+                                .await;
+                        }
+                    }
                 }
-                drop(local);
+                if yields && is_running(&result) {
+                    result.message = format!(
+                        "Komut sürüyor (iş {id}); şimdiye kadarki çıktı aşağıda. job wait ile bitmesini bekle, job input ile yanıt ver, job cancel ile durdur."
+                    );
+                }
                 outcome(result)
             }
         }

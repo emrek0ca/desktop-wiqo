@@ -19,6 +19,9 @@ use crate::Op;
 
 const PAGE_SIZE: usize = 12;
 const CANDIDATE_LIMIT: usize = 400;
+/// Spotlight lines read before ranking: enough for a broad query on a full disk, bounded so one search never reads a whole index.
+#[cfg(target_os = "macos")]
+const SPOTLIGHT_LINES: usize = 50_000;
 const SURVEY_LIMIT: usize = 1_000;
 const MAX_ALTERNATIVES: usize = 6;
 const WALK_ENTRIES: usize = 60_000;
@@ -391,11 +394,24 @@ fn spotlight_predicate(spec: &Spec) -> String {
             let each: Vec<String> = group
                 .iter()
                 .map(|token| {
-                    let name = format!("kMDItemDisplayName == \"*{token}*\"cd");
-                    if spec.content {
-                        format!("({name} || kMDItemTextContent == \"*{token}*\"cd)")
+                    // Spotlight's "d" does not take "arayüz" to "ARAYUZ" (checked on macOS 27): the plain-letter spelling is asked as well.
+                    let plain = fold(token);
+                    let spellings: Vec<&str> = if plain != token.to_lowercase() { vec![token.as_str(), plain.as_str()] } else { vec![token.as_str()] };
+                    let each: Vec<String> = spellings
+                        .iter()
+                        .map(|spelling| {
+                            let name = format!("kMDItemDisplayName == \"*{spelling}*\"cd");
+                            if spec.content {
+                                format!("{name} || kMDItemTextContent == \"*{spelling}*\"cd")
+                            } else {
+                                name
+                            }
+                        })
+                        .collect();
+                    if each.len() > 1 || spec.content {
+                        format!("({})", each.join(" || "))
                     } else {
-                        name
+                        each[0].clone()
                     }
                 })
                 .collect();
@@ -445,15 +461,24 @@ fn spotlight(spec: &Spec) -> Option<Vec<Entry>> {
     if !output.status.success() {
         return None;
     }
+    // Spotlight answers in no useful order: a broad spelling ("pla") put the file asked for at line 2,065 of 4,447 and the first 1,200 lines were all
+    // that was read. Every path is scored by its name first (no disk access), and only the best ones are opened.
     let mut seen = HashSet::new();
-    let mut entries = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut candidates: Vec<(f64, &str)> = stdout
         .lines()
-        .take(spec.limit * 3)
-    {
-        if !admissible(line) || !seen.insert(line.to_string()) {
-            continue;
-        }
+        .take(SPOTLIGHT_LINES)
+        .filter(|line| admissible(line) && seen.insert(*line))
+        .map(|line| {
+            let name = Path::new(line).file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+            (score(&name, line, &spec.groups), line)
+        })
+        .collect();
+    if !spec.groups.is_empty() {
+        candidates.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    let mut entries = Vec::new();
+    for (_, line) in candidates.into_iter().take(spec.limit * 3) {
         let Some(found) = found_entry(Path::new(line)) else {
             continue;
         };

@@ -51,6 +51,8 @@ struct Request {
     job_id: Option<String>,
     interactive: Option<bool>,
     input: Option<String>,
+    /// `send_input`: named keys instead of text (key_bytes).
+    keys: Option<Vec<String>>,
     file_path: Option<String>,
     patch: Option<String>,
     shell: Option<String>,
@@ -174,6 +176,40 @@ fn result(
         data,
         error,
     }
+}
+
+/// The screen an interactive program left, as text: what it printed run through a terminal of the PTY's size (40 x 120, shell.rs open_pty).
+fn screen_text(raw: &str) -> String {
+    let (rows, columns) = (std::num::NonZeroU16::new(40).expect("rows"), std::num::NonZeroU16::new(120).expect("columns"));
+    let mut parser = vt100::Parser::new(rows, columns, 0);
+    parser.process(raw.as_bytes());
+    let contents = parser.screen().contents();
+    let lines: Vec<&str> = contents.lines().map(str::trim_end).collect();
+    let end = lines.iter().rposition(|line| !line.is_empty()).map_or(0, |last| last + 1);
+    lines[..end].join("\n")
+}
+
+/// What a named key sends to a terminal: the bytes a keyboard would.
+fn key_bytes(keys: &[String]) -> Result<String, String> {
+    let mut bytes = String::new();
+    for key in keys {
+        bytes.push_str(match key.trim().to_lowercase().as_str() {
+            "enter" | "return" => "\r",
+            "tab" => "\t",
+            "esc" | "escape" => "\u{1b}",
+            "up" => "\u{1b}[A",
+            "down" => "\u{1b}[B",
+            "right" => "\u{1b}[C",
+            "left" => "\u{1b}[D",
+            "backspace" => "\u{7f}",
+            "space" => " ",
+            "ctrl-c" | "ctrl+c" => "\u{3}",
+            "ctrl-d" | "ctrl+d" => "\u{4}",
+            "y" | "n" | "q" => key.trim(),
+            other => return Err(other.to_string()),
+        });
+    }
+    Ok(bytes)
 }
 
 fn denied(code: &str, message: impl Into<String>) -> CommandResult {
@@ -945,7 +981,16 @@ impl Sessions {
             return denied("TERMINAL_JOB_UNKNOWN", "Bu PC sürecinde iş bulunamadı.");
         };
         let job = job.lock().expect("job lock");
-        let content = json!({ "jobId": id, "status": job.state, "output": job.output, "message": job.message, "errorCode": job.error_code });
+        let mut content = json!({ "jobId": id, "status": job.state, "output": job.output, "message": job.message, "errorCode": job.error_code });
+        // An interactive program draws its screen with escape codes (cursor moves, colours, redraws): the model reads the screen as a person sees it.
+        if job.control.input.is_some() {
+            if let Some(raw) = job.output.as_ref().and_then(|output| output["stdout"].as_str()) {
+                content["screen"] = json!(screen_text(raw));
+                if let Some(output) = content["output"].as_object_mut() {
+                    output.remove("stdout");
+                }
+            }
+        }
         let status = match job.state {
             "unknown" => CommandStatus::Unknown,
             "failed" => CommandStatus::Failed,
@@ -1008,7 +1053,18 @@ impl Sessions {
             }
         }
         if action == "send_input" {
-            let input = request.input.clone().unwrap_or_default();
+            let input = match &request.keys {
+                Some(keys) => match key_bytes(keys) {
+                    Ok(bytes) => bytes,
+                    Err(unknown) => {
+                        return denied(
+                            "TERMINAL_INPUT_DENIED",
+                            format!("Bilinmeyen tuş: {unknown}. Kullanılabilir: enter, tab, esc, up, down, left, right, backspace, space, ctrl-c, ctrl-d."),
+                        )
+                    }
+                },
+                None => request.input.clone().unwrap_or_default(),
+            };
             let current = job.lock().expect("job lock");
             let allowed = session.code_enabled
                 && (session.grants)(grant)
@@ -1019,15 +1075,20 @@ impl Sessions {
                 && input.len() <= 4096
                 && !input.contains('\0')
                 && !policy::is_forbidden(&input);
+            // Ctrl-C reaches any running job of a full grant (SIGINT to its process group); other input needs the PTY of an interactive job.
+            if allowed && input == "\u{3}" {
+                shell::interrupt(current.control.pid.load(Ordering::SeqCst));
+                drop(current);
+                std::thread::sleep(Duration::from_millis(300));
+                return self.snapshot(&request.job_id.clone().unwrap_or_default());
+            }
             let Some(endpoint) = current.control.input.clone().filter(|_| allowed) else {
                 return denied(
                     "TERMINAL_INPUT_DENIED",
-                    "Etkin tam izinli etkileşimli iş gerekli.",
+                    "Etkin tam izinli etkileşimli iş gerekli (shell interactive: true ile başlat).",
                 );
             };
-            if input == "\u{3}" {
-                shell::interrupt(current.control.pid.load(Ordering::SeqCst));
-            } else if !endpoint.send(&input) {
+            if !endpoint.send(&input) {
                 return denied(
                     "TERMINAL_INPUT_UNCERTAIN",
                     "Girdi teslimi doğrulanamadı; tekrarlamadan önce çıktıyı kontrol et.",

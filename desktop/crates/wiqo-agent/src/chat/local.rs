@@ -66,19 +66,24 @@ const PRIVATE_NOTE: &str = "Gizlilik: ⟦EPOSTA_1⟧, ⟦TELEFON_2⟧, ⟦IBAN_1
 
 fn tools() -> Value {
     json!([
-        { "type": "function", "function": { "name": "shell", "description": "Bu bilgisayarda kabuk komutu çalıştırır (macOS zsh, Windows PowerShell). workdir yoksa ev klasöründe ya da son klasörde. Kurulum, derleme, indirme gibi uzun komutlar kendiliğinden arka plan işi olur (job_id döner).",
+        { "type": "function", "function": { "name": "shell", "description": "Bu bilgisayarda kabuk komutu çalıştırır (macOS zsh, Windows PowerShell). Oturum sürer: cd ve export bir sonraki komutta da geçerli; workdir yoksa son klasörde (ilk komutta ev klasöründe). Komut en çok timeout_seconds (varsayılan 20) beklenir: o sürede biterse sonucu döner; bitmezse öldürülmez, arkada sürer ve o ana kadarki çıktıyla job_id döner (job wait ile izle). Başarısız komutta exitCode, hatanın son satırları ve varsa hint gelir.",
             "parameters": { "type": "object", "properties": {
                 "command": { "type": "string" },
                 "workdir": { "type": "string", "description": "Tam klasör yolu, ör. ~/Desktop/proje" },
-                "timeout_seconds": { "type": "integer", "description": "En çok 50; daha uzun işler kendiliğinden arka plana alınır" }
+                "timeout_seconds": { "type": "integer", "description": "Sonucu en çok kaç saniye bekle (1-50); süre dolunca komut arkada sürer" },
+                "background": { "type": "boolean", "description": "Beklemeden başlat ve hemen job_id dön (uzun derleme, sunucu, indirme)" },
+                "interactive": { "type": "boolean", "description": "Etkileşimli program (soru soran kurulum, REPL, ssh, top): sanal terminalde başlar; ekranı job status ile oku, job input/keys ile yanıt ver" },
+                "notify": { "type": "boolean", "description": "Uzun iş bitince kullanıcının telefonuna bildirim gitsin (background ile; kullanıcı beklemeyecekse)" }
             }, "required": ["command"] } } },
-        { "type": "function", "function": { "name": "job", "description": "Arka plan işi: wait (bitene ya da süre dolana kadar bekle ve çıktıyı oku), status, input (çalışan işe girdi yaz), cancel.",
+        { "type": "function", "function": { "name": "job", "description": "Arka plan işleri: wait (bitene, until metni görünene ya da süre dolana kadar bekle; yalnız yeni çıktıyı verir), status (durum ve yeni çıktı; etkileşimli işte ekranın son hali), input (metin yaz; Enter için sonuna \\n koy), keys (özel tuşlar: enter, tab, esc, up, down, left, right, backspace, ctrl-c, ctrl-d), cancel (durdur), list (bu çalışmadaki işler).",
             "parameters": { "type": "object", "properties": {
-                "action": { "type": "string", "enum": ["wait", "status", "input", "cancel"] },
+                "action": { "type": "string", "enum": ["wait", "status", "input", "keys", "cancel", "list"] },
                 "job_id": { "type": "string" },
                 "text": { "type": "string" },
+                "keys": { "type": "array", "items": { "type": "string" } },
+                "until": { "type": "string", "description": "wait: çıktıda bu metin (ya da düzenli ifade) görünce dön, ör. Listening on|ready" },
                 "wait_seconds": { "type": "integer", "description": "5-45 arası" }
-            }, "required": ["action", "job_id"] } } },
+            }, "required": ["action"] } } },
         { "type": "function", "function": { "name": "read_file", "description": "Bir metin dosyasını okur (isteğe bağlı satır aralığı).",
             "parameters": { "type": "object", "properties": {
                 "path": { "type": "string" }, "start_line": { "type": "integer" }, "end_line": { "type": "integer" }
@@ -594,14 +599,57 @@ fn label(name: &str, args: &Value) -> String {
     }
 }
 
-/// A step's data as the model reads it: the terminal's own fields, each long text cut to its start and end.
-fn shown_output(data: &Value) -> String {
-    let mut value = if data["kind"] == "terminalResult" {
-        data["value"].clone()
-    } else {
-        data.clone()
+/// The part of a stream written after the first `seen` of its `total` bytes: the end of `text` that many bytes long (at a character boundary).
+fn written_after(text: &str, seen: u64, total: u64) -> String {
+    let fresh = total.saturating_sub(seen) as usize;
+    if fresh == 0 {
+        return String::new();
+    }
+    if fresh >= text.len() {
+        return text.to_string();
+    }
+    let mut start = text.len() - fresh;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_string()
+}
+
+/// A step's data as the model reads it: the terminal's own fields, each long text cut to its start and end. A job's process output is lifted to the
+/// top, and with `seen` (bytes of each stream already shown, by job id) a later read of the same job shows only what it printed since.
+fn shown_output(data: &Value, seen: Option<&mut std::collections::HashMap<String, (u64, u64)>>) -> String {
+    let mut value = match data["kind"].as_str() {
+        Some("terminalResult") | Some("processOutput") => data["value"].clone(),
+        Some("terminalJob") => {
+            let mut job = data["value"].clone();
+            if let Some(printed) = job.get("output").cloned().filter(Value::is_object) {
+                if let (Some(object), Some(fields)) = (job.as_object_mut(), printed.as_object()) {
+                    object.remove("output");
+                    for (key, field) in fields {
+                        object.entry(key.clone()).or_insert(field.clone());
+                    }
+                }
+            }
+            job
+        }
+        _ => data.clone(),
     };
+    if let (Some(seen), Some(job)) = (seen, value["jobId"].as_str().map(str::to_string)) {
+        let totals = (value["stdoutBytes"].as_u64(), value["stderrBytes"].as_u64());
+        if let (Some(out_total), Some(err_total)) = totals {
+            if let Some(&(out_seen, err_seen)) = seen.get(&job) {
+                let stdout = written_after(value["stdout"].as_str().unwrap_or(""), out_seen, out_total);
+                let stderr = written_after(value["stderr"].as_str().unwrap_or(""), err_seen, err_total);
+                value["stdout"] = json!(stdout);
+                value["stderr"] = json!(stderr);
+                value["shownBefore"] = json!(format!("Bu işin ilk {} bayt çıktısı önceki okumada gösterildi; burada yalnız sonrası var.", out_seen + err_seen));
+            }
+            seen.insert(job, (out_total, err_total));
+        }
+    }
     if let Some(object) = value.as_object_mut() {
+        object.remove("stdoutBytes");
+        object.remove("stderrBytes");
         object.remove("workingDirectory");
         if let Some(undo) = object.remove("undoId").filter(|undo| undo.is_string()) {
             object.insert("undo_id".into(), undo);
@@ -768,7 +816,7 @@ impl LocalSession<'_> {
 fn effectful_tool(name: &str, args: &Value, pc_tools: &[String]) -> bool {
     match name {
         "shell" => !wiqo_ops::is_read_only(args["command"].as_str().unwrap_or("")),
-        "job" => matches!(args["action"].as_str(), Some("input" | "cancel")),
+        "job" => matches!(args["action"].as_str(), Some("input" | "keys" | "cancel")),
         "write_file" | "edit_file" | "apply_patch" | "undo" | "project_notes" | "browser_check" => {
             true
         }
@@ -799,10 +847,12 @@ fn private_model_result(name: &str, pc_tools: &[String]) -> bool {
     ) || pc_tools.iter().any(|tool| tool == name)
 }
 
-/// Keep receipt metadata and the opaque job reference while withholding local content.
+/// Keep receipt metadata and the opaque job reference while withholding local content. A failed step is the exception: its error and the last lines
+/// of what it printed (secrets removed) always go back, because a model that cannot see why a command failed can only guess the next one (seen live:
+/// the same osascript sent twice with other quotes, its permission error never shown).
 fn model_receipt(outcome: &ToolOutcome) -> String {
     let receipt: Value = serde_json::from_str(&outcome.output).unwrap_or_default();
-    json!({
+    let mut shown = json!({
         "status": if receipt["sideEffectUncertain"] == true || receipt["status"] == "unknown" {
             "unknown"
         } else if outcome.ok { "completed" } else { "failed" },
@@ -811,8 +861,95 @@ fn model_receipt(outcome: &ToolOutcome) -> String {
         "jobId": outcome.job,
         "errorCode": receipt["errorCode"],
         "message": "Yerel çıktı bu bilgisayarda kaldı."
-    })
-    .to_string()
+    });
+    if !outcome.ok {
+        shown["message"] = json!("Başarısız oldu; hatanın son satırları aşağıda. Başarılı çıktılar bu bilgisayarda kalır.");
+        if let Some(error) = receipt["error"].as_str().filter(|text| !text.trim().is_empty()) {
+            shown["error"] = json!(wiqo_ops::redact_secrets(&clip(error, 600)));
+        }
+        if let Some(tail) = failure_tail(&receipt) {
+            shown["errorTail"] = json!(tail);
+        }
+        if let Some(exit) = shown["exitCode"].as_i64().or_else(|| failure_exit_code(&receipt)) {
+            shown["exitCode"] = json!(exit);
+        }
+        if let Some(hint) = failure_hint(&receipt) {
+            shown["hint"] = json!(hint);
+        }
+    }
+    shown.to_string()
+}
+
+/// The printed output of a step as an object, whether it came as one or as JSON text.
+fn printed_value(receipt: &Value) -> Value {
+    let output = match &receipt["output"] {
+        Value::String(text) => serde_json::from_str(text).unwrap_or(Value::String(text.clone())),
+        other => other.clone(),
+    };
+    if output["kind"].is_string() && output["value"].is_object() {
+        output["value"].clone()
+    } else {
+        output
+    }
+}
+
+fn failure_exit_code(receipt: &Value) -> Option<i64> {
+    let printed = printed_value(receipt);
+    printed["exitCode"].as_i64().or_else(|| printed["output"]["exitCode"].as_i64())
+}
+
+/// The last 15 lines (at most 1,500 characters) of what a failed command wrote, stderr first, secrets removed.
+fn failure_tail(receipt: &Value) -> Option<String> {
+    let printed = printed_value(receipt);
+    let text = [&printed["stderr"], &printed["output"]["stderr"], &printed["stdout"], &printed["output"]["stdout"]]
+        .into_iter()
+        .filter_map(Value::as_str)
+        .find(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| printed.as_str().filter(|text| !text.trim().is_empty()).map(str::to_string))?;
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    let tail = lines[lines.len().saturating_sub(15)..].join("\n");
+    let chars: Vec<char> = tail.chars().collect();
+    let kept: String = chars[chars.len().saturating_sub(1_500)..].iter().collect();
+    Some(wiqo_ops::redact_secrets(&kept))
+}
+
+/// What a common failure means and where to go from it, read from the error text and the exit code: the facts the model needs, not a rule it must follow.
+fn failure_hint(receipt: &Value) -> Option<&'static str> {
+    let printed = printed_value(receipt);
+    let text = format!(
+        "{} {} {}",
+        receipt["error"].as_str().unwrap_or(""),
+        printed["stderr"].as_str().or(printed["output"]["stderr"].as_str()).unwrap_or(""),
+        printed.as_str().unwrap_or("")
+    )
+    .to_lowercase();
+    let exit = failure_exit_code(receipt);
+    if text.contains("-1743") || text.contains("not authorized to send apple events") || text.contains("not allowed to send apple events") {
+        return Some("macOS otomasyon izni yok (Sistem Ayarları › Gizlilik ve Güvenlik › Otomasyon › Wiqo). İzin gerektirmeyen bir yol dene (ör. açık uygulamalar için lsappinfo ya da pc aracı); olmazsa kullanıcıya bu izni nereden vereceğini söyle.");
+    }
+    if text.contains("operation not permitted") && (text.contains("/library/") || text.contains("desktop") || text.contains("documents")) {
+        return Some("macOS bu klasöre erişime izin vermiyor (Tam Disk Erişimi ya da Dosyalar ve Klasörler izni). Başka bir yol dene ya da kullanıcıya izni nereden vereceğini söyle.");
+    }
+    if exit == Some(127) || text.contains("command not found") || text.contains("is not recognized as") {
+        return Some("Komut bu bilgisayarda yok ya da PATH'te değil: which/where ile bak; gerekiyorsa brew/npm/pip ile kur ya da başka bir araç kullan.");
+    }
+    if text.contains("no such file or directory") || text.contains("cannot find path") || text.contains("does not exist") {
+        return Some("Yol bulunamadı: önce ls/find/mdfind (ya da dosya arama aracı) ile doğru yolu bul; boşluk içeren yolları tırnakla.");
+    }
+    if text.contains("permission denied") || exit == Some(126) {
+        return Some("İzin reddedildi: dosyanın sahibine/iznine bak (ls -l); çalıştırılabilir değilse chmod +x ya da yorumlayıcıyla çalıştır; sudo kullanılamaz.");
+    }
+    if text.contains("address already in use") || text.contains("eaddrinuse") {
+        return Some("Port kullanımda: lsof -nP -iTCP:<port> -sTCP:LISTEN ile hangi sürecin tuttuğuna bak; kendi işinse job cancel ile kapat, değilse başka port seç.");
+    }
+    if text.contains("unexpected eof") || text.contains("unmatched") || text.contains("parse error") && text.contains("zsh") {
+        return Some("Kabuk tırnaklama hatası: içteki tırnakları kaçır ya da komutu heredoc/betik dosyasıyla çalıştır.");
+    }
+    if text.contains("timed out") || text.contains("timeout") {
+        return Some("Süre doldu: uzun işi background: true ile başlat ve job wait ile izle.");
+    }
+    None
 }
 
 fn session_snapshot(path: &Path) -> Option<SessionSnapshot> {
@@ -879,6 +1016,10 @@ struct Reach {
     /// Each file as the agent last read or wrote it (a fingerprint of its bytes): a change is refused when the file moved on since then, so the
     /// person's own edits made while the run works are never written over.
     seen: std::collections::HashMap<PathBuf, u64>,
+    /// Bytes of stdout and stderr each job already showed the model, by job id: a later `job wait` shows only what came after.
+    seen_output: std::collections::HashMap<String, (u64, u64)>,
+    /// Jobs this run started (id, command, last known status), for `job list`.
+    jobs: Vec<(String, String, String)>,
 }
 
 fn fingerprint(path: &Path) -> Option<u64> {
@@ -1093,16 +1234,16 @@ fn wants_intent_card(goal: &str) -> bool {
     goal.split_whitespace().count() >= 8 && mentions_change(goal)
 }
 
+/// A request that asks for no change and no send: a question about this computer ("hangi uygulamalar açık", "diskte ne kadar yer var"). It is done
+/// when its last look succeeded and nothing was changed (Ledger::verified_inspection). It used to need a reading verb from a word list, so a plain
+/// question ended "doğrulanamadı" after a correct answer.
 fn asks_for_inspection(goal: &str) -> bool {
-    static INSPECTION: std::sync::OnceLock<(regex::Regex, regex::Regex)> =
-        std::sync::OnceLock::new();
-    let (read, effect) = INSPECTION.get_or_init(|| (
-        regex::Regex::new(r"(?i)\b(read|list|find|search|inspect|status|show|oku\w*|listele\w*|bul\w*|ara\w*|incele\w*|durum\w*|göster\w*)\b")
-            .expect("inspection goal pattern"),
-        regex::Regex::new(r"(?i)\b(send|share|delete|remove|move|deploy|schedule|publish|gönder\w*|paylaş\w*|yayınla\w*|zamanla\w*|kaldır\w*)\b")
-            .expect("side-effect goal pattern"),
-    ));
-    !mentions_change(goal) && read.is_match(goal) && !effect.is_match(goal)
+    static EFFECT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let effect = EFFECT.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(send|share|delete|remove|move|deploy|schedule|publish|gönder\w*|paylaş\w*|yayınla\w*|zamanla\w*|kaldır\w*|sil\w*|taşı\w*|yükle\w*|kur\w*)\b")
+            .expect("side-effect goal pattern")
+    });
+    !mentions_change(goal) && !effect.is_match(goal)
 }
 
 /// Whether the request wants a server left running ("çalıştır", "adresini söyle", "aç"): then it stays and the answer says so; otherwise the
@@ -2608,7 +2749,8 @@ impl Chat {
             in_flight: false,
             uncertain: false,
             read_only,
-            model_sharing: None,
+            // Asked once on this computer and kept (Ayarlar › Model paylaşımı); a run started from someone else's Mission still never shares.
+            model_sharing: engine.settings().snapshot().model_sharing.filter(|_| !untrusted),
         };
         work.ledger.expect_from(goal);
         for pin in super::memory::constraints_of(text) {
@@ -3146,7 +3288,7 @@ impl Chat {
                     None => refused("Araç çağrısının argümanları geçerli JSON değil (büyük olasılıkla çıktı sınırında kesildi); çalıştırılmadı. Çağrıyı daha küçük yaz: uzun dosyayı write_file ile ilk bölüm, sonra append: true ile kalan bölümler halinde gönder."),
                     Some(_) if stop.is_asked() => refused("Kullanıcı durdurdu; çalıştırılmadı."),
                     Some(_) if !may_run => refused("Sonucu belirsiz önceki çalışmanın ardından bu adım için onay alınamadı."),
-                    Some(args) if name == "job" && !work.jobs.iter().any(|job| args["job_id"] == job.id)
+                    Some(args) if name == "job" && args["action"] != "list" && !work.jobs.iter().any(|job| args["job_id"] == job.id)
                         && !work.plan.iter().any(|step| args["job_id"] == step["checkJob"]) =>
                             refused("Bu terminal işi mevcut göreve ait değil."),
                     Some(_) if tried >= 3 => refused("Bu çağrı aynı haliyle üç kez başarısız oldu; yeniden çalıştırılmadı. Hatanın nedenini araştır (dosya var mı, yol doğru mu, araç kurulu mu, izin var mı) ve farklı bir yol dene."),
@@ -3456,16 +3598,21 @@ impl Chat {
                     && !work.read_only
                     && !work.reach.untrusted
                     && !stop.is_asked()
-                    && (outcome.ok || receipt.get("output").is_some())
+                    && outcome.ok
                     && !outcome.output.is_empty()
                 {
                     let permission = approve("local_context_share".into(),
-                        "Bu görev için yerel dosya içeriği ve terminal çıktısı Wiqo’nun model hizmetine gönderilsin mi? Reddedersen görev yalnızca güvenli işlem özetleriyle devam eder.".into());
+                        "Wiqo bu bilgisayarda çalışırken komutların ve okuduğu dosyaların çıktısını model hizmetine gönderebilsin mi? Bu bir kez sorulur; Ayarlar › Model paylaşımı'ndan değiştirebilirsin. Hayır dersen işler yalnızca işlem özetleriyle (ve hata satırlarıyla) sürer.".into());
                     let decision = tokio::select! {
                         decision = permission => decision,
-                        _ = stop.asked() => Decision::No,
+                        _ = stop.asked() => Decision::TimedOut,
                     };
-                    work.model_sharing = Some(matches!(decision, Decision::Yes));
+                    let shared = matches!(decision, Decision::Yes);
+                    work.model_sharing = Some(shared);
+                    // An unanswered card (it expired, or the run was stopped) is not a choice: the next run asks again.
+                    if !matches!(decision, Decision::TimedOut) {
+                        let _ = engine.settings().update(|data| data.model_sharing = Some(shared));
+                    }
                 }
                 let model_output = if private && work.model_sharing != Some(true) {
                     model_receipt(&outcome)
@@ -4544,22 +4691,57 @@ impl Chat {
                 if let Some(seconds) = args["timeout_seconds"].as_u64() {
                     value["timeoutSeconds"] = json!(seconds.clamp(1, 50));
                 }
-                (value, !reads, format!("Komut çalıştırılsın mı?\n{command}"))
+                if args["background"] == true {
+                    value["background"] = json!(true);
+                }
+                if args["notify"] == true {
+                    value["notifyWhenDone"] = json!(true);
+                    value["background"] = json!(true);
+                }
+                if args["interactive"] == true {
+                    // A program that asks questions runs in a PTY, which only a full grant gives.
+                    value["interactive"] = json!(true);
+                    value["mode"] = json!("full");
+                }
+                (value, !reads || args["interactive"] == true, format!("Komut çalıştırılsın mı?\n{command}"))
+            }
+            "job" if args["action"] == "list" => {
+                let listed: Vec<Value> = reach
+                    .jobs
+                    .iter()
+                    .map(|(id, label, status)| json!({ "job_id": id, "command": label, "status": status }))
+                    .collect();
+                let output = json!({ "status": "completed", "jobs": listed, "message": if listed.is_empty() { "Bu çalışmada başlatılmış iş yok." } else { "Bu çalışmada başlatılan işler (son bilinen durumlarıyla); güncel durum için job status." } });
+                return ToolOutcome { ok: true, output: output.to_string(), brief: format!("{} iş", listed.len()), job: None };
             }
             "job" => {
                 let job = text_of(&args["job_id"]);
                 if job.trim().is_empty() {
-                    return refused("job_id gerekli (shell'in döndürdüğü job_id).");
+                    return refused("job_id gerekli (shell'in döndürdüğü job_id); işleri görmek için action list.");
                 }
                 let value = match args["action"].as_str().unwrap_or("") {
-                    "wait" => json!({ "action": "wait_job", "jobId": job, "waitSeconds": args["wait_seconds"].as_u64().unwrap_or(45).clamp(5, 45) }),
+                    "wait" => {
+                        let mut wait = json!({ "action": "wait_job", "jobId": job, "waitSeconds": args["wait_seconds"].as_u64().unwrap_or(45).clamp(5, 45) });
+                        if let Some(until) = args["until"].as_str().filter(|text| !text.trim().is_empty()) {
+                            wait["until"] = json!(until.chars().take(200).collect::<String>());
+                        }
+                        wait
+                    }
                     "status" => json!({ "action": "get_job", "jobId": job }),
                     "input" => json!({ "action": "send_input", "jobId": job, "input": text_of(&args["text"]) }),
+                    "keys" => {
+                        let keys: Vec<String> = args["keys"].as_array().into_iter().flatten().filter_map(|key| key.as_str().map(str::to_string)).take(20).collect();
+                        if keys.is_empty() {
+                            return refused("keys gerekli, ör. [\"down\", \"enter\"].");
+                        }
+                        json!({ "action": "send_input", "jobId": job, "keys": keys })
+                    }
                     "cancel" => json!({ "action": "cancel_job", "jobId": job }),
-                    _ => return refused("action wait, status, input ya da cancel olmalı."),
+                    _ => return refused("action wait, status, input, keys, cancel ya da list olmalı."),
                 };
-                let writes = args["action"] == "input";
-                (value, writes, format!("Çalışan işe girdi yazılsın mı?\n{}", text_of(&args["text"])))
+                let writes = matches!(args["action"].as_str(), Some("input" | "keys"));
+                let typed = if args["action"] == "keys" { args["keys"].to_string() } else { text_of(&args["text"]) };
+                (value, writes, format!("Çalışan işe girdi yazılsın mı?\n{typed}"))
             }
             "read_file" => {
                 let (file, folder) = file_and_folder(&text_of(&args["path"]));
@@ -4720,7 +4902,7 @@ impl Chat {
         }
         let mut job = None;
         if let Some(data) = &data {
-            shown["output"] = json!(shown_output(data));
+            shown["output"] = json!(shown_output(data, Some(&mut reach.seen_output)));
             let value = &data["value"];
             if let Some(exit_code) = value["exitCode"]
                 .as_i64()
@@ -4745,6 +4927,20 @@ impl Chat {
             let value = &data["value"];
             if value["status"] == "running" {
                 job = value["jobId"].as_str().map(str::to_string);
+            }
+            if data["kind"] == "terminalJob" {
+                if let Some(id) = value["jobId"].as_str() {
+                    let status = value["status"].as_str().unwrap_or("unknown").to_string();
+                    match reach.jobs.iter_mut().find(|(known, _, _)| known == id) {
+                        Some(entry) => entry.2 = status,
+                        None => reach.jobs.push((id.to_string(), label(name, args).chars().take(120).collect(), status)),
+                    }
+                }
+            }
+        }
+        if !ok {
+            if let Some(hint) = failure_hint(&shown) {
+                shown["hint"] = json!(hint);
             }
         }
         let brief = result["error"]
@@ -5369,6 +5565,7 @@ mod tests {
         let output = format!("{}SON SATIR: error[E0308]", "satır\n".repeat(10_000));
         let shown = shown_output(
             &json!({ "kind": "terminalResult", "value": { "kind": "run", "workingDirectory": "/x", "stdout": output, "exitCode": 1 } }),
+            None,
         );
         assert!(shown.contains("error[E0308]"));
         assert!(shown.len() < OUTPUT_CHARS * 3);

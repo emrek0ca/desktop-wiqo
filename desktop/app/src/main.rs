@@ -760,6 +760,16 @@ fn set_full_access(app: State<'_, App>, on: bool) -> Reply<bool> {
 }
 
 #[tauri::command]
+fn model_sharing(app: State<'_, App>) -> Option<bool> {
+    app.desktop.model_sharing()
+}
+
+#[tauri::command]
+fn set_model_sharing(app: State<'_, App>, on: bool) -> Reply<bool> {
+    app.desktop.set_model_sharing(on).map_err(text)
+}
+
+#[tauri::command]
 fn set_screen_memory(app: State<'_, App>, on: bool) -> Reply<serde_json::Value> {
     app.desktop.set_screen_memory(on).map_err(text)
 }
@@ -1284,6 +1294,8 @@ fn main() {
             set_screen_memory,
             full_access,
             set_full_access,
+            model_sharing,
+            set_model_sharing,
             screen_memory_action,
             start_pairing,
             cancel_pairing,

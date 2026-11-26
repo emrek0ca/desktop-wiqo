@@ -84,32 +84,62 @@ pub struct Snapshot {
     pub timed_out: bool,
     pub truncated: bool,
     pub duration_ms: u64,
+    /// Bytes each stream wrote in all, kept or not: a reader that saw N of them asks only for what came after (the agent's "new output").
+    pub stdout_bytes: u64,
+    pub stderr_bytes: u64,
 }
 
 impl Snapshot {
     pub fn output(&self, language: &str) -> Value {
         json!({
             "language": language, "exitCode": if self.timed_out { -1 } else { self.exit_code }, "stdout": self.stdout, "stderr": self.stderr,
-            "truncated": self.truncated, "durationMs": self.duration_ms,
+            "truncated": self.truncated, "durationMs": self.duration_ms, "stdoutBytes": self.stdout_bytes, "stderrBytes": self.stderr_bytes,
         })
     }
 }
 
-/// Keeps the last `OUTPUT_LIMIT` bytes.
+/// The start of a long output is kept as well as its end: a build's first error, a test run's summary of what it will do. The middle goes, with a
+/// line that says how much (it used to keep only the last 50 KB, so the first error of a long build was gone).
+const HEAD_LIMIT: usize = 8 * 1024;
+
 #[derive(Default)]
 struct Buffer {
-    bytes: Vec<u8>,
+    head: Vec<u8>,
+    tail: Vec<u8>,
+    total: u64,
     truncated: bool,
 }
 
 impl Buffer {
     fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() > OUTPUT_LIMIT {
-            let excess = self.bytes.len() - OUTPUT_LIMIT;
-            self.bytes.drain(..excess);
+        self.total += chunk.len() as u64;
+        let mut rest = chunk;
+        if self.tail.is_empty() && self.head.len() < HEAD_LIMIT {
+            let take = (HEAD_LIMIT - self.head.len()).min(rest.len());
+            self.head.extend_from_slice(&rest[..take]);
+            rest = &rest[take..];
+        }
+        self.tail.extend_from_slice(rest);
+        let keep = OUTPUT_LIMIT - HEAD_LIMIT;
+        if self.tail.len() > keep {
+            let excess = self.tail.len() - keep;
+            self.tail.drain(..excess);
             self.truncated = true;
         }
+    }
+
+    fn text(&self) -> String {
+        let skipped = self.total - (self.head.len() + self.tail.len()) as u64;
+        if skipped == 0 {
+            let mut all = self.head.clone();
+            all.extend_from_slice(&self.tail);
+            return String::from_utf8_lossy(&all).to_string();
+        }
+        format!(
+            "{}\n…[{skipped} bayt atlandı]…\n{}",
+            String::from_utf8_lossy(&self.head),
+            String::from_utf8_lossy(&self.tail)
+        )
     }
 }
 
@@ -188,6 +218,8 @@ pub fn run(mut command: Command, seconds: u64, control: &Control) -> Snapshot {
         timed_out: false,
         truncated: false,
         duration_ms: started.elapsed().as_millis() as u64,
+        stdout_bytes: 0,
+        stderr_bytes: message.len() as u64,
     };
     #[cfg(unix)]
     {
@@ -265,8 +297,8 @@ pub fn run(mut command: Command, seconds: u64, control: &Control) -> Snapshot {
             break child.wait().ok();
         }
         if let Some(progress) = &control.progress {
-            let size = stdout.lock().expect("buffer").bytes.len()
-                + stderr.lock().expect("buffer").bytes.len();
+            let size = (stdout.lock().expect("buffer").total
+                + stderr.lock().expect("buffer").total) as usize;
             if size != published && last_update.elapsed() >= Duration::from_millis(500) {
                 published = size;
                 last_update = Instant::now();
@@ -275,9 +307,9 @@ pub fn run(mut command: Command, seconds: u64, control: &Control) -> Snapshot {
                     stderr.lock().expect("buffer"),
                 );
                 progress(json!({
-                    "language": "shell", "exitCode": 0, "stdout": redact_secrets(&String::from_utf8_lossy(&out.bytes)),
-                    "stderr": redact_secrets(&String::from_utf8_lossy(&err.bytes)), "truncated": out.truncated || err.truncated,
-                    "durationMs": started.elapsed().as_millis() as u64,
+                    "language": "shell", "exitCode": 0, "stdout": redact_secrets(&out.text()),
+                    "stderr": redact_secrets(&err.text()), "truncated": out.truncated || err.truncated,
+                    "durationMs": started.elapsed().as_millis() as u64, "stdoutBytes": out.total, "stderrBytes": err.total, "running": true,
                 }));
             }
         }
@@ -296,8 +328,10 @@ pub fn run(mut command: Command, seconds: u64, control: &Control) -> Snapshot {
         stderr.lock().expect("buffer"),
     );
     Snapshot {
-        stdout: String::from_utf8_lossy(&out.bytes).to_string(),
-        stderr: String::from_utf8_lossy(&err.bytes).to_string(),
+        stdout: out.text(),
+        stderr: err.text(),
+        stdout_bytes: out.total,
+        stderr_bytes: err.total,
         exit_code: status
             .and_then(|status| status.code())
             .map(i64::from)

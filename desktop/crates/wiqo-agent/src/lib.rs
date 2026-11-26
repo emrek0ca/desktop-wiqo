@@ -1443,6 +1443,20 @@ impl Desktop {
         Ok(on)
     }
 
+    /// Whether local output may go to the model service: None until the person was asked.
+    pub fn model_sharing(&self) -> Option<bool> {
+        self.runtime.engine.settings().snapshot().model_sharing
+    }
+
+    /// Set in Settings; the next run of the desktop's agent uses it without asking.
+    pub fn set_model_sharing(&self, on: bool) -> Result<bool> {
+        self.runtime
+            .engine
+            .settings()
+            .update(|data| data.model_sharing = Some(on))?;
+        Ok(on)
+    }
+
     /// This computer's screen memory (wiqo_ops::screen_memory): its state, for the settings.
     pub fn screen_memory(&self) -> serde_json::Value {
         serde_json::to_value(wiqo_ops::screen_memory::status(self.data_path())).unwrap_or_default()
