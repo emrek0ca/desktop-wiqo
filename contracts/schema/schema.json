@@ -3015,9 +3015,10 @@
         "market_price",
         "news_topic",
         "automation_finished",
-        "pc_online"
+        "pc_online",
+        "connector_changed"
       ],
-      "description": "market_price: a market instrument (gold, a currency, an index, a share, crypto) crosses a threshold; news_topic: new reports about a topic appear."
+      "description": "market_price: a market instrument (gold, a currency, an index, a share, crypto) crosses a threshold; news_topic: new reports about a topic appear; connector_changed: what one read of a connected account (a Slack channel, Linear issues, a Jira search…) returns changes."
     },
     "AutomationTriggerState": {
       "type": "object",

@@ -1515,6 +1515,8 @@ pub enum AutomationTriggerType {
     AutomationFinished,
     #[serde(rename = "pc_online")]
     PcOnline,
+    #[serde(rename = "connector_changed")]
+    ConnectorChanged,
     /// A value a newer server sends that this build does not know.
     #[serde(other)]
     Unrecognized,
